@@ -403,12 +403,14 @@ input:focus,select:focus{border-color:var(--accent);}
     <button class="btn" onclick="generateAIProposal()">✨ 今週末のプランを提案してもらう</button>
   </div>
   <div class="card" id="aiCostCard" style="display:none;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-      <div style="font-size:11px;font-weight:700;color:var(--text2);">💰 APIクレジット残高（$）</div>
-      <div style="font-size:9px;color:var(--text2);">実費はConsoleで確認</div>
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;">
+      <div>
+        <div style="font-size:11px;font-weight:700;color:var(--text2);">💰 APIクレジット残高（$）</div>
+        <div style="font-size:9px;color:var(--text2);margin-top:2px;">実費はConsoleで確認</div>
+      </div>
+      <button class="btn" style="width:auto;padding:6px 12px;font-size:11px;background:var(--green);color:#0e2417;" onclick="addAiDeposit()">＋ 入金を記録</button>
     </div>
     <div id="aiCostBody"></div>
-    <button class="btn btn-ghost" style="width:auto;margin-top:12px;font-size:11px;" onclick="addAiDeposit()">＋ 入金を記録</button>
   </div>
   <div id="aiResult" style="display:none;">
     <div style="font-size:11px;font-weight:700;color:var(--text2);padding-bottom:8px;display:flex;align-items:center;gap:6px;">📋 AI提案プラン<span id="aiModeTag" style="font-size:9px;font-weight:600;padding:2px 6px;border-radius:999px;background:var(--surface2);color:var(--text2);"></span></div>
@@ -2654,27 +2656,31 @@ function deleteSchedule(key,i){
 // ──────────────────────
 // Sonnet 4.6 概算単価（$ / 100万トークン）。料金改定があればこの2つの数値を直す。
 const AI_PRICE_IN=3, AI_PRICE_OUT=15;
-function aiUsdStore(){try{const o=JSON.parse(localStorage.getItem('kakeibo_ai_usd')||'null');if(o&&typeof o==='object')return o;}catch(e){}return{spent:0,deposits:[]};}
+function aiUsdStore(){try{const o=JSON.parse(localStorage.getItem('kakeibo_ai_usd')||'null');if(o&&typeof o==='object'){o.deposits=o.deposits||[];o.usageLog=o.usageLog||[];return o;}}catch(e){}return{spent:0,deposits:[],usageLog:[]};}
 function saveAiUsd(o){localStorage.setItem('kakeibo_ai_usd',JSON.stringify(o));}
+function todayStr(){const t=new Date();return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;}
 // API応答のusageから概算コスト($)を累計使用額に加算
 function addAiSpendUsd(usage){
   if(!usage)return;
   const inTok=(Number(usage.input_tokens)||0)+(Number(usage.cache_read_input_tokens)||0)+(Number(usage.cache_creation_input_tokens)||0);
   const outTok=Number(usage.output_tokens)||0;
   const usd=inTok/1e6*AI_PRICE_IN+outTok/1e6*AI_PRICE_OUT;
-  const st=aiUsdStore();st.spent=(Number(st.spent)||0)+usd;saveAiUsd(st);renderAiCost();
+  const st=aiUsdStore();
+  st.spent=(Number(st.spent)||0)+usd;
+  st.usageLog=st.usageLog||[];
+  st.usageLog.push({id:'u'+Date.now(),date:todayStr(),usd,ts:Date.now()});
+  saveAiUsd(st);renderAiCost();
 }
 function addAiDeposit(){
   const a=prompt('入金額（ドル）を入力\n例: 5  → $5を入金',' ');
   if(a==null)return;
   const usd=Number(String(a).trim());
   if(!(usd>0)){alert('正の数値（ドル）を入力してください');return;}
-  const t=new Date();
-  const today=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  const today=todayStr();
   const date=prompt('入金日（YYYY-MM-DD）',today);
   if(date==null)return;
   const st=aiUsdStore();st.deposits=st.deposits||[];
-  st.deposits.push({id:'d'+Date.now(),date:(date.trim()||today),usd});
+  st.deposits.push({id:'d'+Date.now(),date:(date.trim()||today),usd,ts:Date.now()});
   saveAiUsd(st);renderAiCost();
 }
 function removeAiDeposit(id){
@@ -2682,32 +2688,48 @@ function removeAiDeposit(id){
   const st=aiUsdStore();st.deposits=(st.deposits||[]).filter(x=>x.id!==id);
   saveAiUsd(st);renderAiCost();
 }
+function fmtUsd(n,d=2){return '$'+(Number(n)||0).toFixed(d);}
+function toggleAiHist(prefix){
+  const el=document.getElementById(prefix+'HistExtra'),btn=document.getElementById(prefix+'HistToggleBtn');
+  if(!el||!btn)return;
+  const show=el.style.display==='none';
+  el.style.display=show?'block':'none';
+  btn.textContent=show?'閉じる':`他${btn.dataset.count}件を表示`;
+}
+function buildAiHistCol(title,items,color,sign,decimals,emptyMsg,idPrefix,delBtn){
+  const sorted=(items||[]).slice().sort((a,b)=>(Number(b.ts)||0)-(Number(a.ts)||0));
+  const recent=sorted.slice(0,3),rest=sorted.slice(3);
+  const row=d=>`<div style="display:flex;align-items:center;gap:6px;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px;">
+      <span style="color:var(--text2);white-space:nowrap;">${escHtml(d.date||'')}</span>
+      <span style="flex:1;color:${color};font-weight:700;">${sign}${fmtUsd(d.usd,decimals)}</span>
+      ${delBtn?`<button onclick="removeAiDeposit('${d.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:11px;padding:0 2px;">✕</button>`:''}
+    </div>`;
+  const recentHtml=recent.map(row).join('')||`<div style="font-size:10px;color:var(--text2);padding:4px 0;">${emptyMsg}</div>`;
+  const toggle=rest.length?`<div id="${idPrefix}HistExtra" style="display:none;">${rest.map(row).join('')}</div><button onclick="toggleAiHist('${idPrefix}')" id="${idPrefix}HistToggleBtn" data-count="${rest.length}" style="background:none;border:none;color:var(--accent);font-size:10px;cursor:pointer;padding:4px 0;">他${rest.length}件を表示</button>`:'';
+  return `<div style="flex:1;min-width:0;">
+    <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">${title}</div>
+    ${recentHtml}${toggle}
+  </div>`;
+}
 function renderAiCost(){
   const card=document.getElementById('aiCostCard');if(!card)return;
   card.style.display='block';
   const st=aiUsdStore();
-  const fmt=(n,d=2)=>'$'+(Number(n)||0).toFixed(d);
   const dep=(st.deposits||[]).reduce((a,d)=>a+(Number(d.usd)||0),0);
   const used=Number(st.spent)||0;
   const bal=dep-used;
-  const rows=(st.deposits||[]).slice().sort((a,b)=>String(a.date)<String(b.date)?-1:1).map(d=>
-    `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;">
-      <span style="color:var(--text2);">${escHtml(d.date||'')}</span>
-      <span style="flex:1;color:var(--green);font-weight:700;">+${fmt(d.usd)}</span>
-      <button onclick="removeAiDeposit('${d.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:0 2px;">✕</button>
-    </div>`).join('');
-  const depList=rows||`<div style="font-size:11px;color:var(--text2);padding:4px 0;">入金記録なし。下のボタンで、Consoleに入れた額（例: $5）を記録できます。</div>`;
+  const depCol=buildAiHistCol('入金履歴',st.deposits,'var(--green)','+',2,'入金記録なし。右上のボタンから記録できます。','dep',true);
+  const useCol=buildAiHistCol('消費履歴',st.usageLog,'var(--red)','-',4,'まだ使用履歴なし。','use',false);
   document.getElementById('aiCostBody').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
       <span style="font-size:11px;color:var(--text2);">残高</span>
-      <span style="font-size:26px;font-weight:800;color:${bal<=0?'var(--red)':'var(--text)'};">${fmt(bal)}</span>
+      <span style="font-size:26px;font-weight:800;color:${bal<=0?'var(--red)':'var(--text)'};">${fmtUsd(bal)}</span>
     </div>
     <div style="display:flex;gap:14px;font-size:11px;color:var(--text2);margin-bottom:12px;">
-      <span>合計入金 <b style="color:var(--green);">${fmt(dep)}</b></span>
-      <span>合計使用 <b style="color:var(--red);">${fmt(used,4)}</b></span>
+      <span>合計入金 <b style="color:var(--green);">${fmtUsd(dep)}</b></span>
+      <span>合計使用 <b style="color:var(--red);">${fmtUsd(used,4)}</b></span>
     </div>
-    <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">入金履歴</div>
-    ${depList}`;
+    <div style="display:flex;gap:16px;">${depCol}${useCol}</div>`;
 }
 function renderAiPage(){
   readInputs();const t=computeTotals();
