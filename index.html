@@ -392,7 +392,7 @@ input:focus,select:focus{border-color:var(--accent);}
         </select>
       </div>
     </div>
-    <div class="form-field" style="margin-bottom:10px;"><label>✍️ 気分を自由入力（任意・入れるとこちら優先）</label><input type="text" id="aiMoodFree" placeholder="例: 温泉でだらけたい、映画みたいな一日 など" oninput="localStorage.setItem('ai_last_moodfree',this.value)"></div>
+    <div class="form-field" style="margin-bottom:10px;"><label>✍️ 細かい指示（任意・入れるとこちら優先）</label><input type="text" id="aiMoodFree" placeholder="例: 友達と2人で6時間くらいご飯含めて遊びたい" oninput="localStorage.setItem('ai_last_moodfree',this.value)"></div>
     <div class="form-field" style="margin-bottom:10px;"><label>💰 予算の考え方</label>
       <select id="aiBudgetBasis" onchange="localStorage.setItem('ai_budget_basis',this.value);renderAiPage&&renderAiPage()">
         <option value="cash">今月の余り（現金・今月給料）だけで考える</option>
@@ -2767,19 +2767,20 @@ async function generateAIProposal(){
   const txt=(state.expenses||[]).map(e=>`・${e.name}(${e.cat}): ${adopted(e)}円${e.confirmed?' 確定':' 見込み'}${(e.memoTags&&e.memoTags.length)?' '+e.memoTags.join('/'):''}`).join('\n');
   const loc=(document.getElementById('aiLocation')?.value||'').trim();
   const moodFree=(document.getElementById('aiMoodFree')?.value||'').trim();
-  const mood=moodFree||(document.getElementById('aiMood')?.value||'').trim();
+  const moodPreset=(document.getElementById('aiMood')?.value||'').trim();
+  const mood=moodFree||moodPreset;
   // バリエーションを出すため毎回ランダムなテーマ軸を1つ選んで重み付け
   const THEME_AXES=['五感を刺激する体験','地元の知らない場所の開拓','一人で没頭できる新しい趣味の入口','体を動かすアクティブ系','静かに心を整える系','学び・知的好奇心系','安く済む小さな冒険','季節を感じる外遊び','ものづくり・クラフト系','食の新規開拓'];
   const seed=THEME_AXES[Math.floor(Math.random()*THEME_AXES.length)];
   const locLine=loc?`【希望エリア】${loc}（この近辺で行ける場所を優先。難しければ近隣でも可）`:`【エリア】福島県・須賀川/郡山周辺を基本に`;
-  const moodLine=mood?`【今の気分】「${mood}」→ この気分に合うトーンの提案を多めに`:`【気分】特に指定なし。バランスよく`;
+  const moodLine=moodFree?`【細かい指示】「${moodFree}」→ 人数・時間・やりたいこと等の条件は最優先で必ず満たすこと`:(moodPreset?`【今の気分】「${moodPreset}」→ この気分に合うトーンの提案を多めに`:`【気分】特に指定なし。バランスよく`);
   const prompt=`あなたは「日常に新しい刺激を与える体験キュレーター」です。家計管理アプリ内にいますが、節約の話より"いつもと違う休日"の具体提案がメイン。
 ${locLine}
 ${moodLine}
 【使える予算】${basisLabel}＝${budget.toLocaleString()}円（残り${dL}日）
 【★予算の考え方（重要）★】この${budget.toLocaleString()}円は「残り期間トータルで自由に使える額」。1日あたり${pd.toLocaleString()}円はあくまで目安で上限ではない。「1日${pd.toLocaleString()}円しか使えない」ではなく「残り${dL}日のうちの"ある休日"に、この予算の範囲でどう使うと満たされるか」で考える。1回の休日にまとめて使ってOK。
 【★予算上限★】各プランの amount は ${Math.max(budget,0).toLocaleString()}円 以下。超える提案は出さない。0/マイナスなら0〜数百円の案のみ。
-【入力チェック（最優先）】もし【希望エリア】が実在しない地名や場所と無関係な語（例:「パソコン」）なら、その場所は使えないと判断し advice 冒頭で「"${loc}"って場所が見つからなかったから、エリア指定なしで考えるね」と添えて福島・須賀川/郡山周辺として提案。もし【今の気分】が意味不明な語（例:「マウス」）なら気分は無視して"おまかせ"扱い（こじつけない）。
+【入力チェック（最優先）】もし【希望エリア】が実在しない地名や場所と無関係な語（例:「パソコン」）なら、その場所は使えないと判断し advice 冒頭で「"${loc}"って場所が見つからなかったから、エリア指定なしで考えるね」と添えて福島・須賀川/郡山周辺として提案。もし【今の気分】または【細かい指示】が意味不明な語（例:「マウス」）なら無視して"おまかせ"扱い（こじつけない）。
 【最近の支出】\n${txt||'なし'}
 【提案の方向性】自宅でのゲームや動画視聴など"いつもの過ごし方"だけで完結しない、新鮮で具体的な休日の体験を中心に。特定の人物像や個人の趣味を決めつけず、誰でも気軽に試せる切り口で提案する
 【今回フォーカスしてほしいテーマ軸】「${seed}」を中心に据えつつ、他の方向性も1〜2個混ぜる
