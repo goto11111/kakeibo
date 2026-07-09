@@ -122,6 +122,13 @@ input:focus,select:focus{border-color:var(--accent);}
 .spend-line-total{border-top:1px solid var(--border);margin-top:3px;padding-top:5px;}
 .spend-line-total span:first-child{color:var(--text);font-weight:700;font-size:12px;}
 .spend-line-total span:last-child{font-size:16px;font-weight:800;}
+/* スマホ幅では食費／自由費を縦積みにして、現金・クレカ2列に余裕を持たせる（PCは横2列のまま） */
+@media (max-width:520px){
+  .spend-summary{grid-template-columns:1fr;}
+  .spend-col{padding:8px 12px;}
+  .spend-line{font-size:12px;}
+  .spend-line span:last-child{font-size:14px;}
+}
 .hint{font-size:11px;color:var(--text2);background:var(--surface2);border:1px dashed var(--border);border-radius:var(--rs);padding:8px 10px;margin-bottom:8px;line-height:1.5;}
 .btn{background:var(--accent);color:#fff;border:none;border-radius:var(--rs);padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;width:100%;}
 .btn-sm{padding:5px 10px;font-size:11px;width:auto;}
