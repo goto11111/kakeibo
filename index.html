@@ -232,7 +232,7 @@ input:focus,select:focus{border-color:var(--accent);}
 <div id="app">
 <div class="header">
   <div class="header-top">
-    <div class="header-title">💰 家計管理</div>
+    <div class="header-title">💰 家計管理 <span id="appVersion" style="font-size:9px;color:var(--text2);font-weight:400;letter-spacing:0.3px;"></span></div>
     <div class="month-nav">
       <button onclick="changeMonth(-1)">◀</button>
       <span id="monthLabel"></span>
@@ -684,6 +684,8 @@ input:focus,select:focus{border-color:var(--accent);}
 </div><!-- /#app -->
 
 <script>
+// アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
+const APP_VERSION='v2026.07.09';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -1249,6 +1251,7 @@ function init(){
   if(!localStorage.getItem('kakeibo_settings')){
     saveSettings({salary:195000,foodBudget:10000,fixed:fixedTemplate()});
   }
+  const av=document.getElementById('appVersion');if(av)av.textContent=APP_VERSION;
   const now=new Date();currentYear=now.getFullYear();currentMonth=now.getMonth();
   migrateSchedulesToGlobal(); // 月stateの予定をグローバルへ統合
   migrateGoals(); // 積立目標を新モデルへ移行
