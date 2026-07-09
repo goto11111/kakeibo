@@ -685,7 +685,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.09';
+const APP_VERSION='v2026.07.09b';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -711,53 +711,9 @@ function fixedTemplate(){return [
 
 function exp(name,cat,amount,memo,confirmed){return {name,cat,mikomi:0,amount:amount||0,confirmed:confirmed!==false,memo:memo||'',pay:'PayPayカード',paid:false,history:[]};}
 
-// ═══ 5月（202605）実データ ═══
-const MAY2026={
-  salary:242415,carryover:6000,foodBudget:9000,goalSavings:{g_debt:30000},paypayTotal:0,
-  fixed:(function(){const f=fixedTemplate();
-    // 5月の実額（confirmed）
-    const act={'携帯':6878,'水道':3436,'ガス電気':7604,'ガソリン':14348,'ネット（ドコモ5G）':5283,'任意保険':5770,'車代':14071,'駐車場代':5346,'奨学金':17000,'母に返すやつ':10000,'髪切り':7000,'たばこ':9300,'AI課金':3400,'dアニメストア':660};
-    f.forEach(x=>{if(act[x.name]!==undefined){x.amount=act[x.name];x.confirmed=true;}});
-    return f;})(),
-  expenses:[
-    exp('飲み物','食費',937),exp('納豆','食費',136),exp('米','食費',0),
-    exp('高速料金','自由費',5780),exp('約定返済','自由費',4000,'●見込み（5月分）'),
-    exp('軽自動車税','自由費',12900,'●見込み（5月分）'),exp('マック','食費',1730),
-    exp('レッドブル','食費',460),exp('コンビニごはん','食費',2970),exp('履歴書写真','自由費',1000),
-    exp('キムチ','自由費',406),exp('アイス','食費',338),exp('コンビニ','自由費',1091),
-    exp('虹が先ムビチケ','自由費',3600),exp('コンビニ','食費',834),exp('コンビニ','食費',1222),
-    exp('自販機','食費',310),exp('ラーメン','自由費',1080),exp('Yシャツ半袖5枚','自由費',10160,'準備金'),
-    exp('白Tシャツ2枚','自由費',2580,'準備金'),exp('半袖Tシャツ','自由費',1990,'準備金'),exp('靴下','自由費',990,'準備金'),
-    exp('電源タップ','自由費',1408,'準備金'),exp('ウエットティッシュ','自由費',110,'準備金'),
-    exp('ポケットティッシュ','自由費',598,'準備金'),exp('圧縮袋','自由費',1964,'準備金'),
-    exp('esim','自由費',2400,'見込み'),exp('けんとくん誕プレ','自由費',700),exp('マック','自由費',810),
-    exp('Dからの選別','自由費',1500),exp('パチンコ','自由費',5000),
-  ],
-  schedules:{},
-};
-
-// ═══ 6月（202606）実データ ═══
-const JUNE2026={
-  salary:195000,carryover:89688,foodBudget:10000,goalSavings:{g_debt:40000},paypayTotal:0,
-  fixed:(function(){const f=fixedTemplate();
-    const act={'奨学金':17000,'母に返すやつ':10000,'髪切り':5000,'AI課金':3400,'dアニメストア':660};
-    f.forEach(x=>{if(act[x.name]!==undefined){x.amount=act[x.name];x.confirmed=true;}});
-    // メモ（ガソリン・たばこは見込み採用のまま、実績メモ）
-    f.find(x=>x.name==='ガソリン').memo='実績5249';
-    f.find(x=>x.name==='たばこ').memo='実績3720';
-    return f;})(),
-  expenses:[
-    exp('飲み物','食費',2000,'実績1098'),exp('納豆','食費',600),exp('米','食費',0),
-    exp('約定返済','自由費',4000,'●見込み（5月分）'),exp('自販機','自由費',1100),
-    exp('コンビニ','自由費',4510),exp('外食','食費',1180),exp('快活クラブ','自由費',2016),
-    exp('チケット代','自由費',15000,'当たってても外れてても'),exp('Uber','自由費',4229),
-    exp('歯磨き粉','自由費',216),exp('業務スーパー','食費',2832),exp('paypayチャージ','自由費',2000),
-    exp('新幹線','自由費',14440,'後で帰る（須賀川⇔新白河）'),
-    exp('コインパーキング','自由費',1600,'後で帰る（200×8=1600）'),
-    exp('スーツケース','自由費',21800,'準備金'),
-  ],
-  schedules:{},
-};
+// 以前ここに 2026年5月・6月の初期サンプル（実データ）を直書きしていたが、
+// 公開ページに個人情報が出るため削除。各月は未保存なら defaultState() から開始する。
+// 過去に使った実データは各端末の localStorage / Gist バックアップに保存済み。
 
 // ──────────────────────
 // KEY / LOAD / SAVE
@@ -806,8 +762,6 @@ function loadData(){
   const saved=localStorage.getItem(getKey(currentYear,currentMonth));
   let d;
   if(saved) d=migrate(JSON.parse(saved));
-  else if(currentYear===2026&&currentMonth===4) d=migrate(JSON.parse(JSON.stringify(MAY2026)));
-  else if(currentYear===2026&&currentMonth===5) d=migrate(JSON.parse(JSON.stringify(JUNE2026)));
   else d=migrate(defaultState());
   absorbStateSchedules(d); // state内の予定をグローバルへ統合
   return d;
