@@ -2742,10 +2742,16 @@ function renderAiCost(){
       <span>合計入金 <b style="color:var(--green);">${fmt(dep)}</b></span>
       <span>合計使用 <b style="color:var(--red);">${fmt(used,4)}</b></span>
     </div>
-    <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">使用履歴</div>
-    ${useList}${useMore}
-    <div style="font-size:10px;color:var(--text2);font-weight:700;margin:12px 0 2px;">入金履歴</div>
-    ${depList}${depMore}`;
+    <div style="display:flex;gap:16px;align-items:flex-start;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">使用履歴</div>
+        ${useList}${useMore}
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">入金履歴</div>
+        ${depList}${depMore}
+      </div>
+    </div>`;
 }
 function renderAiPage(){
   readInputs();const t=computeTotals();
