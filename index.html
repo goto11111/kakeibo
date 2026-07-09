@@ -252,8 +252,8 @@ input:focus,select:focus{border-color:var(--accent);}
 <!-- HOME -->
 <div id="page-home" class="page active">
   <div class="summary-grid">
-    <div class="scard"><div class="scard-label">💴 自由費残り</div><div class="scard-value val-green" id="homeJiyuLeft">---</div><div class="scard-sub">円</div></div>
-    <div class="scard"><div class="scard-label">🍚 食費残り</div><div class="scard-value val-yellow" id="homeShokuLeft">---</div><div class="scard-sub">円</div></div>
+    <div class="scard"><div class="scard-label">💴 自由費残り（合計）</div><div class="scard-value val-green" id="homeJiyuLeft">---</div><div class="scard-sub">現金 <b id="homeJiyuCash">-</b> ／ クレカ <b id="homeJiyuCard">-</b></div></div>
+    <div class="scard"><div class="scard-label">🍚 食費残り（合計）</div><div class="scard-value val-yellow" id="homeShokuLeft">---</div><div class="scard-sub">現金 <b id="homeShokuCash">-</b> ／ クレカ <b id="homeShokuCard">-</b></div></div>
     <div class="scard"><div class="scard-label">📅 月残り日数</div><div class="scard-value val-accent" id="homeDaysLeft">---</div><div class="scard-sub">日</div></div>
     <div class="scard"><div class="scard-label">⭐ 1日あたり</div><div class="scard-value val-yellow" id="homePerDay">---</div><div class="scard-sub">円/日（自由費）</div></div>
   </div>
@@ -685,7 +685,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.09b';
+const APP_VERSION='v2026.07.09c';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -2080,7 +2080,7 @@ function calcTotalsOnly(){
     const v=Number(el.textContent.replace(/[^\d-]/g,''))||0;
     el.className=v>=0?'val-green':'val-red';
   });
-  updateHomeStats(t);
+  updateHomeStats(t,tN);
 }
 function calcAll(){
   readInputs();renderGoals();calcTotalsOnly();renderFixed();renderExpenses();saveData();
@@ -2184,7 +2184,8 @@ function renderPoolPanel(){
   const tl=document.getElementById('methodTotalLeft');
   if(tl){const tot=aTotal+bTotal;tl.textContent=money(tot);tl.className=cls(tot);}
 }
-function updateHomeStats(t){
+function updateHomeStats(t,tN){
+  tN=tN||{jiyuLeft:0,foodLeft:0}; // 来月プール（クレカ分）。未指定時は0扱い
   const now=new Date();
   const lastDay=new Date(currentYear,currentMonth+1,0).getDate();
   let daysLeft=(now.getFullYear()===currentYear&&now.getMonth()===currentMonth)?lastDay-now.getDate()+1:lastDay;
@@ -2199,8 +2200,13 @@ function updateHomeStats(t){
   document.getElementById('shokuUsed').textContent=t.foodUsed.toLocaleString();
   document.getElementById('shokuBudget').textContent=(state.foodBudget||0).toLocaleString();
   const sv=(id,v,cls)=>{const el=document.getElementById(id);if(!el)return;el.textContent=v.toLocaleString();el.className='scard-value '+cls;};
-  sv('homeJiyuLeft',t.jiyuLeft,t.jiyuLeft>=0?'val-green':'val-red');
-  sv('homeShokuLeft',t.foodLeft,t.foodLeft>=0?'val-yellow':'val-red');
+  const homeSub=(id,v)=>{const el=document.getElementById(id);if(el){el.textContent='¥'+Math.round(v).toLocaleString();el.style.color=v>=0?'var(--green)':'var(--red)';}};
+  // 合計（今月給料＝現金 ＋ 来月給料＝クレカ）をメイン表示し、内訳を下に出す
+  const jiyuTotal=t.jiyuLeft+tN.jiyuLeft, foodTotal=t.foodLeft+tN.foodLeft;
+  sv('homeJiyuLeft',jiyuTotal,jiyuTotal>=0?'val-green':'val-red');
+  homeSub('homeJiyuCash',t.jiyuLeft);homeSub('homeJiyuCard',tN.jiyuLeft);
+  sv('homeShokuLeft',foodTotal,foodTotal>=0?'val-yellow':'val-red');
+  homeSub('homeShokuCash',t.foodLeft);homeSub('homeShokuCard',tN.foodLeft);
   document.getElementById('homeDaysLeft').textContent=daysLeft;
   document.getElementById('homePerDay').textContent=perDay.toLocaleString();
   const hc=document.getElementById('homeCardRows');
