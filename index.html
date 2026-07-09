@@ -724,6 +724,28 @@ const JUNE2026={
 function ym(y,m){return y*100+(m+1);}  // YYYYMM数値
 function getKey(y,m){return `kakeibo_${y}_${String(m+1).padStart(2,'0')}`;}
 
+// ── localStorage の JSON パースキャッシュ ──
+// 集計（monthTotalsFor 等）は1キー入力ごとに全月データを何度も JSON.parse していたため、
+// 月数が増えるほど重くなっていた。パース結果をキー単位でキャッシュし、書き込みのたびに
+// 世代番号(_lsGen)を進めて丸ごと無効化する（＝直前の書き込み内容は必ず反映される）。
+// 返り値は読み取り専用として扱うこと（破壊的に変更する用途では load*() を使う）。
+let _lsGen=0;
+const _lsCache=new Map();
+function bumpLsGen(){_lsGen++;}            // localStorage 書き込み後に必ず呼ぶ
+function lsReadJSON(key){
+  const hit=_lsCache.get(key);
+  if(hit&&hit.gen===_lsGen)return hit.val;
+  let val=null;
+  try{val=JSON.parse(localStorage.getItem(key));}catch(e){val=null;}
+  _lsCache.set(key,{gen:_lsGen,val});
+  return val;
+}
+// 目標定義の読み取り専用アクセス（変更しないこと。変更する場合は loadGoals()）
+function goalsRO(){return lsReadJSON('kakeibo_goals')||[];}
+// 設定テンプレの読み取り専用アクセス（変更しないこと。変更する場合は loadSettings()）
+// cardCycles() が支出/固定費1件ごとに呼ばれ、毎回 settings をパースしていたためキャッシュ経由にする
+function settingsRO(){return lsReadJSON('kakeibo_settings')||{salary:195000,foodBudget:10000,fixed:fixedTemplate()};}
+
 function defaultState(){
   // 設定テンプレの固定費を継承（startMonth付き固定費を未来月にも反映するため）
   let fixedSrc;
@@ -766,10 +788,8 @@ function absorbStateSchedules(d){
 }
 
 // ── グローバル返金台帳（月stateを汚さないため分離）──
-function loadRefunds(){
-  try{return JSON.parse(localStorage.getItem('kakeibo_refunds')||'[]');}catch(e){return[];}
-}
-function saveRefunds(arr){localStorage.setItem('kakeibo_refunds',JSON.stringify(arr));}
+function loadRefunds(){return lsReadJSON('kakeibo_refunds')||[];}
+function saveRefunds(arr){localStorage.setItem('kakeibo_refunds',JSON.stringify(arr));bumpLsGen();}
 // 指定スケジュールIDの返金を全削除
 function removeRefundsBySched(schedId){
   if(!schedId)return;
@@ -785,7 +805,7 @@ function refundsForCurrentMonth(){
 function loadSchedules(){
   try{return JSON.parse(localStorage.getItem('kakeibo_schedules')||'{}')||{};}catch(e){return{};}
 }
-function saveSchedulesStore(){localStorage.setItem('kakeibo_schedules',JSON.stringify(schedules));}
+function saveSchedulesStore(){localStorage.setItem('kakeibo_schedules',JSON.stringify(schedules));bumpLsGen();}
 // 旧データ移行：各月stateに散らばっていた schedules をグローバルへ統合
 function migrateSchedulesToGlobal(){
   const glob=loadSchedules();
@@ -807,6 +827,7 @@ function migrateSchedulesToGlobal(){
         });
         delete st.schedules; // 月stateからは除去
         localStorage.setItem(k,JSON.stringify(st));
+        bumpLsGen();
       }
     }catch(e){}
   }
@@ -823,13 +844,13 @@ function loadSettings(){
   // 初期テンプレ：JUNEの値をベース
   return {salary:195000,foodBudget:10000,fixed:fixedTemplate()};
 }
-function saveSettings(s){localStorage.setItem('kakeibo_settings',JSON.stringify(s));}
+function saveSettings(s){localStorage.setItem('kakeibo_settings',JSON.stringify(s));bumpLsGen();}
 
 // ── グローバル目標定義 ──
 function loadGoals(){
   try{return JSON.parse(localStorage.getItem('kakeibo_goals')||'[]');}catch(e){return[];}
 }
-function saveGoals(goals){localStorage.setItem('kakeibo_goals',JSON.stringify(goals));}
+function saveGoals(goals){localStorage.setItem('kakeibo_goals',JSON.stringify(goals));bumpLsGen();}
 
 
 // 全月の実積立額を合計（特定goalIdについて）
@@ -840,7 +861,7 @@ function totalSavedForGoal(goalId){
     if(!k||!k.startsWith('kakeibo_2')&&!k.startsWith('kakeibo_1'))continue; // 月データのみ
     if(k==='kakeibo_goals')continue;
     try{
-      const st=JSON.parse(localStorage.getItem(k));
+      const st=lsReadJSON(k);
       if(st&&st.goalSavings&&st.goalSavings[goalId]!=null){
         total+=Number(st.goalSavings[goalId])||0;
       }
@@ -870,7 +891,7 @@ function goalBudgetStartYM(g){return goalDrawStartYM(g);}
 // goalIdの「月別実積立額マップ」 { YYYYMM(予算月): 額 }。表示中の当月は未保存のメモリ値を優先。
 // 開始（予算月）より前の積立は集計に含めない。
 function goalSavingsByMonth(goalId){
-  const g=loadGoals().find(x=>x.id===goalId);
+  const g=goalsRO().find(x=>x.id===goalId);
   const budgetStartYM=goalBudgetStartYM(g);
   const map={};
   for(let i=0;i<localStorage.length;i++){
@@ -879,7 +900,7 @@ function goalSavingsByMonth(goalId){
     if(!mm)continue;
     const kym=Number(mm[1])*100+Number(mm[2]);
     try{
-      const st=JSON.parse(localStorage.getItem(k));
+      const st=lsReadJSON(k);
       if(st&&st.goalSavings&&st.goalSavings[goalId]!=null)map[kym]=Number(st.goalSavings[goalId])||0;
     }catch(e){}
   }
@@ -954,7 +975,7 @@ function defaultCardCycles(){
 // サイクルを持つ支払い方法（＝カード）の名前一覧
 function cardNames(){const c=cardCycles();return Object.keys(c).filter(k=>c[k]);}
 function cardCycles(){
-  const s=loadSettings();
+  const s=settingsRO();
   const merged=Object.assign({},defaultCardCycles(),s.cardCycles||{});
   merged['現金']=null;merged['口座振替']=null; // 即時扱い（今月給料プール）に固定
   return merged;
@@ -1061,7 +1082,7 @@ function goalLinkedItems(g){
     const kym=Number(mm[1])*100+Number(mm[2]);
     let exps;
     if(k===curKey){exps=state.expenses||[];curSeen=true;}
-    else{try{const st=JSON.parse(localStorage.getItem(k));exps=(st&&st.expenses)||[];}catch(e){exps=[];}}
+    else{const st=lsReadJSON(k);exps=(st&&st.expenses)||[];}
     exps.forEach(e=>push(e,kym));
   }
   if(!curSeen){(state.expenses||[]).forEach(e=>push(e,curYM));}
@@ -1135,6 +1156,7 @@ function migrate(d){
 
 function saveData(){
   localStorage.setItem(getKey(currentYear,currentMonth),JSON.stringify(state));
+  bumpLsGen();
 }
 // 自動保存（バックグラウンドでのクラウド自動同期）は完全撤廃。
 // 保存は「保存」ボタンを押した時のみ（ローカル保存／クラウド保存）。
@@ -1577,6 +1599,7 @@ function propagateFixedToFuture(item){
       if(ex){ex.budget=item.budget;ex.pay=item.pay;ex.startMonth=item.startMonth;}
       else st.fixed.push({name:item.name,budget:item.budget,amount:0,confirmed:false,pay:item.pay,memo:'',memoTags:[],history:[],startMonth:item.startMonth});
       localStorage.setItem(k,JSON.stringify(st));
+      bumpLsGen();
     }catch(e){}
   }
 }
@@ -1786,7 +1809,7 @@ function readInputs(){
 // 支出が紐づく「貯金」goalを返す（goalId一致 or タグ一致）。返済goalや無関係はnull。
 function expenseSavingGoal(e){
   if(!e)return null;
-  const goals=loadGoals();
+  const goals=goalsRO();
   for(const g of goals){if(_expLinksGoal(e,g))return g;}
   return null;
 }
@@ -1889,7 +1912,7 @@ function monthTotalsFor(kym){
   const carryExtraTotal=(st.carryExtra||[]).reduce((s,c)=>s+(Number(c.amt)||0),0);
   const income=(Number(st.salary)||0)+(Number(st.carryover)||0)+carryExtraTotal+refund.total;
   const foodBudget=Number(st.foodBudget)||0;
-  const goalMonthly=loadGoals().reduce((s,g)=>s+goalDeductForMonth(g,kym,st),0);
+  const goalMonthly=goalsRO().reduce((s,g)=>s+goalDeductForMonth(g,kym,st),0);
   const savingLinked=(e)=>!!expenseSavingGoal(e);
   // 当月分：この月の給料から引かれるもの（現金・口座振替。カードは翌月なので除外）
   let fixedTotal=0,foodUsed=0,jiyuUsed=0,ownCardFixed=0,ownCardVar=0,ownCardFood=0,ownCardJiyu=0;
@@ -1998,7 +2021,7 @@ function stateForYM(kym){
   const cur=ym(currentYear,currentMonth);
   if(kym===cur)return state;
   const y=Math.floor(kym/100),m=(kym%100)-1;
-  try{return JSON.parse(localStorage.getItem(getKey(y,m)))||null;}catch(e){return null;}
+  return lsReadJSON(getKey(y,m))||null; // 読み取り専用（集計用）。編集は当月stateで行う
 }
 // あるビュー月(kym)の支出を、支払い方法のサイクルからどの給料月プールに乗せるか
 // （日付なしメモは月末購入=遅め寄せで判定。カレンダー紐づき等の日付ありは将来exact化予定）
@@ -2606,6 +2629,7 @@ function saveSchedule(){
         }
         prevState.expenses.push(mkRow(keep));
         localStorage.setItem(chargeYM,JSON.stringify(prevState));
+        bumpLsGen();
       }
       // ── この明細が経費・立替なら返金台帳へ（明細ごと）──
       if(Number(it.isExpense)>0&&it.refundDate){
@@ -2644,6 +2668,7 @@ function cleanupScheduleLinks(schedId){
       if(st&&st.expenses&&st.expenses.some(e=>e.schedId===schedId)){
         st.expenses=st.expenses.filter(e=>e.schedId!==schedId);
         localStorage.setItem(k,JSON.stringify(st));
+        bumpLsGen();
       }
     }catch(e){}
   }
@@ -3127,6 +3152,7 @@ function restoreAllData(data,fullReplace){
     if(skip.has(k))return;
     try{localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v));}catch(e){}
   });
+  bumpLsGen();
 }
 
 function setSyncStatus(msg,color='var(--text2)'){
