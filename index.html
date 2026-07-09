@@ -2675,7 +2675,11 @@ function addAiSpendUsd(usage){
   const inTok=(Number(usage.input_tokens)||0)+(Number(usage.cache_read_input_tokens)||0)+(Number(usage.cache_creation_input_tokens)||0);
   const outTok=Number(usage.output_tokens)||0;
   const usd=inTok/1e6*AI_PRICE_IN+outTok/1e6*AI_PRICE_OUT;
-  const st=aiUsdStore();st.spent=(Number(st.spent)||0)+usd;saveAiUsd(st);renderAiCost();
+  const st=aiUsdStore();
+  st.spent=(Number(st.spent)||0)+usd;
+  st.uses=st.uses||[];
+  st.uses.push({id:'u'+Date.now(),ts:new Date().toISOString(),usd}); // いつ・いくら消費したかの1件ログ
+  saveAiUsd(st);renderAiCost();
 }
 function addAiDeposit(){
   const a=prompt('入金額（ドル）を入力\n例: 5  → $5を入金',' ');
@@ -2695,21 +2699,40 @@ function removeAiDeposit(id){
   const st=aiUsdStore();st.deposits=(st.deposits||[]).filter(x=>x.id!==id);
   saveAiUsd(st);renderAiCost();
 }
+// 履歴の開閉状態（直近3件のみ表示、それ以降はしまう）
+let aiUseExpanded=false, aiDepExpanded=false;
+function toggleAiUse(){aiUseExpanded=!aiUseExpanded;renderAiCost();}
+function toggleAiDep(){aiDepExpanded=!aiDepExpanded;renderAiCost();}
 function renderAiCost(){
   const card=document.getElementById('aiCostCard');if(!card)return;
   card.style.display='block';
   const st=aiUsdStore();
   const fmt=(n,d=2)=>'$'+(Number(n)||0).toFixed(d);
+  const fmtTs=(iso)=>{const d=new Date(iso);if(isNaN(d))return String(iso||'');return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;};
   const dep=(st.deposits||[]).reduce((a,d)=>a+(Number(d.usd)||0),0);
   const used=Number(st.spent)||0;
   const bal=dep-used;
-  const rows=(st.deposits||[]).slice().sort((a,b)=>String(a.date)<String(b.date)?-1:1).map(d=>
+  // 使用履歴（新しい順・直近3件、残りは開閉）
+  const uses=(st.uses||[]).slice().sort((a,b)=>String(a.ts)<String(b.ts)?1:-1);
+  const useShown=aiUseExpanded?uses:uses.slice(0,3);
+  const useRows=useShown.map(u=>
+    `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;">
+      <span style="color:var(--text2);">${escHtml(fmtTs(u.ts))}</span>
+      <span style="flex:1;text-align:right;color:var(--red);font-weight:700;">-${fmt(u.usd,4)}</span>
+    </div>`).join('');
+  const useList=useRows||`<div style="font-size:11px;color:var(--text2);padding:4px 0;">まだ利用履歴はありません。</div>`;
+  const useMore=uses.length>3?`<button onclick="toggleAiUse()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;padding:6px 0;">${aiUseExpanded?'▲ 閉じる':`▼ もっと見る（残り${uses.length-3}件）`}</button>`:'';
+  // 入金履歴（新しい順・直近3件、残りは開閉）
+  const deps=(st.deposits||[]).slice().sort((a,b)=>String(a.date)<String(b.date)?1:-1);
+  const depShown=aiDepExpanded?deps:deps.slice(0,3);
+  const depRows=depShown.map(d=>
     `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12px;">
       <span style="color:var(--text2);">${escHtml(d.date||'')}</span>
       <span style="flex:1;color:var(--green);font-weight:700;">+${fmt(d.usd)}</span>
       <button onclick="removeAiDeposit('${d.id}')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;padding:0 2px;">✕</button>
     </div>`).join('');
-  const depList=rows||`<div style="font-size:11px;color:var(--text2);padding:4px 0;">入金記録なし。下のボタンで、Consoleに入れた額（例: $5）を記録できます。</div>`;
+  const depList=depRows||`<div style="font-size:11px;color:var(--text2);padding:4px 0;">入金記録なし。下のボタンで、Consoleに入れた額（例: $5）を記録できます。</div>`;
+  const depMore=deps.length>3?`<button onclick="toggleAiDep()" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;padding:6px 0;">${aiDepExpanded?'▲ 閉じる':`▼ もっと見る（残り${deps.length-3}件）`}</button>`:'';
   document.getElementById('aiCostBody').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
       <span style="font-size:11px;color:var(--text2);">残高</span>
@@ -2719,8 +2742,10 @@ function renderAiCost(){
       <span>合計入金 <b style="color:var(--green);">${fmt(dep)}</b></span>
       <span>合計使用 <b style="color:var(--red);">${fmt(used,4)}</b></span>
     </div>
-    <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">入金履歴</div>
-    ${depList}`;
+    <div style="font-size:10px;color:var(--text2);font-weight:700;margin-bottom:2px;">使用履歴</div>
+    ${useList}${useMore}
+    <div style="font-size:10px;color:var(--text2);font-weight:700;margin:12px 0 2px;">入金履歴</div>
+    ${depList}${depMore}`;
 }
 function renderAiPage(){
   readInputs();const t=computeTotals();
