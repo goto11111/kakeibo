@@ -206,6 +206,26 @@ input:focus,select:focus{border-color:var(--accent);}
 .dur-btn:hover{border-color:var(--accent);background:#2f2a4a;}
 .dur-btn:active{background:var(--accent);}
 .refund-badge{font-size:9px;padding:2px 6px;border-radius:999px;background:#1a2e2e;color:#4dd;margin-right:3px;}
+/* ── 振り返り（使用率＋内訳）──
+   カテゴリ配色は dataviz の検証済みカテゴリカル配色（dark, ΔE/コントラスト全PASS）。
+   固定の並び順で使用し、循環させない。*/
+:root{--c-fixed:#3987e5;--c-food:#199e70;--c-jiyu:#c98500;--c-card:#9085e9;--c-save:#e66767;}
+.rv-legend{display:flex;flex-wrap:wrap;gap:8px 12px;margin-bottom:12px;}
+.rv-leg{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--text2);}
+.rv-dot{width:10px;height:10px;border-radius:3px;flex-shrink:0;}
+.rv-month{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px;margin-bottom:10px;}
+.rv-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px;}
+.rv-mlabel{font-size:14px;font-weight:800;}
+.rv-rate{font-size:20px;font-weight:800;letter-spacing:-0.5px;}
+.rv-sub{font-size:10px;color:var(--text2);margin-left:6px;font-weight:400;}
+.rv-bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--surface2);border:1px solid var(--border);}
+.rv-seg{height:100%;box-shadow:0 0 0 1px var(--surface) inset;}
+.rv-track-rest{flex:1;}
+.rv-detail{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:8px;font-size:11px;color:var(--text2);}
+.rv-det-item{display:inline-flex;align-items:center;gap:4px;}
+.rv-note{font-size:10px;color:var(--text2);margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+.rv-jump{background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:999px;padding:3px 9px;font-size:10px;cursor:pointer;font-weight:700;}
+.rv-over{font-size:9px;font-weight:800;color:#fff;background:var(--red);border-radius:999px;padding:2px 7px;}
 </style>
 </head>
 <body>
@@ -224,6 +244,7 @@ input:focus,select:focus{border-color:var(--accent);}
     <div class="tab" onclick="showTab('mikomi')">📝<br>見込み</div>
     <div class="tab" onclick="showTab('calendar')">📅<br>カレンダー</div>
     <div class="tab" onclick="showTab('ai')">🤖<br>AI提案</div>
+    <div class="tab" onclick="showTab('review')">📈<br>振り返り</div>
     <div class="tab" onclick="showTab('settings')">⚙️<br>設定</div>
   </div>
 </div>
@@ -425,6 +446,13 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="card"><div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px;">📝 今月の見込みメモ（AI参照用）</div><div id="aiMikomiList"></div></div>
 </div>
 
+<!-- REVIEW（振り返り：使用率の推移＋カテゴリ内訳）-->
+<div id="page-review" class="page">
+  <div class="month-note">📈 各月の<b>給料（元手）に対する使用率</b>と、その内訳です。カード購入は<b>翌月の給料</b>から引き落とされるため、「💳先月カード」はその月に引き落とされた<b>前月の購入分</b>です。</div>
+  <div class="rv-legend" id="rvLegend"></div>
+  <div id="reviewList"></div>
+</div>
+
 <!-- SETTINGS -->
 <div id="page-settings" class="page">
   <div class="month-note">⚙️ ここで設定した内容は<b>テンプレート（毎月のひな形）</b>として保存されます。下の「適用」ボタンで、選んだ範囲の月に一括反映できます。</div>
@@ -557,6 +585,17 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="form-field"><label>返金額（空＝支出額と同額）</label><input type="number" id="refAmtInp" placeholder="0"></div>
   <button class="btn" style="width:100%" onclick="saveExpenseRefund()">保存する</button>
   <button class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="clearExpenseRefund()">返金なしにする</button>
+</div></div>
+
+<!-- MODAL: 汎用入力（ネイティブ prompt の置き換え） -->
+<div class="modal-overlay" id="uiPromptModal"><div class="modal">
+  <div class="modal-title"><span id="uiPromptTitle">入力</span> <button class="modal-close" onclick="uiPromptResolve(null)">✕</button></div>
+  <div id="uiPromptMsg" style="font-size:12px;color:var(--text2);margin-bottom:10px;white-space:pre-wrap;"></div>
+  <div class="form-field" style="margin-bottom:12px;"><input type="text" id="uiPromptInput"></div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-ghost" style="flex:1;" onclick="uiPromptResolve(null)">キャンセル</button>
+    <button class="btn" style="flex:1;" onclick="uiPromptSubmit()">OK</button>
+  </div>
 </div></div>
 
 <!-- MODAL: 追記 -->
@@ -724,6 +763,30 @@ const JUNE2026={
 function ym(y,m){return y*100+(m+1);}  // YYYYMM数値
 function getKey(y,m){return `kakeibo_${y}_${String(m+1).padStart(2,'0')}`;}
 
+// ── localStorage の JSON パースキャッシュ ──
+// 集計（monthTotalsFor 等）は1キー入力ごとに全月データを何度も JSON.parse していたため、
+// 月数が増えるほど重くなっていた。パース結果をキー単位でキャッシュし、書き込みのたびに
+// 世代番号(_lsGen)を進めて丸ごと無効化する（＝直前の書き込み内容は必ず反映される）。
+// 返り値は読み取り専用として扱うこと（破壊的に変更する用途では load*() を使う）。
+let _lsGen=0;
+const _lsCache=new Map();
+function bumpLsGen(){_lsGen++;}            // localStorage 書き込み後に必ず呼ぶ
+// データ破損など「本来起きないはずの失敗」を握りつぶさず記録する（正常時は発火しない）
+function logWarn(ctx,e){try{console.warn('[kakeibo] '+ctx,e&&e.message?e.message:e);}catch(_){}}
+function lsReadJSON(key){
+  const hit=_lsCache.get(key);
+  if(hit&&hit.gen===_lsGen)return hit.val;
+  let val=null;
+  try{val=JSON.parse(localStorage.getItem(key));}catch(e){val=null;logWarn('localStorage 解析失敗: '+key,e);}
+  _lsCache.set(key,{gen:_lsGen,val});
+  return val;
+}
+// 目標定義の読み取り専用アクセス（変更しないこと。変更する場合は loadGoals()）
+function goalsRO(){return lsReadJSON('kakeibo_goals')||[];}
+// 設定テンプレの読み取り専用アクセス（変更しないこと。変更する場合は loadSettings()）
+// cardCycles() が支出/固定費1件ごとに呼ばれ、毎回 settings をパースしていたためキャッシュ経由にする
+function settingsRO(){return lsReadJSON('kakeibo_settings')||{salary:195000,foodBudget:10000,fixed:fixedTemplate()};}
+
 function defaultState(){
   // 設定テンプレの固定費を継承（startMonth付き固定費を未来月にも反映するため）
   let fixedSrc;
@@ -766,10 +829,8 @@ function absorbStateSchedules(d){
 }
 
 // ── グローバル返金台帳（月stateを汚さないため分離）──
-function loadRefunds(){
-  try{return JSON.parse(localStorage.getItem('kakeibo_refunds')||'[]');}catch(e){return[];}
-}
-function saveRefunds(arr){localStorage.setItem('kakeibo_refunds',JSON.stringify(arr));}
+function loadRefunds(){return lsReadJSON('kakeibo_refunds')||[];}
+function saveRefunds(arr){localStorage.setItem('kakeibo_refunds',JSON.stringify(arr));bumpLsGen();}
 // 指定スケジュールIDの返金を全削除
 function removeRefundsBySched(schedId){
   if(!schedId)return;
@@ -783,9 +844,9 @@ function refundsForCurrentMonth(){
 
 // ── グローバル予定台帳（月stateと独立。月跨ぎ表示のため）──
 function loadSchedules(){
-  try{return JSON.parse(localStorage.getItem('kakeibo_schedules')||'{}')||{};}catch(e){return{};}
+  try{return JSON.parse(localStorage.getItem('kakeibo_schedules')||'{}')||{};}catch(e){logWarn('予定台帳の解析失敗',e);return{};}
 }
-function saveSchedulesStore(){localStorage.setItem('kakeibo_schedules',JSON.stringify(schedules));}
+function saveSchedulesStore(){localStorage.setItem('kakeibo_schedules',JSON.stringify(schedules));bumpLsGen();}
 // 旧データ移行：各月stateに散らばっていた schedules をグローバルへ統合
 function migrateSchedulesToGlobal(){
   const glob=loadSchedules();
@@ -807,6 +868,7 @@ function migrateSchedulesToGlobal(){
         });
         delete st.schedules; // 月stateからは除去
         localStorage.setItem(k,JSON.stringify(st));
+        bumpLsGen();
       }
     }catch(e){}
   }
@@ -823,13 +885,13 @@ function loadSettings(){
   // 初期テンプレ：JUNEの値をベース
   return {salary:195000,foodBudget:10000,fixed:fixedTemplate()};
 }
-function saveSettings(s){localStorage.setItem('kakeibo_settings',JSON.stringify(s));}
+function saveSettings(s){localStorage.setItem('kakeibo_settings',JSON.stringify(s));bumpLsGen();}
 
 // ── グローバル目標定義 ──
 function loadGoals(){
-  try{return JSON.parse(localStorage.getItem('kakeibo_goals')||'[]');}catch(e){return[];}
+  try{return JSON.parse(localStorage.getItem('kakeibo_goals')||'[]');}catch(e){logWarn('目標データの解析失敗',e);return[];}
 }
-function saveGoals(goals){localStorage.setItem('kakeibo_goals',JSON.stringify(goals));}
+function saveGoals(goals){localStorage.setItem('kakeibo_goals',JSON.stringify(goals));bumpLsGen();}
 
 
 // 全月の実積立額を合計（特定goalIdについて）
@@ -840,7 +902,7 @@ function totalSavedForGoal(goalId){
     if(!k||!k.startsWith('kakeibo_2')&&!k.startsWith('kakeibo_1'))continue; // 月データのみ
     if(k==='kakeibo_goals')continue;
     try{
-      const st=JSON.parse(localStorage.getItem(k));
+      const st=lsReadJSON(k);
       if(st&&st.goalSavings&&st.goalSavings[goalId]!=null){
         total+=Number(st.goalSavings[goalId])||0;
       }
@@ -870,7 +932,7 @@ function goalBudgetStartYM(g){return goalDrawStartYM(g);}
 // goalIdの「月別実積立額マップ」 { YYYYMM(予算月): 額 }。表示中の当月は未保存のメモリ値を優先。
 // 開始（予算月）より前の積立は集計に含めない。
 function goalSavingsByMonth(goalId){
-  const g=loadGoals().find(x=>x.id===goalId);
+  const g=goalsRO().find(x=>x.id===goalId);
   const budgetStartYM=goalBudgetStartYM(g);
   const map={};
   for(let i=0;i<localStorage.length;i++){
@@ -879,7 +941,7 @@ function goalSavingsByMonth(goalId){
     if(!mm)continue;
     const kym=Number(mm[1])*100+Number(mm[2]);
     try{
-      const st=JSON.parse(localStorage.getItem(k));
+      const st=lsReadJSON(k);
       if(st&&st.goalSavings&&st.goalSavings[goalId]!=null)map[kym]=Number(st.goalSavings[goalId])||0;
     }catch(e){}
   }
@@ -954,7 +1016,7 @@ function defaultCardCycles(){
 // サイクルを持つ支払い方法（＝カード）の名前一覧
 function cardNames(){const c=cardCycles();return Object.keys(c).filter(k=>c[k]);}
 function cardCycles(){
-  const s=loadSettings();
+  const s=settingsRO();
   const merged=Object.assign({},defaultCardCycles(),s.cardCycles||{});
   merged['現金']=null;merged['口座振替']=null; // 即時扱い（今月給料プール）に固定
   return merged;
@@ -1061,7 +1123,7 @@ function goalLinkedItems(g){
     const kym=Number(mm[1])*100+Number(mm[2]);
     let exps;
     if(k===curKey){exps=state.expenses||[];curSeen=true;}
-    else{try{const st=JSON.parse(localStorage.getItem(k));exps=(st&&st.expenses)||[];}catch(e){exps=[];}}
+    else{const st=lsReadJSON(k);exps=(st&&st.expenses)||[];}
     exps.forEach(e=>push(e,kym));
   }
   if(!curSeen){(state.expenses||[]).forEach(e=>push(e,curYM));}
@@ -1135,6 +1197,7 @@ function migrate(d){
 
 function saveData(){
   localStorage.setItem(getKey(currentYear,currentMonth),JSON.stringify(state));
+  bumpLsGen();
 }
 // 自動保存（バックグラウンドでのクラウド自動同期）は完全撤廃。
 // 保存は「保存」ボタンを押した時のみ（ローカル保存／クラウド保存）。
@@ -1213,6 +1276,7 @@ function renderAll(){
   const mn=document.getElementById('monthNote');
   if(mn)mn.textContent=`📝 ${currentYear}年${currentMonth+1}月の給料で払う分（前月のカード購入含む）／この月のカード購入は${nY}年${nM}月扱い`;
   renderMikomi();renderCalendar();calcAll();renderAiPage();
+  const rv=document.getElementById('page-review');if(rv&&rv.classList.contains('active'))renderReview();
   // フッターの最終保存表示を常に最新へ
   if(typeof refreshFooterIdle==='function')refreshFooterIdle();
 }
@@ -1220,12 +1284,83 @@ function showTab(tab){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
-  const idx=['home','mikomi','calendar','ai','settings'].indexOf(tab);
+  const idx=['home','mikomi','calendar','ai','review','settings'].indexOf(tab);
   const tabEl=document.querySelectorAll('.tab')[idx];
   if(tabEl)tabEl.classList.add('active');
   if(tab==='calendar')renderCalendar();
   if(tab==='ai')renderAiPage();
+  if(tab==='review')renderReview();
   if(tab==='settings')renderSettings();
+}
+// 指定の月へ移動して任意タブを開く（振り返りからカード購入元の月へジャンプ等）
+function goToMonth(kym,tab){
+  const y=Math.floor(kym/100),m=(kym%100)-1;
+  currentYear=y;currentMonth=m;
+  selectedDay=null;rangeStart=null;rangeEnd=null;
+  const dd=document.getElementById('dayDetail');if(dd)dd.style.display='none';
+  state=loadData();renderAll();
+  showTab(tab||'mikomi');
+}
+// ── 振り返り：給料（元手）に対する使用率と内訳 ──
+function renderReview(){
+  const list=document.getElementById('reviewList');if(!list)return;
+  // 凡例（カテゴリは固定の並び順）
+  const CATS=[
+    {key:'fixed',label:'固定費',cssvar:'--c-fixed'},
+    {key:'food', label:'食費',  cssvar:'--c-food'},
+    {key:'jiyu', label:'自由費',cssvar:'--c-jiyu'},
+    {key:'card', label:'先月カード',cssvar:'--c-card'},
+    {key:'save', label:'積立',  cssvar:'--c-save'},
+  ];
+  const leg=document.getElementById('rvLegend');
+  if(leg)leg.innerHTML=CATS.map(c=>`<span class="rv-leg"><span class="rv-dot" style="background:var(${c.cssvar})"></span>${c.label}</span>`).join('');
+  // 保存済みの月を新しい順に（当月が未保存でも含める）
+  const set=new Set();
+  for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);const mm=k&&k.match(/^kakeibo_(\d{4})_(\d{2})$/);if(mm)set.add(Number(mm[1])*100+Number(mm[2]));}
+  set.add(ym(currentYear,currentMonth));
+  const months=[...set].sort((a,b)=>b-a);
+  if(!months.length){list.innerHTML='<div class="empty-state">まだ月データがありません</div>';return;}
+  const money=n=>'¥'+Math.round(n).toLocaleString();
+  list.innerHTML=months.map(kym=>{
+    const st=stateForYM(kym)||{};
+    const t=monthTotalsFor(kym);
+    const salary=Number(st.salary)||0;
+    const parts=[
+      {key:'fixed',label:'固定費',cssvar:'--c-fixed',val:t.fixedTotal},
+      {key:'food', label:'食費',  cssvar:'--c-food', val:t.foodUsed},
+      {key:'jiyu', label:'自由費',cssvar:'--c-jiyu', val:t.jiyuUsed},
+      {key:'card', label:'先月カード',cssvar:'--c-card',val:Math.max(0,t.prevCardTotal-t.prevCardFood)},
+      {key:'save', label:'積立',  cssvar:'--c-save', val:t.goalMonthly},
+    ].map(p=>({...p,val:Math.max(0,p.val)}));
+    const used=parts.reduce((s,p)=>s+p.val,0);
+    const isCur=kym===ym(currentYear,currentMonth);
+    const curTag=isCur?'<span class="rv-sub">（今月）</span>':'';
+    if(salary<=0){
+      return `<div class="rv-month"><div class="rv-head"><span class="rv-mlabel">${ymLabel(kym)}${curTag}</span><span class="rv-sub">給料 未入力</span></div>
+        <div class="rv-detail">使用 ${money(used)}（元手が未入力のため使用率は表示できません）</div></div>`;
+    }
+    const rate=used/salary*100;
+    const over=rate>100;
+    // バー：元手=100%。使用率100%以下は残りを空きトラックに、超過時はセグメントを正規化してバーを埋める
+    const denom=over?used:salary;
+    const segs=parts.filter(p=>p.val>0).map(p=>`<div class="rv-seg" style="width:${(p.val/denom*100).toFixed(2)}%;background:var(${p.cssvar})" title="${p.label} ${money(p.val)}"></div>`).join('');
+    const rest=over?'':`<div class="rv-track-rest"></div>`;
+    const rateCls=over?'val-red':(rate>=90?'val-yellow':'val-green');
+    const detail=parts.filter(p=>p.val>0).map(p=>`<span class="rv-det-item"><span class="rv-dot" style="background:var(${p.cssvar})"></span>${p.label} ${money(p.val)}</span>`).join('');
+    const prevKym=prevYM(kym);
+    const cardVal=parts.find(p=>p.key==='card').val + t.prevCardFood;
+    const cardNote=(t.prevCardTotal>0)?`<div class="rv-note"><span>💳 この給料で引落した先月カード ${money(t.prevCardTotal)}${t.prevCardFood>0?`（うち食費 ${money(t.prevCardFood)}）`:''}</span><button class="rv-jump" onclick="goToMonth(${prevKym},'mikomi')">📂 ${ymLabel(prevKym)}の購入を見る</button></div>`:'';
+    return `<div class="rv-month">
+      <div class="rv-head">
+        <span class="rv-mlabel">${ymLabel(kym)}${curTag}</span>
+        <span><span class="rv-rate ${rateCls}">${Math.round(rate)}%</span>${over?'<span class="rv-over">超過</span>':''}</span>
+      </div>
+      <div class="rv-bar">${segs}${rest}</div>
+      <div class="rv-detail"><span class="rv-det-item" style="color:var(--text)">元手 ${money(salary)} → 使用 ${money(used)}・残り ${money(salary-used)}</span></div>
+      <div class="rv-detail">${detail}</div>
+      ${cardNote}
+    </div>`;
+  }).join('');
 }
 
 // ──────────────────────
@@ -1433,7 +1568,7 @@ function renderGoals(){
   }
 }
 // 達成済みの貯金で、残っている貯金（残高）を当月の自由費（臨時収入）に回す
-function releaseGoalSurplus(id){
+async function releaseGoalSurplus(id){
   const goals=loadGoals();
   const g=goals.find(x=>x.id===id);if(!g)return;
   const curYM=ym(currentYear,currentMonth);
@@ -1445,7 +1580,7 @@ function releaseGoalSurplus(id){
   const achievedByNow=cap>0&&grossAccum>=cap;
   const releasable=achievedByNow?Math.max(0,balance):0;
   if(releasable<=0){alert(achievedByNow?'回せる残高がありません。':'まだ目標を達成していません。');return;}
-  const inp=prompt(`いくら自由費に回しますか？（最大 ${releasable.toLocaleString()}円）`,String(releasable));
+  const inp=await uiPrompt({title:'🔓 自由費に回す',message:`いくら自由費に回しますか？（最大 ${releasable.toLocaleString()}円）`,type:'number',value:releasable});
   if(inp==null)return;
   let amt=Number(inp)||0;
   if(amt<=0)return;
@@ -1577,6 +1712,7 @@ function propagateFixedToFuture(item){
       if(ex){ex.budget=item.budget;ex.pay=item.pay;ex.startMonth=item.startMonth;}
       else st.fixed.push({name:item.name,budget:item.budget,amount:0,confirmed:false,pay:item.pay,memo:'',memoTags:[],history:[],startMonth:item.startMonth});
       localStorage.setItem(k,JSON.stringify(st));
+      bumpLsGen();
     }catch(e){}
   }
 }
@@ -1701,10 +1837,10 @@ function deleteItem(type,i){
   arr.splice(i,1);saveData();calcAll();
 }
 // メモタグ操作（確定中・カレンダー紐づきは不可）
-function addMemoTag(type,i){
+async function addMemoTag(type,i){
   const item=type==='fixed'?state.fixed[i]:state.expenses[i];
   if(!item||item.confirmed)return;
-  const tag=prompt('メモを追加（タグとして表示されます）');
+  const tag=await uiPrompt({title:'📝 メモを追加',message:'タグとして表示されます',placeholder:'例: 実績◯◯円'});
   if(tag==null)return;
   const t=tag.trim();if(!t)return;
   if(!item.memoTags)item.memoTags=[];
@@ -1718,11 +1854,11 @@ function removeMemoTag(type,i,ti){
   saveData();calcAll();
 }
 // メモタグをタップ/クリックで編集（確定中は不可）。空にすると削除。
-function editMemoTag(type,i,ti){
+async function editMemoTag(type,i,ti){
   const item=type==='fixed'?state.fixed[i]:state.expenses[i];
   if(!item||item.confirmed||!item.memoTags)return;
   const cur=item.memoTags[ti]||'';
-  const v=prompt('メモを編集（空にすると削除）',cur);
+  const v=await uiPrompt({title:'📝 メモを編集',message:'空にすると削除します',value:cur});
   if(v==null)return;
   const t=v.trim();
   if(!t){item.memoTags.splice(ti,1);}else{item.memoTags[ti]=t;}
@@ -1786,7 +1922,7 @@ function readInputs(){
 // 支出が紐づく「貯金」goalを返す（goalId一致 or タグ一致）。返済goalや無関係はnull。
 function expenseSavingGoal(e){
   if(!e)return null;
-  const goals=loadGoals();
+  const goals=goalsRO();
   for(const g of goals){if(_expLinksGoal(e,g))return g;}
   return null;
 }
@@ -1804,9 +1940,9 @@ function goalDeductForMonth(g,kym,st){
   return Math.min(tms,remBefore>0?remBefore:tms);
 }
 // 支出の追加日（＝カード締め判定の購入日）をタップで編集
-function editAddedDate(i){
+async function editAddedDate(i){
   const e=state.expenses&&state.expenses[i];if(!e)return;
-  const v=prompt('購入日（YYYY-MM-DD）\nカードの締め日判定に使われます',e.addedAt||todayISO());
+  const v=await uiPrompt({title:'🗓 購入日',message:'カードの締め日判定に使われます',type:'date',value:e.addedAt||todayISO()});
   if(v==null)return;
   const t=v.trim();
   if(t&&!/^\d{4}-\d{2}-\d{2}$/.test(t)){alert('YYYY-MM-DD形式で入力してください');return;}
@@ -1889,7 +2025,7 @@ function monthTotalsFor(kym){
   const carryExtraTotal=(st.carryExtra||[]).reduce((s,c)=>s+(Number(c.amt)||0),0);
   const income=(Number(st.salary)||0)+(Number(st.carryover)||0)+carryExtraTotal+refund.total;
   const foodBudget=Number(st.foodBudget)||0;
-  const goalMonthly=loadGoals().reduce((s,g)=>s+goalDeductForMonth(g,kym,st),0);
+  const goalMonthly=goalsRO().reduce((s,g)=>s+goalDeductForMonth(g,kym,st),0);
   const savingLinked=(e)=>!!expenseSavingGoal(e);
   // 当月分：この月の給料から引かれるもの（現金・口座振替。カードは翌月なので除外）
   let fixedTotal=0,foodUsed=0,jiyuUsed=0,ownCardFixed=0,ownCardVar=0,ownCardFood=0,ownCardJiyu=0;
@@ -1998,7 +2134,7 @@ function stateForYM(kym){
   const cur=ym(currentYear,currentMonth);
   if(kym===cur)return state;
   const y=Math.floor(kym/100),m=(kym%100)-1;
-  try{return JSON.parse(localStorage.getItem(getKey(y,m)))||null;}catch(e){return null;}
+  return lsReadJSON(getKey(y,m))||null; // 読み取り専用（集計用）。編集は当月stateで行う
 }
 // あるビュー月(kym)の支出を、支払い方法のサイクルからどの給料月プールに乗せるか
 // （日付なしメモは月末購入=遅め寄せで判定。カレンダー紐づき等の日付ありは将来exact化予定）
@@ -2606,6 +2742,7 @@ function saveSchedule(){
         }
         prevState.expenses.push(mkRow(keep));
         localStorage.setItem(chargeYM,JSON.stringify(prevState));
+        bumpLsGen();
       }
       // ── この明細が経費・立替なら返金台帳へ（明細ごと）──
       if(Number(it.isExpense)>0&&it.refundDate){
@@ -2644,6 +2781,7 @@ function cleanupScheduleLinks(schedId){
       if(st&&st.expenses&&st.expenses.some(e=>e.schedId===schedId)){
         st.expenses=st.expenses.filter(e=>e.schedId!==schedId);
         localStorage.setItem(k,JSON.stringify(st));
+        bumpLsGen();
       }
     }catch(e){}
   }
@@ -2681,14 +2819,14 @@ function addAiSpendUsd(usage){
   st.uses.push({id:'u'+Date.now(),ts:new Date().toISOString(),usd}); // いつ・いくら消費したかの1件ログ
   saveAiUsd(st);renderAiCost();
 }
-function addAiDeposit(){
-  const a=prompt('入金額（ドル）を入力\n例: 5  → $5を入金',' ');
+async function addAiDeposit(){
+  const a=await uiPrompt({title:'＋ 入金を記録',message:'入金額（ドル）を入力\n例: 5 → $5を入金',type:'number',placeholder:'0'});
   if(a==null)return;
   const usd=Number(String(a).trim());
   if(!(usd>0)){alert('正の数値（ドル）を入力してください');return;}
   const t=new Date();
   const today=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
-  const date=prompt('入金日（YYYY-MM-DD）',today);
+  const date=await uiPrompt({title:'入金日',type:'date',value:today});
   if(date==null)return;
   const st=aiUsdStore();st.deposits=st.deposits||[];
   st.deposits.push({id:'d'+Date.now(),date:(date.trim()||today),usd});
@@ -2937,7 +3075,36 @@ function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random
 // UTILS
 // ──────────────────────
 function closeModal(id){document.getElementById(id).classList.remove('open');}
-document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});});
+document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o&&o.id!=='uiPromptModal')o.classList.remove('open');});});
+
+// ── 汎用入力モーダル（ネイティブ prompt() の置き換え。Promiseで値を返す。キャンセルは null）──
+let _uiPromptResolver=null;
+function uiPrompt(opts){
+  opts=opts||{};
+  return new Promise(resolve=>{
+    // 直前の未解決があれば閉じておく
+    if(_uiPromptResolver){const r=_uiPromptResolver;_uiPromptResolver=null;r(null);}
+    _uiPromptResolver=resolve;
+    document.getElementById('uiPromptTitle').textContent=opts.title||'入力';
+    const msg=document.getElementById('uiPromptMsg');
+    msg.textContent=opts.message||'';msg.style.display=opts.message?'block':'none';
+    const inp=document.getElementById('uiPromptInput');
+    inp.type=opts.type||'text';
+    inp.value=(opts.value!=null?String(opts.value):'');
+    inp.placeholder=opts.placeholder||'';
+    inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();uiPromptSubmit();}};
+    document.getElementById('uiPromptModal').classList.add('open');
+    setTimeout(()=>{inp.focus();try{inp.select();}catch(_){}}, 60);
+  });
+}
+function uiPromptSubmit(){uiPromptResolve(document.getElementById('uiPromptInput').value);}
+function uiPromptResolve(val){
+  const r=_uiPromptResolver;_uiPromptResolver=null;
+  document.getElementById('uiPromptModal').classList.remove('open');
+  if(r)r(val);
+}
+// 背景タップでキャンセル（Promiseも解決する）
+(function(){const m=document.getElementById('uiPromptModal');if(m)m.addEventListener('click',e=>{if(e.target===m)uiPromptResolve(null);});})();
 // HTMLエスケープ
 function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function escAttr(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -3127,6 +3294,7 @@ function restoreAllData(data,fullReplace){
     if(skip.has(k))return;
     try{localStorage.setItem(k,typeof v==='string'?v:JSON.stringify(v));}catch(e){}
   });
+  bumpLsGen();
 }
 
 function setSyncStatus(msg,color='var(--text2)'){
@@ -3370,7 +3538,7 @@ function allMonthStates(){
   for(let i=0;i<localStorage.length;i++){
     const k=localStorage.key(i);
     if(!k||!/^kakeibo_\d{4}_\d{2}$/.test(k))continue;
-    try{const st=JSON.parse(localStorage.getItem(k));if(st)out.push({key:k,y:+k.split('_')[1],mm:+k.split('_')[2],st});}catch(e){}
+    try{const st=JSON.parse(localStorage.getItem(k));if(st)out.push({key:k,y:+k.split('_')[1],mm:+k.split('_')[2],st});}catch(e){logWarn('月データの解析失敗: '+k,e);}
   }
   out.sort((a,b)=>(a.y*100+a.mm)-(b.y*100+b.mm));
   return out;
@@ -3545,8 +3713,8 @@ function renderCardCyclesUI(){
   }).join('');
   refreshPaySelects();
 }
-function addCard(){
-  const name=prompt('カード名を入力（例: 楽天カード）');
+async function addCard(){
+  const name=await uiPrompt({title:'💳 カードを追加',message:'カード名を入力',placeholder:'例: 楽天カード'});
   if(name==null)return;
   const nm=name.trim();
   if(!nm)return;
