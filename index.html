@@ -274,7 +274,7 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="card" id="methodPanel" style="padding:12px;">
     <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px;">💰 使える額：今月の給料分／来月のクレカ分</div>
     <div id="methodRows"></div>
-    <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:flex;justify-content:space-between;align-items:baseline;">
+    <div id="methodTotalRow" style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;display:none;justify-content:space-between;align-items:baseline;">
       <span style="font-size:12px;color:var(--text2);">2プール合計 残り</span>
       <span id="methodTotalLeft" class="val-green" style="font-weight:800;font-size:16px;">0円</span>
     </div>
@@ -2070,10 +2070,16 @@ function renderPoolPanel(){
       <div style="font-size:9px;color:var(--text2);text-align:right;">この月の購入 ${money(used)}</div>
     </div>`;
   }).join('');
-  html+=`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;">
+  // カード別 使用可能額（常時表示）
+  const cardHtml=`<div style="border:1px solid var(--border);border-radius:10px;padding:10px;">
     <div style="font-size:12px;font-weight:700;">💳 カード別 使用可能額<span style="font-size:9px;color:var(--text2);font-weight:400;margin-left:6px;">この月に買った場合の引き落とし給料に紐付け・同じ給料のカードは残りを共有</span></div>
     ${cardRows}
   </div>`;
+  // 給料プール別の内訳（今月／来月ブロック）は既定で折りたたみ表示
+  const detailHtml=html;
+  html=cardHtml
+    +`<div style="text-align:center;margin-top:8px;"><button class="collapse-toggle" onclick="toggleCollapse('poolDetailBody',this)">▼ 給料プールの内訳を開く</button></div>`
+    +`<div class="collapse-body hidden" id="poolDetailBody" style="margin-top:8px;">${detailHtml}</div>`;
   el.innerHTML=html;
   const tl=document.getElementById('methodTotalLeft');
   if(tl){const tot=aTotal+bTotal;tl.textContent=money(tot);tl.className=cls(tot);}
