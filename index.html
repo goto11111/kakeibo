@@ -587,6 +587,17 @@ input:focus,select:focus{border-color:var(--accent);}
   <button class="btn btn-ghost" style="width:100%;margin-top:8px;" onclick="clearExpenseRefund()">返金なしにする</button>
 </div></div>
 
+<!-- MODAL: 汎用入力（ネイティブ prompt の置き換え） -->
+<div class="modal-overlay" id="uiPromptModal"><div class="modal">
+  <div class="modal-title"><span id="uiPromptTitle">入力</span> <button class="modal-close" onclick="uiPromptResolve(null)">✕</button></div>
+  <div id="uiPromptMsg" style="font-size:12px;color:var(--text2);margin-bottom:10px;white-space:pre-wrap;"></div>
+  <div class="form-field" style="margin-bottom:12px;"><input type="text" id="uiPromptInput"></div>
+  <div style="display:flex;gap:8px;">
+    <button class="btn btn-ghost" style="flex:1;" onclick="uiPromptResolve(null)">キャンセル</button>
+    <button class="btn" style="flex:1;" onclick="uiPromptSubmit()">OK</button>
+  </div>
+</div></div>
+
 <!-- MODAL: 追記 -->
 <div class="modal-overlay" id="appendModal"><div class="modal">
   <div class="modal-title" id="appendModalTitle"><span id="appendModalTitleText">＋ 金額を追記</span> <button class="modal-close" onclick="closeModal('appendModal')">✕</button></div>
@@ -760,11 +771,13 @@ function getKey(y,m){return `kakeibo_${y}_${String(m+1).padStart(2,'0')}`;}
 let _lsGen=0;
 const _lsCache=new Map();
 function bumpLsGen(){_lsGen++;}            // localStorage 書き込み後に必ず呼ぶ
+// データ破損など「本来起きないはずの失敗」を握りつぶさず記録する（正常時は発火しない）
+function logWarn(ctx,e){try{console.warn('[kakeibo] '+ctx,e&&e.message?e.message:e);}catch(_){}}
 function lsReadJSON(key){
   const hit=_lsCache.get(key);
   if(hit&&hit.gen===_lsGen)return hit.val;
   let val=null;
-  try{val=JSON.parse(localStorage.getItem(key));}catch(e){val=null;}
+  try{val=JSON.parse(localStorage.getItem(key));}catch(e){val=null;logWarn('localStorage 解析失敗: '+key,e);}
   _lsCache.set(key,{gen:_lsGen,val});
   return val;
 }
@@ -831,7 +844,7 @@ function refundsForCurrentMonth(){
 
 // ── グローバル予定台帳（月stateと独立。月跨ぎ表示のため）──
 function loadSchedules(){
-  try{return JSON.parse(localStorage.getItem('kakeibo_schedules')||'{}')||{};}catch(e){return{};}
+  try{return JSON.parse(localStorage.getItem('kakeibo_schedules')||'{}')||{};}catch(e){logWarn('予定台帳の解析失敗',e);return{};}
 }
 function saveSchedulesStore(){localStorage.setItem('kakeibo_schedules',JSON.stringify(schedules));bumpLsGen();}
 // 旧データ移行：各月stateに散らばっていた schedules をグローバルへ統合
@@ -876,7 +889,7 @@ function saveSettings(s){localStorage.setItem('kakeibo_settings',JSON.stringify(
 
 // ── グローバル目標定義 ──
 function loadGoals(){
-  try{return JSON.parse(localStorage.getItem('kakeibo_goals')||'[]');}catch(e){return[];}
+  try{return JSON.parse(localStorage.getItem('kakeibo_goals')||'[]');}catch(e){logWarn('目標データの解析失敗',e);return[];}
 }
 function saveGoals(goals){localStorage.setItem('kakeibo_goals',JSON.stringify(goals));bumpLsGen();}
 
@@ -1555,7 +1568,7 @@ function renderGoals(){
   }
 }
 // 達成済みの貯金で、残っている貯金（残高）を当月の自由費（臨時収入）に回す
-function releaseGoalSurplus(id){
+async function releaseGoalSurplus(id){
   const goals=loadGoals();
   const g=goals.find(x=>x.id===id);if(!g)return;
   const curYM=ym(currentYear,currentMonth);
@@ -1567,7 +1580,7 @@ function releaseGoalSurplus(id){
   const achievedByNow=cap>0&&grossAccum>=cap;
   const releasable=achievedByNow?Math.max(0,balance):0;
   if(releasable<=0){alert(achievedByNow?'回せる残高がありません。':'まだ目標を達成していません。');return;}
-  const inp=prompt(`いくら自由費に回しますか？（最大 ${releasable.toLocaleString()}円）`,String(releasable));
+  const inp=await uiPrompt({title:'🔓 自由費に回す',message:`いくら自由費に回しますか？（最大 ${releasable.toLocaleString()}円）`,type:'number',value:releasable});
   if(inp==null)return;
   let amt=Number(inp)||0;
   if(amt<=0)return;
@@ -1824,10 +1837,10 @@ function deleteItem(type,i){
   arr.splice(i,1);saveData();calcAll();
 }
 // メモタグ操作（確定中・カレンダー紐づきは不可）
-function addMemoTag(type,i){
+async function addMemoTag(type,i){
   const item=type==='fixed'?state.fixed[i]:state.expenses[i];
   if(!item||item.confirmed)return;
-  const tag=prompt('メモを追加（タグとして表示されます）');
+  const tag=await uiPrompt({title:'📝 メモを追加',message:'タグとして表示されます',placeholder:'例: 実績◯◯円'});
   if(tag==null)return;
   const t=tag.trim();if(!t)return;
   if(!item.memoTags)item.memoTags=[];
@@ -1841,11 +1854,11 @@ function removeMemoTag(type,i,ti){
   saveData();calcAll();
 }
 // メモタグをタップ/クリックで編集（確定中は不可）。空にすると削除。
-function editMemoTag(type,i,ti){
+async function editMemoTag(type,i,ti){
   const item=type==='fixed'?state.fixed[i]:state.expenses[i];
   if(!item||item.confirmed||!item.memoTags)return;
   const cur=item.memoTags[ti]||'';
-  const v=prompt('メモを編集（空にすると削除）',cur);
+  const v=await uiPrompt({title:'📝 メモを編集',message:'空にすると削除します',value:cur});
   if(v==null)return;
   const t=v.trim();
   if(!t){item.memoTags.splice(ti,1);}else{item.memoTags[ti]=t;}
@@ -1927,9 +1940,9 @@ function goalDeductForMonth(g,kym,st){
   return Math.min(tms,remBefore>0?remBefore:tms);
 }
 // 支出の追加日（＝カード締め判定の購入日）をタップで編集
-function editAddedDate(i){
+async function editAddedDate(i){
   const e=state.expenses&&state.expenses[i];if(!e)return;
-  const v=prompt('購入日（YYYY-MM-DD）\nカードの締め日判定に使われます',e.addedAt||todayISO());
+  const v=await uiPrompt({title:'🗓 購入日',message:'カードの締め日判定に使われます',type:'date',value:e.addedAt||todayISO()});
   if(v==null)return;
   const t=v.trim();
   if(t&&!/^\d{4}-\d{2}-\d{2}$/.test(t)){alert('YYYY-MM-DD形式で入力してください');return;}
@@ -2806,14 +2819,14 @@ function addAiSpendUsd(usage){
   st.uses.push({id:'u'+Date.now(),ts:new Date().toISOString(),usd}); // いつ・いくら消費したかの1件ログ
   saveAiUsd(st);renderAiCost();
 }
-function addAiDeposit(){
-  const a=prompt('入金額（ドル）を入力\n例: 5  → $5を入金',' ');
+async function addAiDeposit(){
+  const a=await uiPrompt({title:'＋ 入金を記録',message:'入金額（ドル）を入力\n例: 5 → $5を入金',type:'number',placeholder:'0'});
   if(a==null)return;
   const usd=Number(String(a).trim());
   if(!(usd>0)){alert('正の数値（ドル）を入力してください');return;}
   const t=new Date();
   const today=`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
-  const date=prompt('入金日（YYYY-MM-DD）',today);
+  const date=await uiPrompt({title:'入金日',type:'date',value:today});
   if(date==null)return;
   const st=aiUsdStore();st.deposits=st.deposits||[];
   st.deposits.push({id:'d'+Date.now(),date:(date.trim()||today),usd});
@@ -3062,7 +3075,36 @@ function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random
 // UTILS
 // ──────────────────────
 function closeModal(id){document.getElementById(id).classList.remove('open');}
-document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});});
+document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o&&o.id!=='uiPromptModal')o.classList.remove('open');});});
+
+// ── 汎用入力モーダル（ネイティブ prompt() の置き換え。Promiseで値を返す。キャンセルは null）──
+let _uiPromptResolver=null;
+function uiPrompt(opts){
+  opts=opts||{};
+  return new Promise(resolve=>{
+    // 直前の未解決があれば閉じておく
+    if(_uiPromptResolver){const r=_uiPromptResolver;_uiPromptResolver=null;r(null);}
+    _uiPromptResolver=resolve;
+    document.getElementById('uiPromptTitle').textContent=opts.title||'入力';
+    const msg=document.getElementById('uiPromptMsg');
+    msg.textContent=opts.message||'';msg.style.display=opts.message?'block':'none';
+    const inp=document.getElementById('uiPromptInput');
+    inp.type=opts.type||'text';
+    inp.value=(opts.value!=null?String(opts.value):'');
+    inp.placeholder=opts.placeholder||'';
+    inp.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();uiPromptSubmit();}};
+    document.getElementById('uiPromptModal').classList.add('open');
+    setTimeout(()=>{inp.focus();try{inp.select();}catch(_){}}, 60);
+  });
+}
+function uiPromptSubmit(){uiPromptResolve(document.getElementById('uiPromptInput').value);}
+function uiPromptResolve(val){
+  const r=_uiPromptResolver;_uiPromptResolver=null;
+  document.getElementById('uiPromptModal').classList.remove('open');
+  if(r)r(val);
+}
+// 背景タップでキャンセル（Promiseも解決する）
+(function(){const m=document.getElementById('uiPromptModal');if(m)m.addEventListener('click',e=>{if(e.target===m)uiPromptResolve(null);});})();
 // HTMLエスケープ
 function escHtml(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function escAttr(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
@@ -3496,7 +3538,7 @@ function allMonthStates(){
   for(let i=0;i<localStorage.length;i++){
     const k=localStorage.key(i);
     if(!k||!/^kakeibo_\d{4}_\d{2}$/.test(k))continue;
-    try{const st=JSON.parse(localStorage.getItem(k));if(st)out.push({key:k,y:+k.split('_')[1],mm:+k.split('_')[2],st});}catch(e){}
+    try{const st=JSON.parse(localStorage.getItem(k));if(st)out.push({key:k,y:+k.split('_')[1],mm:+k.split('_')[2],st});}catch(e){logWarn('月データの解析失敗: '+k,e);}
   }
   out.sort((a,b)=>(a.y*100+a.mm)-(b.y*100+b.mm));
   return out;
@@ -3671,8 +3713,8 @@ function renderCardCyclesUI(){
   }).join('');
   refreshPaySelects();
 }
-function addCard(){
-  const name=prompt('カード名を入力（例: 楽天カード）');
+async function addCard(){
+  const name=await uiPrompt({title:'💳 カードを追加',message:'カード名を入力',placeholder:'例: 楽天カード'});
   if(name==null)return;
   const nm=name.trim();
   if(!nm)return;
