@@ -448,7 +448,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <!-- REVIEW（振り返り：使用率の推移＋カテゴリ内訳）-->
 <div id="page-review" class="page">
-  <div class="month-note">📈 各月の<b>給料（元手）に対する使用率</b>と、その内訳です。カード購入は<b>翌月の給料</b>から引き落とされるため、「💳先月カード」はその月に引き落とされた<b>前月の購入分</b>です。</div>
+  <div class="month-note">📈 各月の<b>収入合計（元手）に対する使用率</b>と、その内訳です。元手＝給料＋前月繰越＋臨時収入＋返金予定。カード購入は<b>翌月の給料</b>から引き落とされるため、「💳先月カード」はその月に引き落とされた<b>前月の購入分</b>です。</div>
   <div class="rv-legend" id="rvLegend"></div>
   <div id="reviewList"></div>
 </div>
@@ -685,7 +685,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.09c';
+const APP_VERSION='v2026.07.10a';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -1274,50 +1274,58 @@ function renderReview(){
   // 保存済みの月を新しい順に（当月が未保存でも含める）
   const set=new Set();
   for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);const mm=k&&k.match(/^kakeibo_(\d{4})_(\d{2})$/);if(mm)set.add(Number(mm[1])*100+Number(mm[2]));}
-  set.add(ym(currentYear,currentMonth));
+  const curKym=ym(currentYear,currentMonth);
+  set.add(curKym);
   const months=[...set].sort((a,b)=>b-a);
   if(!months.length){list.innerHTML='<div class="empty-state">まだ月データがありません</div>';return;}
+  // 今月をデフォルト表示。他の月（過去・未来）は折りたたみ、「他の月を表示」で展開。
+  const others=months.filter(k=>k!==curKym);
+  let html=renderReviewMonth(curKym);
+  if(others.length){
+    html+=`<div style="text-align:center;margin:10px 0 4px;"><button class="collapse-toggle" onclick="toggleCollapse('rvOtherMonths',this)">▼ 他の月を表示（${others.length}）</button></div>`;
+    html+=`<div class="collapse-body hidden" id="rvOtherMonths">${others.map(renderReviewMonth).join('')}</div>`;
+  }
+  list.innerHTML=html;
+}
+// 振り返り：1ヶ月分のカードHTML（元手＝収入合計に対する使用率と内訳）
+function renderReviewMonth(kym){
   const money=n=>'¥'+Math.round(n).toLocaleString();
-  list.innerHTML=months.map(kym=>{
-    const st=stateForYM(kym)||{};
-    const t=monthTotalsFor(kym);
-    const salary=Number(st.salary)||0;
-    const parts=[
-      {key:'fixed',label:'固定費',cssvar:'--c-fixed',val:t.fixedTotal},
-      {key:'food', label:'食費',  cssvar:'--c-food', val:t.foodUsed},
-      {key:'jiyu', label:'自由費',cssvar:'--c-jiyu', val:t.jiyuUsed},
-      {key:'card', label:'先月カード',cssvar:'--c-card',val:Math.max(0,t.prevCardTotal-t.prevCardFood)},
-      {key:'save', label:'積立',  cssvar:'--c-save', val:t.goalMonthly},
-    ].map(p=>({...p,val:Math.max(0,p.val)}));
-    const used=parts.reduce((s,p)=>s+p.val,0);
-    const isCur=kym===ym(currentYear,currentMonth);
-    const curTag=isCur?'<span class="rv-sub">（今月）</span>':'';
-    if(salary<=0){
-      return `<div class="rv-month"><div class="rv-head"><span class="rv-mlabel">${ymLabel(kym)}${curTag}</span><span class="rv-sub">給料 未入力</span></div>
-        <div class="rv-detail">使用 ${money(used)}（元手が未入力のため使用率は表示できません）</div></div>`;
-    }
-    const rate=used/salary*100;
-    const over=rate>100;
-    // バー：元手=100%。使用率100%以下は残りを空きトラックに、超過時はセグメントを正規化してバーを埋める
-    const denom=over?used:salary;
-    const segs=parts.filter(p=>p.val>0).map(p=>`<div class="rv-seg" style="width:${(p.val/denom*100).toFixed(2)}%;background:var(${p.cssvar})" title="${p.label} ${money(p.val)}"></div>`).join('');
-    const rest=over?'':`<div class="rv-track-rest"></div>`;
-    const rateCls=over?'val-red':(rate>=90?'val-yellow':'val-green');
-    const detail=parts.filter(p=>p.val>0).map(p=>`<span class="rv-det-item"><span class="rv-dot" style="background:var(${p.cssvar})"></span>${p.label} ${money(p.val)}</span>`).join('');
-    const prevKym=prevYM(kym);
-    const cardVal=parts.find(p=>p.key==='card').val + t.prevCardFood;
-    const cardNote=(t.prevCardTotal>0)?`<div class="rv-note"><span>💳 この給料で引落した先月カード ${money(t.prevCardTotal)}${t.prevCardFood>0?`（うち食費 ${money(t.prevCardFood)}）`:''}</span><button class="rv-jump" onclick="goToMonth(${prevKym},'mikomi')">📂 ${ymLabel(prevKym)}の購入を見る</button></div>`:'';
-    return `<div class="rv-month">
-      <div class="rv-head">
-        <span class="rv-mlabel">${ymLabel(kym)}${curTag}</span>
-        <span><span class="rv-rate ${rateCls}">${Math.round(rate)}%</span>${over?'<span class="rv-over">超過</span>':''}</span>
-      </div>
-      <div class="rv-bar">${segs}${rest}</div>
-      <div class="rv-detail"><span class="rv-det-item" style="color:var(--text)">元手 ${money(salary)} → 使用 ${money(used)}・残り ${money(salary-used)}</span></div>
-      <div class="rv-detail">${detail}</div>
-      ${cardNote}
-    </div>`;
-  }).join('');
+  const t=monthTotalsFor(kym);
+  const motode=t.income; // 元手＝収入合計（給料＋前月繰越＋臨時収入＋返金予定）
+  const parts=[
+    {key:'fixed',label:'固定費',cssvar:'--c-fixed',val:t.fixedTotal},
+    {key:'food', label:'食費',  cssvar:'--c-food', val:t.foodUsed},
+    {key:'jiyu', label:'自由費',cssvar:'--c-jiyu', val:t.jiyuUsed},
+    {key:'card', label:'先月カード',cssvar:'--c-card',val:Math.max(0,t.prevCardTotal-t.prevCardFood)},
+    {key:'save', label:'積立',  cssvar:'--c-save', val:t.goalMonthly},
+  ].map(p=>({...p,val:Math.max(0,p.val)}));
+  const used=parts.reduce((s,p)=>s+p.val,0);
+  const isCur=kym===ym(currentYear,currentMonth);
+  const curTag=isCur?'<span class="rv-sub">（今月）</span>':'';
+  if(motode<=0){
+    return `<div class="rv-month"><div class="rv-head"><span class="rv-mlabel">${ymLabel(kym)}${curTag}</span><span class="rv-sub">元手 未入力</span></div>
+      <div class="rv-detail">使用 ${money(used)}（元手＝収入合計が未入力のため使用率は表示できません）</div></div>`;
+  }
+  const rate=used/motode*100;
+  const over=rate>100;
+  // バー：元手=100%。使用率100%以下は残りを空きトラックに、超過時はセグメントを正規化してバーを埋める
+  const denom=over?used:motode;
+  const segs=parts.filter(p=>p.val>0).map(p=>`<div class="rv-seg" style="width:${(p.val/denom*100).toFixed(2)}%;background:var(${p.cssvar})" title="${p.label} ${money(p.val)}"></div>`).join('');
+  const rest=over?'':`<div class="rv-track-rest"></div>`;
+  const rateCls=over?'val-red':(rate>=90?'val-yellow':'val-green');
+  const detail=parts.filter(p=>p.val>0).map(p=>`<span class="rv-det-item"><span class="rv-dot" style="background:var(${p.cssvar})"></span>${p.label} ${money(p.val)}</span>`).join('');
+  const prevKym=prevYM(kym);
+  const cardNote=(t.prevCardTotal>0)?`<div class="rv-note"><span>💳 この給料で引落した先月カード ${money(t.prevCardTotal)}${t.prevCardFood>0?`（うち食費 ${money(t.prevCardFood)}）`:''}</span><button class="rv-jump" onclick="goToMonth(${prevKym},'mikomi')">📂 ${ymLabel(prevKym)}の購入を見る</button></div>`:'';
+  return `<div class="rv-month">
+    <div class="rv-head">
+      <span class="rv-mlabel">${ymLabel(kym)}${curTag}</span>
+      <span><span class="rv-rate ${rateCls}">${Math.round(rate)}%</span>${over?'<span class="rv-over">超過</span>':''}</span>
+    </div>
+    <div class="rv-bar">${segs}${rest}</div>
+    <div class="rv-detail"><span class="rv-det-item" style="color:var(--text)">元手 ${money(motode)} → 使用 ${money(used)}・残り ${money(motode-used)}</span></div>
+    <div class="rv-detail">${detail}</div>
+    ${cardNote}
+  </div>`;
 }
 
 // ──────────────────────
@@ -1790,6 +1798,14 @@ function deleteItem(type,i){
   const arr=type==='fixed'?state.fixed:state.expenses;
   const item=arr[i];if(!item)return;
   if(item.confirmed)return; // 確定中は削除不可
+  // カレンダー由来（schedId付き）の見込みは、カレンダー予定ごと連動して削除する
+  if(type==='expense'&&item.schedId){
+    const nm=item.calRef||item.name||'この項目';
+    if(!confirm(`「${nm}」はカレンダーの予定と連動しています。\n削除するとカレンダーの予定と、他の月に紐づく見込みもまとめて消えます。実行しますか？`))return;
+    deleteScheduleBySchedId(item.schedId);
+    saveData();calcAll();renderCalendar();
+    return;
+  }
   if(!confirm(`「${item.name||'この項目'}」を削除しますか？`))return;
   arr.splice(i,1);saveData();calcAll();
 }
@@ -2758,6 +2774,27 @@ function deleteSchedule(key,i){
   if(schedules[key].length===0)delete schedules[key];
   saveSchedulesStore();
   saveData();calcAll();showDayDetail(selectedDay);renderCalendar();closeModal('scheduleModal');
+}
+// schedIdからカレンダー予定の格納位置を探す（見つからなければnull）
+function findScheduleBySchedId(schedId){
+  if(!schedId||!schedules)return null;
+  for(const key in schedules){
+    const arr=schedules[key];if(!arr)continue;
+    const idx=arr.findIndex(s=>s&&s.schedId===schedId);
+    if(idx>=0)return{key,idx};
+  }
+  return null;
+}
+// 見込み側から削除したとき、紐づくカレンダー予定・全月の見込み・返金をまとめて削除
+function deleteScheduleBySchedId(schedId){
+  if(!schedId)return;
+  cleanupScheduleLinks(schedId); // 全月の見込み・返金を削除
+  const found=findScheduleBySchedId(schedId);
+  if(found){
+    schedules[found.key].splice(found.idx,1);
+    if(schedules[found.key].length===0)delete schedules[found.key];
+    saveSchedulesStore();
+  }
 }
 
 // ──────────────────────
