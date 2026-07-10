@@ -318,7 +318,11 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="card step-card s2">
     <div class="step-label"><div class="step-num s2">2</div><div class="step-title">固定費見込み</div>
       <button class="collapse-toggle" onclick="toggleCollapse('fixedBody',this)">▼ 開く</button></div>
-    <div class="total-row" style="border-top:none;padding:4px 0;"><span style="font-size:13px">固定費合計（採用額）</span><span id="fixedTotal" class="val-red">0円</span></div>
+    <div style="padding:2px 0;">
+      <div class="total-row" style="border-top:none;padding:2px 0;"><span style="font-size:12px;color:var(--text2)">💳 クレカ分</span><span id="fixedCardTotal" class="val-red">0円</span></div>
+      <div class="total-row" style="border-top:none;padding:2px 0;"><span style="font-size:12px;color:var(--text2)">💴 今月現金分</span><span id="fixedCashTotal" class="val-red">0円</span></div>
+      <div class="total-row" style="padding:4px 0;"><span style="font-size:13px">固定費合計（採用額）</span><span id="fixedTotal" class="val-red">0円</span></div>
+    </div>
     <div class="collapse-body hidden" id="fixedBody">
       <div class="hint">📌 採用額＝未確定なら見込み・金額のうち高い方／確定なら金額。確定後は編集不可（確定ボタンで解除）。項目名・支払方法は直接タップして編集できます。固定費の追加・削除は設定タブの「固定費テンプレ」から。</div>
       <div class="gridhead"><span style="text-align:left">見込み</span><span style="text-align:right">金額</span><span style="text-align:right">支払い</span></div>
@@ -2002,11 +2006,15 @@ function monthTotalsFor(kym){
   const savingLinked=(e)=>!!expenseSavingGoal(e);
   // 当月分：この月の給料から引かれるもの（現金・口座振替。カードは翌月なので除外）
   let fixedTotal=0,foodUsed=0,jiyuUsed=0,ownCardFixed=0,ownCardVar=0,ownCardFood=0,ownCardJiyu=0;
+  // 見込み固定費の内訳：支払い方法がカード＝クレカ分／現金・口座振替など＝今月現金分
+  let fixedCardPart=0,fixedCashPart=0;
+  const cardSet=cardNames();
   const byMethod={},ownCardByMethod={};
   const addM=(o,k,v)=>{const key=k||'その他';o[key]=(o[key]||0)+v;};
   (st.fixed||[]).forEach(f=>{
     if(f.startMonth&&Number(f.startMonth)>kym)return;
     const a=adopted(f);
+    if(cardSet.includes(f.pay))fixedCardPart+=a;else fixedCashPart+=a;
     if(poolChargeYM(kym,f.pay)===kym){fixedTotal+=a;addM(byMethod,f.pay,a);}
     else{ownCardFixed+=a;addM(ownCardByMethod,f.pay,a);} // 翌月引き落とし（メモ扱い）
   });
@@ -2040,7 +2048,8 @@ function monthTotalsFor(kym){
   });
   foodUsed+=prevCardFood; // 前月カードの食費 → この月の食費予算を消費
   const jiyuFrame=income-fixedTotal-foodBudget-goalMonthly-(prevCardTotal-prevCardFood);
-  return {income,fixedTotal,goalMonthly,foodBudget,jiyuFrame,foodUsed,jiyuUsed,
+  return {income,fixedTotal,fixedCardPart,fixedCashPart,fixedAll:fixedCardPart+fixedCashPart,
+    goalMonthly,foodBudget,jiyuFrame,foodUsed,jiyuUsed,
     foodLeft:foodBudget-foodUsed,jiyuLeft:jiyuFrame-jiyuUsed,refund,byMethod,
     prevCardTotal,prevCardFood,prevCardItems,
     ownCardFixed,ownCardVar,ownCardFood,ownCardJiyu,ownCardByMethod,
@@ -2063,7 +2072,10 @@ function calcTotalsOnly(){
     });
   }
   document.getElementById('incomeTotal').textContent=t.income.toLocaleString()+'円';
-  document.getElementById('fixedTotal').textContent='('+t.fixedTotal.toLocaleString()+')円';
+  const setFixed=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=v.toLocaleString()+'円';};
+  setFixed('fixedCardTotal',t.fixedCardPart);
+  setFixed('fixedCashTotal',t.fixedCashPart);
+  setFixed('fixedTotal',t.fixedAll);
   const fmt=(v,id)=>{const el=document.getElementById(id);if(!el)return;el.textContent=v.toLocaleString()+'円';el.className=v>=0?'val-green':'val-red';};
   fmt(t.foodLeft,'foodLeft');fmt(t.jiyuLeft,'jiyuLeft');
   const tN=monthTotalsFor(nextYM(ym(currentYear,currentMonth)));
