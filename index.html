@@ -84,15 +84,22 @@ input:focus,select:focus{border-color:var(--accent);}
 .tag-mini.tag-locked{background:#1a2e2e;color:#4dd;}
 .tag-add-btn{background:var(--surface);border:1px dashed var(--border);color:var(--text2);border-radius:999px;padding:2px 8px;font-size:9px;cursor:pointer;}
 .tag-add-btn:disabled{opacity:.4;cursor:not-allowed;}
-.sch-item-row{background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:8px;margin-bottom:8px;}
-.sch-item-line{display:flex;gap:6px;align-items:center;}
-.sch-item-line+.sch-item-line{margin-top:6px;}
+.sch-item-row{background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:6px;margin-bottom:6px;}
+.sch-item-line{display:flex;gap:5px;align-items:center;}
+.sch-item-line+.sch-item-line{margin-top:4px;}
+.sch-item-row input,.sch-item-row select{padding:5px 8px;font-size:12px;}
 .sch-item-row .schItemName{flex:1.4;min-width:0;}
 .sch-item-row .schItemAmt{flex:1;min-width:0;text-align:right;}
 .sch-item-row .schItemPay,.sch-item-row .schItemExp{flex:1;min-width:0;font-size:11px;}
 .sch-item-row .schItemRefDate{flex:1.2;min-width:0;font-size:11px;}
 .sch-item-row .schItemRefAmt{flex:1;min-width:0;text-align:right;font-size:11px;}
-.sch-item-row .sch-item-del{background:var(--surface);border:1px solid var(--border);color:var(--red);border-radius:6px;width:34px;height:34px;flex-shrink:0;cursor:pointer;font-size:13px;}
+.sch-item-row .sch-item-del{background:var(--surface);border:1px solid var(--border);color:var(--red);border-radius:6px;width:30px;height:30px;flex-shrink:0;cursor:pointer;font-size:12px;padding:0;}
+/* 「払う日」は独立した見出しにせず、日付入力とひとつの枠に収める（題目っぽさを解消） */
+.sch-date-wrap{flex:1;display:flex;align-items:center;gap:4px;background:#16161f;border:1px solid var(--border);border-radius:var(--rs);padding:0 8px;min-width:0;}
+.sch-date-wrap .sch-date-cap{font-size:9px;color:var(--text2);white-space:nowrap;flex-shrink:0;}
+.sch-date-wrap .schItemDate{border:none;background:transparent;padding:5px 0;flex:1;min-width:0;font-size:11px;}
+.sch-date-wrap .schItemDate:focus{border:none;}
+.sch-date-wrap:focus-within{border-color:var(--accent);}
 .li-meta{font-size:10px;color:var(--text2);margin-top:5px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
 .li-history{font-size:10px;color:var(--text2);margin-top:4px;padding-left:4px;border-left:2px solid var(--border);}
 .li-actions{display:flex;gap:4px;align-items:center;margin-left:auto;}
@@ -632,7 +639,7 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="form-field"><label>この予定の支出（1件ずつ支払い方法・経費を設定できます）</label>
     <div id="schItems"></div>
     <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px;" onclick="addSchItem()">＋ 支出を追加</button>
-    <div style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.5;">品目名を支出メモと同じ名前にすると既存メモに紐づきます（重複登録されません）。空欄なら登録しません。<br>🗓️「払う/買う日」は<b>基本ふだんは空欄でOK</b>（＝予定の日付で計算）。カードの引き落とし月や現金の給料日またぎがややこしいときだけ、実際に支払う日を入れると集計が正確になります。</div>
+    <div style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.5;">品目名を支出メモと同じ名前にすると既存メモに紐づきます（重複登録されません）。空欄なら登録しません。<br>🗓️「払う日」は<b>基本ふだんは空欄でOK</b>（＝予定の日付で計算）。カードの引き落とし月や現金の給料日またぎがややこしいときだけ、実際に支払う日を入れると集計が正確になります。</div>
     <datalist id="expNameList"></datalist>
   </div>
   <div class="form-field"><label>メモ</label><input type="text" id="schMemo" placeholder="（任意）"></div>
@@ -689,7 +696,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.11a';
+const APP_VERSION='v2026.07.11b';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -1248,7 +1255,7 @@ function showTab(tab){
   const idx=['home','mikomi','calendar','ai','review','settings'].indexOf(tab);
   const tabEl=document.querySelectorAll('.tab')[idx];
   if(tabEl)tabEl.classList.add('active');
-  if(tab==='calendar')renderCalendar();
+  if(tab==='calendar'){renderCalendar();if(selectedDay)showDayDetail(selectedDay);} // 見込み側の編集を戻ってきた時に日別詳細へも反映
   if(tab==='ai')renderAiPage();
   if(tab==='review')renderReview();
   if(tab==='settings')renderSettings();
@@ -2546,9 +2553,11 @@ function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refun
         <option value="2"${Number(isExpense)===2?' selected':''}>🔄 立替</option>
       </select>
     </div>
-    <div class="sch-item-line" style="align-items:center;">
-      <span style="font-size:9px;color:var(--text2);white-space:nowrap;flex-shrink:0;" title="ふだんは空欄でOK。カードの引き落とし月や現金の給料日またぎを正しく計算したいときだけ、実際に支払う/買う日を入れます。">🗓️ 払う/買う日<span style="opacity:.7">(任意)</span></span>
-      <input type="date" class="schItemDate" value="${escAttr(date)}" title="この明細を実際に支払う/買う日。カードの引き落とし月ずれや現金の給料日またぎを正しく計算したいときだけ入力。空欄なら予定の日付で判定します。" style="flex:1;font-size:11px;">
+    <div class="sch-item-line">
+      <div class="sch-date-wrap" title="この明細を実際に支払う/買う日。カードの引き落とし月ずれや現金の給料日またぎを正しく計算したいときだけ入力。空欄なら予定の日付で判定します（ふだんは空欄でOK）。">
+        <span class="sch-date-cap">🗓️払う日</span>
+        <input type="date" class="schItemDate" value="${escAttr(date)}">
+      </div>
       <input type="text" class="schItemMemo" placeholder="メモ（任意）" value="${escAttr(memo)}" style="flex:1.4;font-size:11px;">
     </div>
     <div class="sch-item-line"><select class="schItemGoal" title="支払い元（自由費/食費/貯金）" style="flex:1;font-size:11px;">${goalOpts}</select></div>
@@ -2776,9 +2785,11 @@ function saveSchedule(){
       // ── この明細が経費・立替なら返金台帳へ（明細ごと）──
       if(Number(it.isExpense)>0&&it.refundDate){
         const rD=parseISO(it.refundDate);
-        if(rD){
+        const rAmt=Number(it.refundAmt)||Number(it.amount)||0; // 空=全額（＝支出額）。両方空なら0。
+        // 金額が全く無いと +0円の幽霊返金になり見込みが狂うので、額が確定できる時だけ計上する。
+        if(rD&&rAmt>0){
           refunds.push({schedId,calRef:name,name:`${expName} 返金`,
-            amt:it.refundAmt||it.amount||0,
+            amt:rAmt,
             refundYM:ym(rD.y,rD.m), // 返金日が属する月に計上（新仕様。旧は前月ずれ）
             dateStr:`${rD.m+1}/${rD.d}返金予定`});
         }
