@@ -1743,8 +1743,10 @@ function renderExpenses(){
         <select ${locked?'disabled':''} onchange="state.expenses[${i}].pay=this.value;calcTotalsOnly();saveData()">${payOptionsHtml(PAY_OPTIONS_EXP(),e.pay)}</select>
       </div>
       <div class="li-meta">
-        ${!e.calRef?`<span style="font-size:9px;color:var(--text2);cursor:pointer;border-bottom:1px dotted var(--text2)" onclick="event.stopPropagation();editAddedDate(${i})" title="タップで日付を編集（カード締め判定に使用）">📅${e.addedAt?mdOf(e.addedAt):'日付'}</span>`:''}
-        ${manualTags.map(o=>`<span class="tag-mini">📝 ${locked?escHtml(o.tg):`<span class="tag-text" style="cursor:pointer" onclick="event.stopPropagation();editMemoTag('expense',${i},${o.ti})">${escHtml(o.tg)}</span>`}${!locked?`<button onclick="event.stopPropagation();removeMemoTag('expense',${i},${o.ti})">✕</button>`:''}</span>`).join('')}
+        ${!e.calRef
+          ?`<span style="font-size:9px;color:var(--text2);cursor:pointer;border-bottom:1px dotted var(--text2)" onclick="event.stopPropagation();editAddedDate(${i})" title="タップで日付を編集（カード締め判定に使用）">📅${e.addedAt?mdOf(e.addedAt):'日付'}</span>`
+          :(e.addedAt?`<span style="font-size:9px;color:var(--text2)" title="支払い・購入日（予定側で編集）">📅${mdOf(e.addedAt)}支払</span>`:'')}
+        ${manualTags.map(o=>`<span class="tag-mini">📝 ${(locked||e.calRef)?escHtml(o.tg):`<span class="tag-text" style="cursor:pointer" onclick="event.stopPropagation();editMemoTag('expense',${i},${o.ti})">${escHtml(o.tg)}</span>`}${(!locked&&!e.calRef)?`<button onclick="event.stopPropagation();removeMemoTag('expense',${i},${o.ti})">✕</button>`:''}</span>`).join('')}
         ${(!locked&&!e.calRef)?`<button class="tag-add-btn" onclick="event.stopPropagation();addMemoTag('expense',${i})">＋メモ</button>`:''}
         ${(!e.calRef&&e.refundDate)?`<span class="tag-mini" style="color:var(--green);border-color:var(--green);cursor:pointer" onclick="event.stopPropagation();editExpenseRefund(${i})" title="タップで返金を編集">💼 ${escHtml(mdOf(e.refundDate))}返金 +¥${Number(e.refundAmt||adopted(e)).toLocaleString()}</span>`:''}
         ${(!locked&&!e.calRef&&!e.refundDate)?`<button class="tag-add-btn" onclick="event.stopPropagation();editExpenseRefund(${i})">💼返金</button>`:''}
@@ -1802,11 +1804,17 @@ function deleteItem(type,i){
   const arr=type==='fixed'?state.fixed:state.expenses;
   const item=arr[i];if(!item)return;
   if(item.confirmed)return; // 確定中は削除不可
-  // カレンダー由来（schedId付き）の見込みは、カレンダー予定ごと連動して削除する
+  // カレンダー由来（schedId付き）の見込みは、その明細だけをカレンダー予定から連動削除する
   if(type==='expense'&&item.schedId){
-    const nm=item.calRef||item.name||'この項目';
-    if(!confirm(`「${nm}」はカレンダーの予定と連動しています。\n削除するとカレンダーの予定と、他の月に紐づく見込みもまとめて消えます。実行しますか？`))return;
-    deleteScheduleBySchedId(item.schedId);
+    const nm=item.name||item.calRef||'この項目';
+    // この予定に残る他の明細数を確認（最後の1件なら予定ごと消える旨を案内）
+    const found=findScheduleBySchedId(item.schedId);
+    const remain=found&&Array.isArray(schedules[found.key][found.idx].items)?schedules[found.key][found.idx].items.length:1;
+    const msg=remain<=1
+      ?`「${nm}」を削除しますか？\nこれはカレンダー予定「${item.calRef||nm}」の最後の支出のため、予定ごと削除されます。`
+      :`「${nm}」を削除しますか？\nカレンダー予定「${item.calRef||nm}」内のこの支出（と返金予定）だけを削除します。予定や他の支出は残ります。`;
+    if(!confirm(msg))return;
+    deleteScheduleItemBySchedId(item.schedId,item.name);
     saveData();calcAll();renderCalendar();
     return;
   }
@@ -2501,7 +2509,7 @@ function buildExpNameList(){
   const names=[...new Set((state.expenses||[]).map(x=>x.name).filter(Boolean))];
   dl.innerHTML=names.map(n=>`<option value="${escAttr(n)}">`).join('');
 }
-function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refundAmt='',goalId='',cat='自由費'){
+function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refundAmt='',goalId='',cat='自由費',date='',memo=''){
   const box=document.getElementById('schItems');
   const row=document.createElement('div');row.className='sch-item-row';
   const showRefund=Number(isExpense)>0;
@@ -2531,6 +2539,10 @@ function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refun
         <option value="2"${Number(isExpense)===2?' selected':''}>🔄 立替</option>
       </select>
     </div>
+    <div class="sch-item-line">
+      <input type="date" class="schItemDate" value="${escAttr(date)}" title="支払い・購入日（空欄なら予定の開始日で判定）" style="flex:1;font-size:11px;">
+      <input type="text" class="schItemMemo" placeholder="メモ（任意）" value="${escAttr(memo)}" style="flex:1.4;font-size:11px;">
+    </div>
     <div class="sch-item-line"><select class="schItemGoal" title="支払い元（自由費/食費/貯金）" style="flex:1;font-size:11px;">${goalOpts}</select></div>
     <div class="sch-item-line sch-item-refund" style="display:${showRefund?'flex':'none'}">
       <input type="date" class="schItemRefDate" value="${escAttr(refundDate)}" title="返金予定日">
@@ -2557,7 +2569,11 @@ function readSchItems(){
     const gv=goalSel?goalSel.value:'';
     const cat=(gv==='food')?'食費':'自由費';
     const goalId=(gv&&gv!=='food')?gv:'';
-    items.push({name:nm,amount:amt,pay,isExpense,refundDate,refundAmt,goalId,cat});
+    const dateInp=row.querySelector('.schItemDate');
+    const date=dateInp?(dateInp.value||''):'';
+    const memoInp=row.querySelector('.schItemMemo');
+    const memo=memoInp?(memoInp.value.trim()):'';
+    items.push({name:nm,amount:amt,pay,isExpense,refundDate,refundAmt,goalId,cat,date,memo});
   });
   return items;
 }
@@ -2611,12 +2627,12 @@ function openEditSchedule(key,i){
       isExpense:(it.isExpense!==undefined)?it.isExpense:(idx===0?(sc.isExpense||0):0),
       refundDate:(it.refundDate!==undefined)?it.refundDate:(idx===0?(sc.refundDate||''):''),
       refundAmt:(it.refundAmt!==undefined)?it.refundAmt:(idx===0?(sc.refundAmt||0):0),
-      goalId:it.goalId||''
+      goalId:it.goalId||'',date:it.date||'',memo:it.memo||''
     }));
   } else if(sc.budget){
-    items=[{name:sc.tag||sc.name,amount:sc.budget,pay:sc.payType||'card',isExpense:sc.isExpense||0,refundDate:sc.refundDate||'',refundAmt:sc.refundAmt||0,goalId:''}];
+    items=[{name:sc.tag||sc.name,amount:sc.budget,pay:sc.payType||'card',isExpense:sc.isExpense||0,refundDate:sc.refundDate||'',refundAmt:sc.refundAmt||0,goalId:'',date:'',memo:''}];
   } else items=[];
-  if(items.length)items.forEach(it=>addSchItem(it.name,it.amount,it.pay,it.isExpense,it.refundDate,it.refundAmt,it.goalId,it.cat||'自由費'));
+  if(items.length)items.forEach(it=>addSchItem(it.name,it.amount,it.pay,it.isExpense,it.refundDate,it.refundAmt,it.goalId,it.cat||'自由費',it.date||'',it.memo||''));
   else addSchItem();
   document.getElementById('schBtnRow').innerHTML=`
     <button class="btn btn-ghost" style="flex:1;width:auto" onclick="deleteSchedule('${key}',${i})">削除</button>
@@ -2692,24 +2708,31 @@ function saveSchedule(){
     const isRange=(eD.y!==sD.y||eD.m!==sD.m||eD.d!==sD.d);
     const dateLabel=isRange?`${sLabel}〜${eLabel}`:sLabel; // 期間予定は「9/16〜10/27」表示
     const curKey=getKey(currentYear,currentMonth);
-    const cardYM=getKey(sD.y,sD.m); // クレカ＝当月（給料プールは見込みパネルで判定）
-    // 現金＝その支出が属する給料月そのもの（6/15〜7/14→6月。給料日またぎは終了日で後ろ優先）
-    const cashSalYM=salaryMonthOfDate(eD.y,eD.m,eD.d); // YYYYMM
-    const cashYM=getKey(Math.floor(cashSalYM/100),(cashSalYM%100)-1);
     const refunds=loadRefunds();
     items.forEach(it=>{
       const expName=it.name||name;
       const itCash=it.pay==='cash';
-      const chargeYM=itCash?cashYM:cardYM;
+      const payName=itCash?'現金':(it.pay==='card'?'PayPayカード':(it.pay||'PayPayカード'));
+      // 明細ごとの支払い・購入日。未入力なら従来どおり（現金＝終了日基準／カード＝開始日基準）。
+      const iD=parseISO(it.date)||(itCash?eD:sD);
+      const itemISO=toISO(iD.y,iD.m,iD.d);
+      // 引き落とし月：現金はその日が属する給料月、カードは締め日→引き落とし給料月
+      let chargeYM,cardChargeSal=null;
+      if(itCash){
+        const cSal=salaryMonthOfDate(iD.y,iD.m,iD.d); // YYYYMM
+        chargeYM=getKey(Math.floor(cSal/100),(cSal%100)-1);
+      }else{
+        chargeYM=getKey(iD.y,iD.m); // クレカ＝購入月に当月計上
+        cardChargeSal=chargeSalaryMonth(iD.y,iD.m,iD.d,payName); // 実購入日で締め→引き落とし判定
+      }
       const isCurMonth=(chargeYM===curKey);
       const mkRow=(keep)=>{
-        const payName=itCash?'現金':(it.pay==='card'?'PayPayカード':(it.pay||'PayPayカード'));
         const r={name:expName,cat:(it.cat==='食費'?'食費':'自由費'),mikomi:it.amount||0,
           amount:keep?keep.amount:0,confirmed:keep?!!keep.confirmed:false,
-          memo:'',memoTags:[],pay:payName,paid:keep?!!keep.paid:false,
-          history:keep?(keep.history||[]):[],addedAt:(keep&&keep.addedAt)||todayISO(),
+          memo:'',memoTags:it.memo?[it.memo]:[],pay:payName,paid:keep?!!keep.paid:false,
+          history:keep?(keep.history||[]):[],addedAt:itemISO,
           calRef:name,calDate:dateLabel,calCash:itCash,schedId,cashFromPrev:false};
-        if(!itCash)r.chargeYM=chargeSalaryMonth(sD.y,sD.m,sD.d,payName); // 実購入日（予定開始日）で締め日判定
+        if(!itCash)r.chargeYM=cardChargeSal;
         if(it.goalId)r.goalId=it.goalId;
         return r;
       };
@@ -2805,6 +2828,49 @@ function deleteScheduleBySchedId(schedId){
   if(found){
     schedules[found.key].splice(found.idx,1);
     if(schedules[found.key].length===0)delete schedules[found.key];
+    saveSchedulesStore();
+  }
+}
+// 見込み側から1明細だけ削除：同じschedId・同名の見込み(全月)・返金・カレンダー予定の該当明細のみ消す。
+// 明細が0件になった予定は予定ごと削除する。
+function deleteScheduleItemBySchedId(schedId,name){
+  if(!schedId)return;
+  // 全月stateの見込みから、schedId一致かつ同名のものだけ削除
+  if(state.expenses)state.expenses=state.expenses.filter(e=>!(e.schedId===schedId&&e.name===name));
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(!k||!k.startsWith('kakeibo_')||k==='kakeibo_goals'||k==='kakeibo_refunds')continue;
+    try{
+      const st=JSON.parse(localStorage.getItem(k));
+      if(st&&st.expenses&&st.expenses.some(e=>e.schedId===schedId&&e.name===name)){
+        st.expenses=st.expenses.filter(e=>!(e.schedId===schedId&&e.name===name));
+        localStorage.setItem(k,JSON.stringify(st));
+        bumpLsGen();
+      }
+    }catch(e){}
+  }
+  // 返金台帳からこの明細ぶんだけ削除
+  const refName=`${name} 返金`;
+  const refunds=loadRefunds();
+  const kept=refunds.filter(r=>!(r.schedId===schedId&&r.name===refName));
+  if(kept.length!==refunds.length)saveRefunds(kept);
+  // カレンダー予定本体から該当明細を削除。残り0件なら予定ごと削除
+  const found=findScheduleBySchedId(schedId);
+  if(found){
+    const sc=schedules[found.key][found.idx];
+    if(sc&&Array.isArray(sc.items)){
+      sc.items=sc.items.filter(it=>(it.name||sc.name)!==name);
+      if(sc.items.length===0){
+        schedules[found.key].splice(found.idx,1);
+        if(schedules[found.key].length===0)delete schedules[found.key];
+      }else{
+        // 予定の代表値を再計算（バッジ表示・後方互換用）
+        sc.budget=sc.items.reduce((s,it)=>s+(it.amount||0),0);
+        sc.isExpense=sc.items.some(it=>Number(it.isExpense)>0)?1:0;
+        sc.payType=sc.items.some(it=>it.pay==='cash')?'cash':'card';
+        sc.tag=sc.items[0]?sc.items[0].name:'';
+      }
+    }
     saveSchedulesStore();
   }
 }
