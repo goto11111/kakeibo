@@ -1743,8 +1743,10 @@ function renderExpenses(){
         <select ${locked?'disabled':''} onchange="state.expenses[${i}].pay=this.value;calcTotalsOnly();saveData()">${payOptionsHtml(PAY_OPTIONS_EXP(),e.pay)}</select>
       </div>
       <div class="li-meta">
-        ${!e.calRef?`<span style="font-size:9px;color:var(--text2);cursor:pointer;border-bottom:1px dotted var(--text2)" onclick="event.stopPropagation();editAddedDate(${i})" title="タップで日付を編集（カード締め判定に使用）">📅${e.addedAt?mdOf(e.addedAt):'日付'}</span>`:''}
-        ${manualTags.map(o=>`<span class="tag-mini">📝 ${locked?escHtml(o.tg):`<span class="tag-text" style="cursor:pointer" onclick="event.stopPropagation();editMemoTag('expense',${i},${o.ti})">${escHtml(o.tg)}</span>`}${!locked?`<button onclick="event.stopPropagation();removeMemoTag('expense',${i},${o.ti})">✕</button>`:''}</span>`).join('')}
+        ${!e.calRef
+          ?`<span style="font-size:9px;color:var(--text2);cursor:pointer;border-bottom:1px dotted var(--text2)" onclick="event.stopPropagation();editAddedDate(${i})" title="タップで日付を編集（カード締め判定に使用）">📅${e.addedAt?mdOf(e.addedAt):'日付'}</span>`
+          :(e.addedAt?`<span style="font-size:9px;color:var(--text2)" title="支払い・購入日（予定側で編集）">📅${mdOf(e.addedAt)}支払</span>`:'')}
+        ${manualTags.map(o=>`<span class="tag-mini">📝 ${(locked||e.calRef)?escHtml(o.tg):`<span class="tag-text" style="cursor:pointer" onclick="event.stopPropagation();editMemoTag('expense',${i},${o.ti})">${escHtml(o.tg)}</span>`}${(!locked&&!e.calRef)?`<button onclick="event.stopPropagation();removeMemoTag('expense',${i},${o.ti})">✕</button>`:''}</span>`).join('')}
         ${(!locked&&!e.calRef)?`<button class="tag-add-btn" onclick="event.stopPropagation();addMemoTag('expense',${i})">＋メモ</button>`:''}
         ${(!e.calRef&&e.refundDate)?`<span class="tag-mini" style="color:var(--green);border-color:var(--green);cursor:pointer" onclick="event.stopPropagation();editExpenseRefund(${i})" title="タップで返金を編集">💼 ${escHtml(mdOf(e.refundDate))}返金 +¥${Number(e.refundAmt||adopted(e)).toLocaleString()}</span>`:''}
         ${(!locked&&!e.calRef&&!e.refundDate)?`<button class="tag-add-btn" onclick="event.stopPropagation();editExpenseRefund(${i})">💼返金</button>`:''}
@@ -2507,7 +2509,7 @@ function buildExpNameList(){
   const names=[...new Set((state.expenses||[]).map(x=>x.name).filter(Boolean))];
   dl.innerHTML=names.map(n=>`<option value="${escAttr(n)}">`).join('');
 }
-function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refundAmt='',goalId='',cat='自由費'){
+function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refundAmt='',goalId='',cat='自由費',date='',memo=''){
   const box=document.getElementById('schItems');
   const row=document.createElement('div');row.className='sch-item-row';
   const showRefund=Number(isExpense)>0;
@@ -2537,6 +2539,10 @@ function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refun
         <option value="2"${Number(isExpense)===2?' selected':''}>🔄 立替</option>
       </select>
     </div>
+    <div class="sch-item-line">
+      <input type="date" class="schItemDate" value="${escAttr(date)}" title="支払い・購入日（空欄なら予定の開始日で判定）" style="flex:1;font-size:11px;">
+      <input type="text" class="schItemMemo" placeholder="メモ（任意）" value="${escAttr(memo)}" style="flex:1.4;font-size:11px;">
+    </div>
     <div class="sch-item-line"><select class="schItemGoal" title="支払い元（自由費/食費/貯金）" style="flex:1;font-size:11px;">${goalOpts}</select></div>
     <div class="sch-item-line sch-item-refund" style="display:${showRefund?'flex':'none'}">
       <input type="date" class="schItemRefDate" value="${escAttr(refundDate)}" title="返金予定日">
@@ -2563,7 +2569,11 @@ function readSchItems(){
     const gv=goalSel?goalSel.value:'';
     const cat=(gv==='food')?'食費':'自由費';
     const goalId=(gv&&gv!=='food')?gv:'';
-    items.push({name:nm,amount:amt,pay,isExpense,refundDate,refundAmt,goalId,cat});
+    const dateInp=row.querySelector('.schItemDate');
+    const date=dateInp?(dateInp.value||''):'';
+    const memoInp=row.querySelector('.schItemMemo');
+    const memo=memoInp?(memoInp.value.trim()):'';
+    items.push({name:nm,amount:amt,pay,isExpense,refundDate,refundAmt,goalId,cat,date,memo});
   });
   return items;
 }
@@ -2617,12 +2627,12 @@ function openEditSchedule(key,i){
       isExpense:(it.isExpense!==undefined)?it.isExpense:(idx===0?(sc.isExpense||0):0),
       refundDate:(it.refundDate!==undefined)?it.refundDate:(idx===0?(sc.refundDate||''):''),
       refundAmt:(it.refundAmt!==undefined)?it.refundAmt:(idx===0?(sc.refundAmt||0):0),
-      goalId:it.goalId||''
+      goalId:it.goalId||'',date:it.date||'',memo:it.memo||''
     }));
   } else if(sc.budget){
-    items=[{name:sc.tag||sc.name,amount:sc.budget,pay:sc.payType||'card',isExpense:sc.isExpense||0,refundDate:sc.refundDate||'',refundAmt:sc.refundAmt||0,goalId:''}];
+    items=[{name:sc.tag||sc.name,amount:sc.budget,pay:sc.payType||'card',isExpense:sc.isExpense||0,refundDate:sc.refundDate||'',refundAmt:sc.refundAmt||0,goalId:'',date:'',memo:''}];
   } else items=[];
-  if(items.length)items.forEach(it=>addSchItem(it.name,it.amount,it.pay,it.isExpense,it.refundDate,it.refundAmt,it.goalId,it.cat||'自由費'));
+  if(items.length)items.forEach(it=>addSchItem(it.name,it.amount,it.pay,it.isExpense,it.refundDate,it.refundAmt,it.goalId,it.cat||'自由費',it.date||'',it.memo||''));
   else addSchItem();
   document.getElementById('schBtnRow').innerHTML=`
     <button class="btn btn-ghost" style="flex:1;width:auto" onclick="deleteSchedule('${key}',${i})">削除</button>
@@ -2698,24 +2708,31 @@ function saveSchedule(){
     const isRange=(eD.y!==sD.y||eD.m!==sD.m||eD.d!==sD.d);
     const dateLabel=isRange?`${sLabel}〜${eLabel}`:sLabel; // 期間予定は「9/16〜10/27」表示
     const curKey=getKey(currentYear,currentMonth);
-    const cardYM=getKey(sD.y,sD.m); // クレカ＝当月（給料プールは見込みパネルで判定）
-    // 現金＝その支出が属する給料月そのもの（6/15〜7/14→6月。給料日またぎは終了日で後ろ優先）
-    const cashSalYM=salaryMonthOfDate(eD.y,eD.m,eD.d); // YYYYMM
-    const cashYM=getKey(Math.floor(cashSalYM/100),(cashSalYM%100)-1);
     const refunds=loadRefunds();
     items.forEach(it=>{
       const expName=it.name||name;
       const itCash=it.pay==='cash';
-      const chargeYM=itCash?cashYM:cardYM;
+      const payName=itCash?'現金':(it.pay==='card'?'PayPayカード':(it.pay||'PayPayカード'));
+      // 明細ごとの支払い・購入日。未入力なら従来どおり（現金＝終了日基準／カード＝開始日基準）。
+      const iD=parseISO(it.date)||(itCash?eD:sD);
+      const itemISO=toISO(iD.y,iD.m,iD.d);
+      // 引き落とし月：現金はその日が属する給料月、カードは締め日→引き落とし給料月
+      let chargeYM,cardChargeSal=null;
+      if(itCash){
+        const cSal=salaryMonthOfDate(iD.y,iD.m,iD.d); // YYYYMM
+        chargeYM=getKey(Math.floor(cSal/100),(cSal%100)-1);
+      }else{
+        chargeYM=getKey(iD.y,iD.m); // クレカ＝購入月に当月計上
+        cardChargeSal=chargeSalaryMonth(iD.y,iD.m,iD.d,payName); // 実購入日で締め→引き落とし判定
+      }
       const isCurMonth=(chargeYM===curKey);
       const mkRow=(keep)=>{
-        const payName=itCash?'現金':(it.pay==='card'?'PayPayカード':(it.pay||'PayPayカード'));
         const r={name:expName,cat:(it.cat==='食費'?'食費':'自由費'),mikomi:it.amount||0,
           amount:keep?keep.amount:0,confirmed:keep?!!keep.confirmed:false,
-          memo:'',memoTags:[],pay:payName,paid:keep?!!keep.paid:false,
-          history:keep?(keep.history||[]):[],addedAt:(keep&&keep.addedAt)||todayISO(),
+          memo:'',memoTags:it.memo?[it.memo]:[],pay:payName,paid:keep?!!keep.paid:false,
+          history:keep?(keep.history||[]):[],addedAt:itemISO,
           calRef:name,calDate:dateLabel,calCash:itCash,schedId,cashFromPrev:false};
-        if(!itCash)r.chargeYM=chargeSalaryMonth(sD.y,sD.m,sD.d,payName); // 実購入日（予定開始日）で締め日判定
+        if(!itCash)r.chargeYM=cardChargeSal;
         if(it.goalId)r.goalId=it.goalId;
         return r;
       };
