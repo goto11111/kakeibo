@@ -1802,11 +1802,17 @@ function deleteItem(type,i){
   const arr=type==='fixed'?state.fixed:state.expenses;
   const item=arr[i];if(!item)return;
   if(item.confirmed)return; // 確定中は削除不可
-  // カレンダー由来（schedId付き）の見込みは、カレンダー予定ごと連動して削除する
+  // カレンダー由来（schedId付き）の見込みは、その明細だけをカレンダー予定から連動削除する
   if(type==='expense'&&item.schedId){
-    const nm=item.calRef||item.name||'この項目';
-    if(!confirm(`「${nm}」はカレンダーの予定と連動しています。\n削除するとカレンダーの予定と、他の月に紐づく見込みもまとめて消えます。実行しますか？`))return;
-    deleteScheduleBySchedId(item.schedId);
+    const nm=item.name||item.calRef||'この項目';
+    // この予定に残る他の明細数を確認（最後の1件なら予定ごと消える旨を案内）
+    const found=findScheduleBySchedId(item.schedId);
+    const remain=found&&Array.isArray(schedules[found.key][found.idx].items)?schedules[found.key][found.idx].items.length:1;
+    const msg=remain<=1
+      ?`「${nm}」を削除しますか？\nこれはカレンダー予定「${item.calRef||nm}」の最後の支出のため、予定ごと削除されます。`
+      :`「${nm}」を削除しますか？\nカレンダー予定「${item.calRef||nm}」内のこの支出（と返金予定）だけを削除します。予定や他の支出は残ります。`;
+    if(!confirm(msg))return;
+    deleteScheduleItemBySchedId(item.schedId,item.name);
     saveData();calcAll();renderCalendar();
     return;
   }
@@ -2805,6 +2811,49 @@ function deleteScheduleBySchedId(schedId){
   if(found){
     schedules[found.key].splice(found.idx,1);
     if(schedules[found.key].length===0)delete schedules[found.key];
+    saveSchedulesStore();
+  }
+}
+// 見込み側から1明細だけ削除：同じschedId・同名の見込み(全月)・返金・カレンダー予定の該当明細のみ消す。
+// 明細が0件になった予定は予定ごと削除する。
+function deleteScheduleItemBySchedId(schedId,name){
+  if(!schedId)return;
+  // 全月stateの見込みから、schedId一致かつ同名のものだけ削除
+  if(state.expenses)state.expenses=state.expenses.filter(e=>!(e.schedId===schedId&&e.name===name));
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(!k||!k.startsWith('kakeibo_')||k==='kakeibo_goals'||k==='kakeibo_refunds')continue;
+    try{
+      const st=JSON.parse(localStorage.getItem(k));
+      if(st&&st.expenses&&st.expenses.some(e=>e.schedId===schedId&&e.name===name)){
+        st.expenses=st.expenses.filter(e=>!(e.schedId===schedId&&e.name===name));
+        localStorage.setItem(k,JSON.stringify(st));
+        bumpLsGen();
+      }
+    }catch(e){}
+  }
+  // 返金台帳からこの明細ぶんだけ削除
+  const refName=`${name} 返金`;
+  const refunds=loadRefunds();
+  const kept=refunds.filter(r=>!(r.schedId===schedId&&r.name===refName));
+  if(kept.length!==refunds.length)saveRefunds(kept);
+  // カレンダー予定本体から該当明細を削除。残り0件なら予定ごと削除
+  const found=findScheduleBySchedId(schedId);
+  if(found){
+    const sc=schedules[found.key][found.idx];
+    if(sc&&Array.isArray(sc.items)){
+      sc.items=sc.items.filter(it=>(it.name||sc.name)!==name);
+      if(sc.items.length===0){
+        schedules[found.key].splice(found.idx,1);
+        if(schedules[found.key].length===0)delete schedules[found.key];
+      }else{
+        // 予定の代表値を再計算（バッジ表示・後方互換用）
+        sc.budget=sc.items.reduce((s,it)=>s+(it.amount||0),0);
+        sc.isExpense=sc.items.some(it=>Number(it.isExpense)>0)?1:0;
+        sc.payType=sc.items.some(it=>it.pay==='cash')?'cash':'card';
+        sc.tag=sc.items[0]?sc.items[0].name:'';
+      }
+    }
     saveSchedulesStore();
   }
 }
