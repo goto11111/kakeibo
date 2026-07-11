@@ -1724,7 +1724,8 @@ function renderExpenses(){
     const _sg=expenseSavingGoal(e);
     const potBadge=_sg?`<span class="tag-mini" style="background:#16331f;color:#5fe39a;border-color:#3dd68c55;">🏦 ${escHtml(_sg.name)}から</span>`:'';
     const _chYM=itemChargeYM(ym(currentYear,currentMonth),e);
-    const cardBadge=(!_sg&&_chYM!==ym(currentYear,currentMonth))?`<span class="tag-mini" style="color:var(--yellow);border-color:var(--yellow)">💳 ${ymLabel(_chYM)}引き落とし（今月の合計対象外）</span>`:'';
+    // カード＝翌月以降に引き落とし。貯金充当でも「いつ引かれるか」を明示する（枠には影響しない旨を注記）
+    const cardBadge=(_chYM!==ym(currentYear,currentMonth))?`<span class="tag-mini" style="color:var(--yellow);border-color:var(--yellow)">💳 ${ymLabel(_chYM)}引き落とし${_sg?'（貯金から充当）':'（今月の合計対象外）'}</span>`:'';
     // 手動メモタグのみ表示（カレンダー由来の「📅…」自動タグは🔗に統合済みなので除外）
     const manualTags=(e.memoTags||[]).map((tg,ti)=>({tg,ti})).filter(o=>!(e.calRef&&/^📅/.test(o.tg)));
     div.innerHTML=`
@@ -2041,6 +2042,9 @@ function monthTotalsFor(kym){
   // 食費カテゴリは食費予算から、それ以外（固定費・自由費）は自由費枠から控除（食費枠の二重化防止）
   let prevCardTotal=0,prevCardFood=0;
   const prevCardItems=[];
+  // 貯金充当の前月カード：この月に引き落とされるが枠（自由費/食費）は減らさない。情報表示用。
+  let prevCardSavingTotal=0;
+  const prevCardSavingItems=[];
   (prevSt.fixed||[]).forEach(f=>{
     if(f.startMonth&&Number(f.startMonth)>prevK)return;
     if(poolChargeYM(prevK,f.pay)!==kym)return;
@@ -2048,9 +2052,15 @@ function monthTotalsFor(kym){
     prevCardItems.push({name:f.name,amt:a,pay:f.pay,cat:'固定費'});
   });
   (prevSt.expenses||[]).forEach(e=>{
-    if(expenseSavingGoal(e))return;
-    if(itemChargeYM(prevK,e)!==kym)return;
-    const a=adopted(e);prevCardTotal+=a;addM(byMethod,e.pay,a);
+    if(itemChargeYM(prevK,e)!==kym)return; // この月に引き落とされる前月カードのみ
+    const a=adopted(e);
+    const sg=expenseSavingGoal(e);
+    if(sg){ // 貯金から支払い済み扱い → 枠は減らさず「今月引き落とし」を情報として記録
+      prevCardSavingTotal+=a;
+      prevCardSavingItems.push({name:e.name,amt:a,pay:e.pay,goal:sg.name});
+      return;
+    }
+    prevCardTotal+=a;addM(byMethod,e.pay,a);
     if(e.cat==='食費')prevCardFood+=a;
     prevCardItems.push({name:e.name,amt:a,pay:e.pay,cat:e.cat||'自由費'});
   });
@@ -2059,7 +2069,7 @@ function monthTotalsFor(kym){
   return {income,fixedTotal,fixedCardPart,fixedCashPart,fixedAll:fixedCardPart+fixedCashPart,
     goalMonthly,foodBudget,jiyuFrame,foodUsed,jiyuUsed,
     foodLeft:foodBudget-foodUsed,jiyuLeft:jiyuFrame-jiyuUsed,refund,byMethod,
-    prevCardTotal,prevCardFood,prevCardItems,
+    prevCardTotal,prevCardFood,prevCardItems,prevCardSavingTotal,prevCardSavingItems,
     ownCardFixed,ownCardVar,ownCardFood,ownCardJiyu,ownCardByMethod,
     paypayTotal:byMethod['PayPayカード']||0,cashFromPrev:0};
 }
@@ -2163,6 +2173,7 @@ function renderPoolPanel(){
   const curCashUse=tCur.foodUsed-tCur.prevCardFood+tCur.jiyuUsed;
   let dCur=dRow('収入合計',tCur.income);
   if(tCur.prevCardTotal>0)dCur+=dRow(`先月カード引き落とし${tCur.prevCardFood>0?`（食費${money(tCur.prevCardFood)}含む）`:''}`,tCur.prevCardTotal,1);
+  if(tCur.prevCardSavingTotal>0)dCur+=dRow(`🏦 貯金から先月カード引き落とし（枠に影響なし）`,tCur.prevCardSavingTotal,0);
   dCur+=dRow('固定費（現金・口座振替）',tCur.fixedTotal,1);
   if(tCur.goalMonthly>0)dCur+=dRow('目標積立',tCur.goalMonthly,1);
   if(curCashUse>0)dCur+=dRow('今月の使用（現金・振替）',curCashUse,1);
@@ -2173,6 +2184,7 @@ function renderPoolPanel(){
   let dNxt=dRow('収入予定',tNxt.income);
   dNxt+=dRow('固定費・積立の予定',tNxt.fixedTotal+tNxt.goalMonthly,1);
   dNxt+=dRow(`今月すでにカードで購入${tNxt.prevCardFood>0?`（食費${money(tNxt.prevCardFood)}含む）`:''}`,tNxt.prevCardTotal,1);
+  if(tNxt.prevCardSavingTotal>0)dNxt+=dRow(`🏦 貯金から引き落とし予定（今月カード・枠に影響なし）`,tNxt.prevCardSavingTotal,0);
   if(nxtCashUse>0)dNxt+=dRow('来月の使用（現金・振替）',nxtCashUse,1);
   html+=block(`💳 来月（${ymLabel(nxt)}）の給料 残り`,`カードで今買える額（${ymLabel(nxt)}ビューと同じ数字）`,bTotal,dNxt,
     chip('🍚','食費',tNxt.foodLeft)+chip('💴','自由費',tNxt.jiyuLeft));
