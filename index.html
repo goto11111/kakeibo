@@ -632,7 +632,7 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="form-field"><label>この予定の支出（1件ずつ支払い方法・経費を設定できます）</label>
     <div id="schItems"></div>
     <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px;" onclick="addSchItem()">＋ 支出を追加</button>
-    <div style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.5;">品目名を支出メモと同じ名前にすると既存メモに紐づきます（重複登録されません）。空欄なら登録しません。</div>
+    <div style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.5;">品目名を支出メモと同じ名前にすると既存メモに紐づきます（重複登録されません）。空欄なら登録しません。<br>🗓️「払う/買う日」は<b>基本ふだんは空欄でOK</b>（＝予定の日付で計算）。カードの引き落とし月や現金の給料日またぎがややこしいときだけ、実際に支払う日を入れると集計が正確になります。</div>
     <datalist id="expNameList"></datalist>
   </div>
   <div class="form-field"><label>メモ</label><input type="text" id="schMemo" placeholder="（任意）"></div>
@@ -689,7 +689,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.10a';
+const APP_VERSION='v2026.07.11a';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -1737,7 +1737,7 @@ function renderExpenses(){
       </div>
       <div class="li-grid">
         <input type="number" value="${e.mikomi||''}" placeholder="見込み" ${locked?'disabled':''}
-          oninput="state.expenses[${i}].mikomi=Number(this.value)||0;refreshRow('expense',${i});calcTotalsOnly();saveData()">
+          oninput="state.expenses[${i}].mikomi=Number(this.value)||0;syncSchedItemAmount(${i});refreshRow('expense',${i});calcTotalsOnly();saveData()">
         <input type="number" value="${(e.amount==null||e.amount==='')?'':e.amount}" placeholder="金額" ${locked?'disabled':''}
           oninput="state.expenses[${i}].amount=this.value===''?null:(Number(this.value)||0);syncSchedItemAmount(${i});refreshRow('expense',${i});calcTotalsOnly();saveData()">
         <select ${locked?'disabled':''} onchange="state.expenses[${i}].pay=this.value;calcTotalsOnly();saveData()">${payOptionsHtml(PAY_OPTIONS_EXP(),e.pay)}</select>
@@ -1775,7 +1775,9 @@ function toggleExpCat(i){
 // ──────────────────────
 function toggleConfirm(type,i){
   const item=type==='fixed'?state.fixed[i]:state.expenses[i];
-  item.confirmed=!item.confirmed;saveData();calcAll();
+  item.confirmed=!item.confirmed;
+  if(type==='expense'&&item.schedId)syncSchedItemAmount(i); // 確定で採用額が変わるので予定へも反映
+  saveData();calcAll();
 }
 // 項目の並び替え（type:'fixed'|'expense', dir:-1上 / +1下）
 function moveItem(type,i,dir){
@@ -1934,16 +1936,21 @@ async function editAddedDate(i){
   e.addedAt=t||null;
   saveData();calcAll();
 }
-// 紐付き支出の金額変更を予定の明細金額へ同期（次回の予定編集で反映される）
+// 紐付き支出（見込み側）の金額変更を、カレンダー予定の明細金額へ即時同期。
+// ※schedules は日付キー（例 "2026-10-8"）で保持しているため schedId 直引きは不可。
+//   findScheduleBySchedId で正しく引き当て、採用額（見込み/金額の代表値）を予定へ反映する。
 function syncSchedItemAmount(i){
   const e=state.expenses&&state.expenses[i];
   if(!e||!e.schedId)return;
-  const sc=schedules&&schedules[e.schedId];
-  if(!sc||!sc.items)return;
+  const found=findScheduleBySchedId(e.schedId);
+  if(!found)return;
+  const sc=schedules[found.key]&&schedules[found.key][found.idx];
+  if(!sc||!Array.isArray(sc.items))return;
   const it=sc.items.find(x=>(x.name||sc.name)===e.name);
   if(!it)return;
-  const v=e.amount==null?null:Number(e.amount)||0;
-  if(v!=null&&v>0){it.amount=v;saveSchedulesStore();}
+  it.amount=Number(adopted(e))||0; // 見込み・金額どちらの編集でも代表値を予定へ反映
+  sc.budget=sc.items.reduce((s,x)=>s+(Number(x.amount)||0),0);
+  saveSchedulesStore();
 }
 // ただの支出にも返金予定を設定（モーダル方式・空にすると解除）
 let refundEditIdx=null;
@@ -2539,8 +2546,9 @@ function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refun
         <option value="2"${Number(isExpense)===2?' selected':''}>🔄 立替</option>
       </select>
     </div>
-    <div class="sch-item-line">
-      <input type="date" class="schItemDate" value="${escAttr(date)}" title="支払い・購入日（空欄なら予定の開始日で判定）" style="flex:1;font-size:11px;">
+    <div class="sch-item-line" style="align-items:center;">
+      <span style="font-size:9px;color:var(--text2);white-space:nowrap;flex-shrink:0;" title="ふだんは空欄でOK。カードの引き落とし月や現金の給料日またぎを正しく計算したいときだけ、実際に支払う/買う日を入れます。">🗓️ 払う/買う日<span style="opacity:.7">(任意)</span></span>
+      <input type="date" class="schItemDate" value="${escAttr(date)}" title="この明細を実際に支払う/買う日。カードの引き落とし月ずれや現金の給料日またぎを正しく計算したいときだけ入力。空欄なら予定の日付で判定します。" style="flex:1;font-size:11px;">
       <input type="text" class="schItemMemo" placeholder="メモ（任意）" value="${escAttr(memo)}" style="flex:1.4;font-size:11px;">
     </div>
     <div class="sch-item-line"><select class="schItemGoal" title="支払い元（自由費/食費/貯金）" style="flex:1;font-size:11px;">${goalOpts}</select></div>
@@ -2649,6 +2657,13 @@ function saveSchedule(){
   const editKey=document.getElementById('schEditKey').value;
   const editIdx=document.getElementById('schEditIdx').value;
   const items=readSchItems(); // [{name,amount,pay,isExpense,refundDate,refundAmt}]
+  // 経費・立替で金額を空にした明細は、返金額をそのまま支出額として扱う（全額返金の建替え）。
+  // これが無いと支出0・返金だけ計上され、予定側が0円表示＆予算が返金額ぶん過大に見える。
+  items.forEach(it=>{
+    if((!it.amount||Number(it.amount)===0)&&Number(it.isExpense)>0&&Number(it.refundAmt)>0){
+      it.amount=Number(it.refundAmt)||0;
+    }
+  });
   const budget=items.reduce((s,it)=>s+(it.amount||0),0);
 
   const sD=parseISO(startISO);if(!sD)return;
