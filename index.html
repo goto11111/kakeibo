@@ -100,6 +100,12 @@ input:focus,select:focus{border-color:var(--accent);}
 .sch-date-wrap .schItemDate{border:none;background:transparent;padding:5px 0;flex:1;min-width:0;font-size:11px;}
 .sch-date-wrap .schItemDate:focus{border:none;}
 .sch-date-wrap:focus-within{border-color:var(--accent);}
+/* 経費/立替を選んだときだけ出る返金入力を、選択と視覚的にひとまとまりに */
+.sch-exp-block{background:rgba(230,160,60,.09);border:1px solid rgba(230,160,60,.35);border-left:3px solid var(--yellow);border-radius:6px;padding:6px 8px;margin-top:4px;}
+.sch-exp-block .sch-exp-cap{font-size:9.5px;color:var(--yellow);margin-bottom:5px;line-height:1.4;}
+.sch-exp-block .sch-field{flex:1;display:flex;flex-direction:column;gap:2px;min-width:0;}
+.sch-exp-block .sch-field .sch-field-cap{font-size:9px;color:var(--text2);white-space:nowrap;}
+.sch-exp-block .sch-field input{width:100%;font-size:11px;padding:5px 8px;}
 .li-meta{font-size:10px;color:var(--text2);margin-top:5px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
 .li-history{font-size:10px;color:var(--text2);margin-top:4px;padding-left:4px;border-left:2px solid var(--border);}
 .li-actions{display:flex;gap:4px;align-items:center;margin-left:auto;}
@@ -639,7 +645,7 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="form-field"><label>この予定の支出（1件ずつ支払い方法・経費を設定できます）</label>
     <div id="schItems"></div>
     <button type="button" class="btn btn-ghost btn-sm" style="margin-top:4px;" onclick="addSchItem()">＋ 支出を追加</button>
-    <div style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.5;">品目名を支出メモと同じ名前にすると既存メモに紐づきます（重複登録されません）。空欄なら登録しません。<br>🗓️「払う日」は<b>基本ふだんは空欄でOK</b>（＝予定の日付で計算）。カードの引き落とし月や現金の給料日またぎがややこしいときだけ、実際に支払う日を入れると集計が正確になります。</div>
+    <div style="font-size:10px;color:var(--text2);margin-top:6px;line-height:1.5;">品目名を支出メモと同じ名前にすると既存メモに紐づきます（重複登録されません）。空欄なら登録しません。<br>🗓️「払う日」は<b>予定の初日が自動で入ります</b>（単日予定では省略）。複数日で初日と違う日に支払う明細だけ、その日に変えるとカードの引き落とし月などの集計が正確になります。</div>
     <datalist id="expNameList"></datalist>
   </div>
   <div class="form-field"><label>メモ</label><input type="text" id="schMemo" placeholder="（任意）"></div>
@@ -696,7 +702,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.11b';
+const APP_VERSION='v2026.07.11c';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -2527,15 +2533,21 @@ function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refun
   const box=document.getElementById('schItems');
   const row=document.createElement('div');row.className='sch-item-row';
   const showRefund=Number(isExpense)>0;
-  // 予定の月（開始日の月）を取得し、貯金の引き落とし開始月以降の貯金だけ選べるようにする
-  let spendYM=ym(currentYear,currentMonth);
+  // 予定の開始日・終了日を取得（払う日のデフォルト＆単日判定・貯金の選択肢に使う）
   const sIso=document.getElementById('schStartDate')?document.getElementById('schStartDate').value:'';
-  const sp=parseISO(sIso); if(sp)spendYM=ym(sp.y,sp.m);
+  const eIso=document.getElementById('schEndDate')?document.getElementById('schEndDate').value:'';
+  const sp=parseISO(sIso);
+  let spendYM=sp?ym(sp.y,sp.m):ym(currentYear,currentMonth);
+  const singleDay=!eIso||eIso===sIso;               // 単日予定なら払う日は聞かない
+  const payDate=date||sIso||'';                     // 既存値優先、無ければ予定の初日をデフォルト
   const savings=spendablePotsFor(goalId);
   const gsel=goalId||(cat==='食費'?'food':'');
   const goalOpts='<option value="">自由費から</option>'
     +`<option value="food"${gsel==='food'?' selected':''}>🍚 食費から</option>`
     +savings.map(g=>{const bal=goalPotBalance(g);const lbl=bal>0?potOptionLabel(g):`🏦 ${g.name}（使用済）`;return `<option value="${g.id}"${goalId===g.id?' selected':''}>${lbl}</option>`;}).join('');
+  const expCap=Number(isExpense)===2?'立替':'会社経費';
+  // 返金額：空・0はどちらも「全額」の意味なので空欄表示に統一（再編集で0が残るバグ対策）
+  const refAmtShown=(refundAmt!==''&&refundAmt!=null&&Number(refundAmt)!==0)?refundAmt:'';
   row.innerHTML=`
     <div class="sch-item-line">
       <input type="text" class="schItemName" list="expNameList" placeholder="品目名" value="${escAttr(name)}" onchange="fillSchAmtFromExpense(this)">
@@ -2553,24 +2565,36 @@ function addSchItem(name='',amount='',pay='card',isExpense=0,refundDate='',refun
         <option value="2"${Number(isExpense)===2?' selected':''}>🔄 立替</option>
       </select>
     </div>
+    <div class="sch-exp-block sch-item-refund" style="display:${showRefund?'block':'none'}">
+      <div class="sch-exp-cap">💼 <span class="sch-exp-caplabel">${expCap}</span>を選んだので、<b>いつ・いくら戻ってくるか</b>を入力：</div>
+      <div class="sch-item-line">
+        <label class="sch-field">
+          <span class="sch-field-cap">返金される日</span>
+          <input type="date" class="schItemRefDate" value="${escAttr(refundDate)}">
+        </label>
+        <label class="sch-field">
+          <span class="sch-field-cap">返金額（空＝全額）</span>
+          <input type="number" class="schItemRefAmt" placeholder="全額" value="${refAmtShown!==''?refAmtShown:''}">
+        </label>
+      </div>
+    </div>
     <div class="sch-item-line">
-      <div class="sch-date-wrap" title="この明細を実際に支払う/買う日。カードの引き落とし月ずれや現金の給料日またぎを正しく計算したいときだけ入力。空欄なら予定の日付で判定します（ふだんは空欄でOK）。">
+      <div class="sch-date-wrap" title="この明細を実際に支払う/買う日。複数日の予定で初日以外に支払うときだけ変更してください（カード引き落とし月や現金の給料日またぎの計算に使います）。" style="display:${singleDay?'none':'flex'}">
         <span class="sch-date-cap">🗓️払う日</span>
-        <input type="date" class="schItemDate" value="${escAttr(date)}">
+        <input type="date" class="schItemDate" value="${escAttr(payDate)}">
       </div>
       <input type="text" class="schItemMemo" placeholder="メモ（任意）" value="${escAttr(memo)}" style="flex:1.4;font-size:11px;">
     </div>
-    <div class="sch-item-line"><select class="schItemGoal" title="支払い元（自由費/食費/貯金）" style="flex:1;font-size:11px;">${goalOpts}</select></div>
-    <div class="sch-item-line sch-item-refund" style="display:${showRefund?'flex':'none'}">
-      <input type="date" class="schItemRefDate" value="${escAttr(refundDate)}" title="返金予定日">
-      <input type="number" class="schItemRefAmt" placeholder="返金額(空=全額)" value="${refundAmt!==''&&refundAmt!=null?refundAmt:''}">
-    </div>`;
+    <div class="sch-item-line"><select class="schItemGoal" title="支払い元（自由費/食費/貯金）" style="flex:1;font-size:11px;">${goalOpts}</select></div>`;
   box.appendChild(row);
 }
 function toggleSchItemRefund(sel){
   const row=sel.closest('.sch-item-row');if(!row)return;
+  const on=Number(sel.value)>0;
   const ref=row.querySelector('.sch-item-refund');
-  if(ref)ref.style.display=Number(sel.value)>0?'flex':'none';
+  if(ref)ref.style.display=on?'block':'none';
+  const cap=row.querySelector('.sch-exp-caplabel');
+  if(cap)cap.textContent=Number(sel.value)===2?'立替':'会社経費';
 }
 function readSchItems(){
   const items=[];
@@ -2581,7 +2605,9 @@ function readSchItems(){
     const pay=row.querySelector('.schItemPay').value;
     const isExpense=Number(row.querySelector('.schItemExp').value)||0;
     const refundDate=isExpense?(row.querySelector('.schItemRefDate').value||''):'';
-    const refundAmt=isExpense?(Number(row.querySelector('.schItemRefAmt').value)||0):0;
+    // 空欄は「全額」を意味するので0で潰さずnullのまま保持（再編集で0が残るのを防ぐ）
+    const refRaw=isExpense?((row.querySelector('.schItemRefAmt').value||'').trim()):'';
+    const refundAmt=refRaw===''?null:(Number(refRaw)||0);
     const goalSel=row.querySelector('.schItemGoal');
     const gv=goalSel?goalSel.value:'';
     const cat=(gv==='food')?'食費':'自由費';
