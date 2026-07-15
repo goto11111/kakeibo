@@ -2180,21 +2180,32 @@ function renderPoolPanel(){
       <div style="margin-top:6px;">${chips}</div>
       <div style="border-top:1px dashed var(--border);margin-top:7px;padding-top:5px;">${details}</div>
     </div>`;
+  // カード種別ごとの引き落とし内訳／現金・振替（純現金分のみ）を作るヘルパー
+  const cardMethodsList=cardNames();
+  const noteRow=(txt)=>`<div style="font-size:8.5px;color:var(--text2);opacity:.8;padding:0 0 2px 0;">${txt}</div>`;
+  // t.byMethod は「この給料月で引き落とされる額」を手段別に保持（先月カード引き落とし＋今月給料日前に引き落とされたカード使用を合算）
+  const cardRowsOf=(t)=>{let h='';cardMethodsList.forEach(c=>{const v=Math.round((t.byMethod&&t.byMethod[c])||0);if(v!==0)h+=dRow(`💳 ${c}`,v,1);});return h;};
+  // 現金・口座振替の使用＝非カード手段の合計から固定費（現金・振替）を差し引いた分。カード分は上のカード行に計上済みなのでここには含めない。
+  const cashVarOf=(t)=>{let nonCard=0;const bm=t.byMethod||{};Object.keys(bm).forEach(m=>{if(!cardMethodsList.includes(m))nonCard+=bm[m];});return Math.round(nonCard-(t.fixedTotal||0));};
   // ── 今月 ──
-  const curCashUse=tCur.foodUsed-tCur.prevCardFood+tCur.jiyuUsed;
   let dCur=dRow('収入合計',tCur.income);
-  if(tCur.prevCardTotal>0)dCur+=dRow(`先月カード引き落とし${tCur.prevCardFood>0?`（食費${money(tCur.prevCardFood)}含む）`:''}`,tCur.prevCardTotal,1);
+  const cardRowsCur=cardRowsOf(tCur);
+  dCur+=cardRowsCur;
+  if(cardRowsCur)dCur+=noteRow('💳＝先月分の引き落とし＋今月の給料日前に引き落とされたカード使用');
   dCur+=dRow('固定費（現金・口座振替）',tCur.fixedTotal,1);
   if(tCur.goalMonthly>0)dCur+=dRow('目標積立',tCur.goalMonthly,1);
-  if(curCashUse>0)dCur+=dRow('今月の使用（現金・振替）',curCashUse,1);
+  const cashVarCur=cashVarOf(tCur);
+  if(cashVarCur>0)dCur+=dRow('今月の使用（現金・振替）',cashVarCur,1);
   let html=block(`💰 今月（${ymLabel(cur)}）の給料 残り`,'',aTotal,dCur,
     chip('🍚','食費',tCur.foodLeft)+chip('💴','自由費',tCur.jiyuLeft));
   // ── 来月 ──
-  const nxtCashUse=tNxt.foodUsed-tNxt.prevCardFood+tNxt.jiyuUsed;
   let dNxt=dRow('収入予定',tNxt.income);
+  const cardRowsNxt=cardRowsOf(tNxt);
+  dNxt+=cardRowsNxt;
+  if(cardRowsNxt)dNxt+=noteRow('💳＝今月買ったカード（来月の給料で引き落とし）');
   dNxt+=dRow('固定費・積立の予定',tNxt.fixedTotal+tNxt.goalMonthly,1);
-  dNxt+=dRow(`今月すでにカードで購入${tNxt.prevCardFood>0?`（食費${money(tNxt.prevCardFood)}含む）`:''}`,tNxt.prevCardTotal,1);
-  if(nxtCashUse>0)dNxt+=dRow('来月の使用（現金・振替）',nxtCashUse,1);
+  const cashVarNxt=cashVarOf(tNxt);
+  if(cashVarNxt>0)dNxt+=dRow('来月の使用（現金・振替）',cashVarNxt,1);
   html+=block(`💳 来月（${ymLabel(nxt)}）の給料 残り`,`カードで今買える額（${ymLabel(nxt)}ビューと同じ数字）`,bTotal,dNxt,
     chip('🍚','食費',tNxt.foodLeft)+chip('💴','自由費',tNxt.jiyuLeft));
   // ── カード別：表示中の月に買った場合、どの給料から引かれるか（締めで割れるカードは2行）──
