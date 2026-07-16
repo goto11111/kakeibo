@@ -707,7 +707,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.11d';
+const APP_VERSION='v2026.07.16a';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -3560,7 +3560,9 @@ async function syncToGist(silent=false){
     const url=gistId?`https://api.github.com/gists/${gistId}`:'https://api.github.com/gists';
     const method=gistId?'PATCH':'POST';
     const res=await fetch(url,{method,
-      headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json','X-GitHub-Api-Version':'2022-11-28'},
+      // 注意: X-GitHub-Api-Version は api.github.com の CORS 許可ヘッダーに含まれないため、
+      // ブラウザからのクロスオリジン要求では付けるとプリフライトが失敗し "Failed to fetch" になる。付けない。
+      headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({description:'家計管理データ',public:false,files:{'kakeibo_data.json':{content:payload}}})
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
@@ -3576,7 +3578,8 @@ async function syncToGist(silent=false){
     clearTimeout(syncAlertTimer);syncAlertTimer=setTimeout(()=>{const fm=document.getElementById('footerSaveMsg');if(fm)fm.textContent=lastSavedShort();fm&&(fm.style.color='var(--text2)');},4000);
   }catch(e){
     if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='☁️ クラウドに保存';}
-    if(!silent)setSyncStatus(`❌ 保存エラー: ${e.message}`,'var(--red)');
+    const msg=(e&&e.message==='Failed to fetch')?'ネットワークに接続できませんでした（通信環境や広告ブロッカーをご確認ください）':e.message;
+    if(!silent)setSyncStatus(`❌ 保存エラー: ${msg}`,'var(--red)');
     console.error('syncToGist error:',e);
   }
 }
@@ -3593,7 +3596,8 @@ async function syncFromGist(noConfirm){
   setSyncStatus('📥 読込中...','var(--text2)');
   try{
     const res=await fetch(`https://api.github.com/gists/${gistId}`,{
-      headers:{'Authorization':`Bearer ${token}`,'X-GitHub-Api-Version':'2022-11-28'}
+      // X-GitHub-Api-Version は CORS 非許可ヘッダーのため付けない（付けると "Failed to fetch"）
+      headers:{'Authorization':`Bearer ${token}`}
     });
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
     const json=await res.json();
@@ -3611,7 +3615,8 @@ async function syncFromGist(noConfirm){
     clearTimeout(syncAlertTimer);syncAlertTimer=setTimeout(()=>{const fm=document.getElementById('footerSaveMsg');if(fm){fm.textContent=lastSavedShort();fm.style.color='var(--text2)';}},4000);
   }catch(e){
     if(loadBtn){loadBtn.disabled=false;loadBtn.textContent='📥 クラウドから読込';}
-    setSyncStatus(`❌ 読込エラー: ${e.message}`,'var(--red)');
+    const msg=(e&&e.message==='Failed to fetch')?'ネットワークに接続できませんでした（通信環境や広告ブロッカーをご確認ください）':e.message;
+    setSyncStatus(`❌ 読込エラー: ${msg}`,'var(--red)');
     console.error('syncFromGist error:',e);
   }
 }
@@ -3626,7 +3631,8 @@ async function autoSyncOnLoad(){
   localStorage.setItem('gh_last_check',new Date().toISOString());
   try{
     const res=await fetch(`https://api.github.com/gists/${gistId}`,{
-      headers:{'Authorization':`Bearer ${token}`,'X-GitHub-Api-Version':'2022-11-28'}
+      // X-GitHub-Api-Version は CORS 非許可ヘッダーのため付けない（付けると "Failed to fetch"）
+      headers:{'Authorization':`Bearer ${token}`}
     });
     if(!res.ok)return;
     const json=await res.json();
