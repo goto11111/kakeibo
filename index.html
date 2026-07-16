@@ -540,12 +540,17 @@ input:focus,select:focus{border-color:var(--accent);}
       <label style="display:block;font-size:10px;color:var(--text2);margin-bottom:4px;">Gist ID（初回保存後に自動入力）</label>
       <input type="text" id="ghGistId" placeholder="初回は空白でOK" style="font-family:monospace;font-size:12px;" oninput="autoSaveGhConfig()">
     </div>
+    <div class="form-field" style="margin-bottom:10px;">
+      <label style="display:block;font-size:10px;color:var(--text2);margin-bottom:4px;">中継URL（GitHub Pages等から使う場合に必須・下の手順参照）</label>
+      <input type="text" id="ghProxy" placeholder="https://xxxxx.workers.dev" style="font-family:monospace;font-size:12px;" oninput="autoSaveGhConfig()">
+    </div>
     <div id="lastSavedLine" style="font-size:11px;color:var(--text2);text-align:center;"></div>
     <div id="syncStatus" style="font-size:11px;text-align:center;min-height:16px;margin-top:2px;"></div>
     <div style="font-size:10px;color:var(--text2);margin-top:8px;line-height:1.6;">
       📌 保存・読込は画面下のボタンから。<br>
       Tokenの作り方：GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) または Fine-grained tokens → Generate<br>
-      Fine-grained の場合は Account permissions の「<b>Gists</b>」を Read and write に。Tokens (classic) の場合は「<b>gist</b>」だけチェック。Secretにしておけば自分しか見れない。
+      Fine-grained の場合は Account permissions の「<b>Gists</b>」を Read and write に。Tokens (classic) の場合は「<b>gist</b>」だけチェック。Secretにしておけば自分しか見れない。<br>
+      <b>⚠️ 中継URLについて：</b>GitHub Pages（〇〇.github.io）など、ブラウザから直接 api.github.com を呼べない環境では CORS で読込/保存が失敗します。Cloudflare Workers で中継を用意し、その URL を上の「中継URL」に貼ってください（未入力なら api.github.com へ直接アクセス）。中継の作り方は同梱の <code>github-proxy-worker.js</code> を参照。
     </div>
   </div>
 </div>
@@ -707,7 +712,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.16a';
+const APP_VERSION='v2026.07.16b';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -3328,6 +3333,18 @@ function openCarryEdit(i){
 // ══════════════════════════
 function getGhToken(){return localStorage.getItem('gh_token')||'';}
 function getGhGistId(){return localStorage.getItem('gh_gist_id')||'';}
+function getGhProxy(){return (localStorage.getItem('gh_proxy')||'').trim();}
+// Gist API のベースURL。中継URLが設定されていればそれを使う（GitHub Pages等のCORS回避）
+function ghApiBase(){const p=getGhProxy();return p?p.replace(/\/+$/,''):'https://api.github.com';}
+// 同期エラーを分かりやすい日本語に。CORS/ネットワーク層の失敗（Failed to fetch）は中継URL未設定が主因
+function ghErrMsg(e){
+  if(e&&e.message==='Failed to fetch'){
+    return getGhProxy()
+      ? '中継サーバーに接続できませんでした（中継URLの綴りや稼働状況をご確認ください）'
+      : 'ブラウザから GitHub に直接接続できませんでした。設定の「中継URL」を登録してください（GitHub Pages 等では必須）';
+  }
+  return e&&e.message?e.message:'不明なエラー';
+}
 function saveGhConfig(){
   // UI上の値が空でも既存のlocalStorage値を消さない
   const tEl=document.getElementById('ghToken');
@@ -3343,6 +3360,9 @@ function saveGhConfig(){
 function autoSaveGhConfig(){
   const g=document.getElementById('ghGistId')?.value.trim();
   if(g)localStorage.setItem('gh_gist_id',g);
+  // 中継URLは空文字も許可（消したら直接アクセスに戻す）
+  const px=document.getElementById('ghProxy');
+  if(px)localStorage.setItem('gh_proxy',px.value.trim());
   // Tokenは onblur 側（onGhTokenBlur）で確定処理する
 }
 // Token入力欄フォーカス時：現在値を控えておく（変化検知用）
@@ -3416,7 +3436,7 @@ function collectAllData(){
   const keys=[];
   for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k)keys.push(k);}
   keys.forEach(k=>{
-    if(k==='gh_token'||k==='gh_gist_id'||k==='gh_last_saved')return; // 認証情報は含めない
+    if(k==='gh_token'||k==='gh_gist_id'||k==='gh_last_saved'||k==='gh_proxy')return; // 認証情報・端末設定は含めない
     try{data[k]=JSON.parse(localStorage.getItem(k));}
     catch(e){data[k]=localStorage.getItem(k);}
   });
@@ -3424,7 +3444,7 @@ function collectAllData(){
 }
 
 function restoreAllData(data,fullReplace){
-  const skip=new Set(['version','savedAt','gh_token','gh_gist_id','gh_last_saved','gh_last_check']);
+  const skip=new Set(['version','savedAt','gh_token','gh_gist_id','gh_last_saved','gh_last_check','gh_proxy']);
   // fullReplace=trueなら既存のkakeibo_系・gh_goals等を一旦削除（新端末の初期データを完全に消す）
   if(fullReplace){
     const toDel=[];
@@ -3557,7 +3577,7 @@ async function syncToGist(silent=false){
   const gistId=localStorage.getItem('gh_gist_id')||'';
   const payload=JSON.stringify(collectAllData());
   try{
-    const url=gistId?`https://api.github.com/gists/${gistId}`:'https://api.github.com/gists';
+    const url=gistId?`${ghApiBase()}/gists/${gistId}`:`${ghApiBase()}/gists`;
     const method=gistId?'PATCH':'POST';
     const res=await fetch(url,{method,
       // 注意: X-GitHub-Api-Version は api.github.com の CORS 許可ヘッダーに含まれないため、
@@ -3578,8 +3598,7 @@ async function syncToGist(silent=false){
     clearTimeout(syncAlertTimer);syncAlertTimer=setTimeout(()=>{const fm=document.getElementById('footerSaveMsg');if(fm)fm.textContent=lastSavedShort();fm&&(fm.style.color='var(--text2)');},4000);
   }catch(e){
     if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='☁️ クラウドに保存';}
-    const msg=(e&&e.message==='Failed to fetch')?'ネットワークに接続できませんでした（通信環境や広告ブロッカーをご確認ください）':e.message;
-    if(!silent)setSyncStatus(`❌ 保存エラー: ${msg}`,'var(--red)');
+    if(!silent)setSyncStatus(`❌ 保存エラー: ${ghErrMsg(e)}`,'var(--red)');
     console.error('syncToGist error:',e);
   }
 }
@@ -3595,7 +3614,7 @@ async function syncFromGist(noConfirm){
   if(loadBtn){loadBtn.disabled=true;loadBtn.textContent='📥 読込中...';}
   setSyncStatus('📥 読込中...','var(--text2)');
   try{
-    const res=await fetch(`https://api.github.com/gists/${gistId}`,{
+    const res=await fetch(`${ghApiBase()}/gists/${gistId}`,{
       // X-GitHub-Api-Version は CORS 非許可ヘッダーのため付けない（付けると "Failed to fetch"）
       headers:{'Authorization':`Bearer ${token}`}
     });
@@ -3615,8 +3634,7 @@ async function syncFromGist(noConfirm){
     clearTimeout(syncAlertTimer);syncAlertTimer=setTimeout(()=>{const fm=document.getElementById('footerSaveMsg');if(fm){fm.textContent=lastSavedShort();fm.style.color='var(--text2)';}},4000);
   }catch(e){
     if(loadBtn){loadBtn.disabled=false;loadBtn.textContent='📥 クラウドから読込';}
-    const msg=(e&&e.message==='Failed to fetch')?'ネットワークに接続できませんでした（通信環境や広告ブロッカーをご確認ください）':e.message;
-    setSyncStatus(`❌ 読込エラー: ${msg}`,'var(--red)');
+    setSyncStatus(`❌ 読込エラー: ${ghErrMsg(e)}`,'var(--red)');
     console.error('syncFromGist error:',e);
   }
 }
@@ -3630,7 +3648,7 @@ async function autoSyncOnLoad(){
   if(lastCheck&&(Date.now()-new Date(lastCheck).getTime())<5*60*1000)return;
   localStorage.setItem('gh_last_check',new Date().toISOString());
   try{
-    const res=await fetch(`https://api.github.com/gists/${gistId}`,{
+    const res=await fetch(`${ghApiBase()}/gists/${gistId}`,{
       // X-GitHub-Api-Version は CORS 非許可ヘッダーのため付けない（付けると "Failed to fetch"）
       headers:{'Authorization':`Bearer ${token}`}
     });
@@ -3673,6 +3691,8 @@ function renderSettings(){
   const ghGEl=document.getElementById('ghGistId');
   if(ghT&&ghTEl){ghTEl.value=ghT;ghTEl.style.webkitTextSecurity='disc';ghTEl.style.textSecurity='disc';tokenHidden=true;}
   if(ghG&&ghGEl)ghGEl.value=ghG;
+  const ghPEl=document.getElementById('ghProxy');
+  if(ghPEl)ghPEl.value=getGhProxy();
   const tvBtn=document.getElementById('tokenVisBtn');
   if(tvBtn)tvBtn.textContent=tokenHidden?'👁️ 表示':'🙈 隠す';
   // 給与・食費はその場で保存
