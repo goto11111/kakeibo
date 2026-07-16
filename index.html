@@ -486,7 +486,11 @@ input:focus,select:focus{border-color:var(--accent);}
         <option value="fwd">後の平日に繰下げ（例:17日）</option>
       </select>
     </div>
-    <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。</div>
+    <div class="input-row" style="flex-wrap:wrap;"><label style="flex:0 0 auto;">給料日の変更（任意）</label>
+      <input type="text" class="input-num" id="setPayChangeFrom" placeholder="202609" style="width:78px;"><span style="font-size:11px">月から</span>
+      <input type="number" class="input-num" id="setPayChangeTo" placeholder="27" min="1" max="31" style="width:52px;"><span style="font-size:11px">日に</span>
+    </div>
+    <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。<br>🔁 <b>給料日の変更</b>：指定した月（YYYYMM）以降だけ給料日を切り替えます。空欄なら基準日をずっと使用。例）9月から27日なら「202609／27」。これより前の月は基準日のまま計算されます。</div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;display:flex;gap:8px;align-items:center;">
       <select id="applyScopeBudget" style="flex:1;font-size:12px;">
         <option value="future">来月以降すべて</option>
@@ -1023,15 +1027,19 @@ function chargePreviewLabel(method){
   const cm=chargeSalaryMonth(t.getFullYear(),t.getMonth(),t.getDate(),method);
   return `今日買うと → ${ymLabel(cm)}の給料から`;
 }
-function payDaySettings(){
+function payDaySettings(targetYM){
   const s=loadSettings();
-  let base=Number(s.payDay)||15; if(base<1)base=1; if(base>31)base=31;
+  let base=Number(s.payDay)||15;
+  // 給料日の変更：指定月(YYYYMM)以降だけ新しい基準日を使う（過去月は従来どおり）
+  const chFrom=Number(s.payChangeFrom)||0, chTo=Number(s.payChangeTo)||0;
+  if(chFrom>0&&chTo>0&&targetYM!=null&&Number(targetYM)>=chFrom)base=chTo;
+  if(base<1)base=1; if(base>31)base=31;
   const shift=(s.payShift==='fwd')?'fwd':'back';
   return {base,shift};
 }
 // 指定年月の給料日(日)。基準日が土日なら設定方向の平日へずらす。月末を超えないよう調整。
 function payDayOf(y,m){ // m:0-11
-  const {base,shift}=payDaySettings();
+  const {base,shift}=payDaySettings(ym(y,m));
   const last=new Date(y,m+1,0).getDate();
   let d=Math.min(base,last);
   // 土日なら方向に応じて平日へ
@@ -3650,6 +3658,8 @@ function renderSettings(){
   document.getElementById('setFood').value=s.foodBudget||'';
   const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=s.payDay||15;
   const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=s.payShift||'back';
+  const pcfEl=document.getElementById('setPayChangeFrom');if(pcfEl)pcfEl.value=s.payChangeFrom||'';
+  const pctEl=document.getElementById('setPayChangeTo');if(pctEl)pctEl.value=s.payChangeTo||'';
   // GitHub設定を復元
   const ghT=getGhToken();
   const ghG=getGhGistId();
@@ -4016,6 +4026,15 @@ function applyBudgetSettings(){
   const _food=document.getElementById('setFood');if(_food&&_food.value!=='')s.foodBudget=Number(_food.value)||s.foodBudget;
   const _pd=document.getElementById('setPayDay');if(_pd&&_pd.value!=='')s.payDay=Math.min(31,Math.max(1,Number(_pd.value)||15));
   const _ps=document.getElementById('setPayShift');if(_ps)s.payShift=_ps.value;
+  // 給料日の変更（YYYYMM / 日）：全角→半角・区切り除去でYYYYMM正規化。空欄なら変更なし。
+  const _pcf=document.getElementById('setPayChangeFrom'),_pct=document.getElementById('setPayChangeTo');
+  if(_pcf&&_pct){
+    const rawFrom=(_pcf.value||'').replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^0-9]/g,'');
+    const fromYM=rawFrom?Number(rawFrom):0;
+    const toDay=_pct.value!==''?Math.min(31,Math.max(1,Number(_pct.value)||0)):0;
+    if(fromYM>=190000&&fromYM<=999912&&toDay>0){s.payChangeFrom=fromYM;s.payChangeTo=toDay;}
+    else{delete s.payChangeFrom;delete s.payChangeTo;}
+  }
   saveSettings(s);
   const scope=(document.getElementById('applyScopeBudget')||{}).value||'future';
   const scopeLabel=scope==='thisonly'?'今月のみ':scope==='thismonth'?'今月以降':'来月以降';
@@ -4060,6 +4079,15 @@ function applySettings(){
   const _food=document.getElementById('setFood');if(_food&&_food.value!=='')s.foodBudget=Number(_food.value)||s.foodBudget;
   const _pd=document.getElementById('setPayDay');if(_pd&&_pd.value!=='')s.payDay=Math.min(31,Math.max(1,Number(_pd.value)||15));
   const _ps=document.getElementById('setPayShift');if(_ps)s.payShift=_ps.value;
+  // 給料日の変更（YYYYMM / 日）：全角→半角・区切り除去でYYYYMM正規化。空欄なら変更なし。
+  const _pcf=document.getElementById('setPayChangeFrom'),_pct=document.getElementById('setPayChangeTo');
+  if(_pcf&&_pct){
+    const rawFrom=(_pcf.value||'').replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^0-9]/g,'');
+    const fromYM=rawFrom?Number(rawFrom):0;
+    const toDay=_pct.value!==''?Math.min(31,Math.max(1,Number(_pct.value)||0)):0;
+    if(fromYM>=190000&&fromYM<=999912&&toDay>0){s.payChangeFrom=fromYM;s.payChangeTo=toDay;}
+    else{delete s.payChangeFrom;delete s.payChangeTo;}
+  }
   saveSettings(s);
   const scope=(document.getElementById('applyScope')||{}).value||'future';
   const curYM=ym(currentYear,currentMonth);
