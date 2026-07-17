@@ -777,7 +777,7 @@ function defaultState(){
   }catch(e){fixedSrc=fixedTemplate();}
   const fixed=fixedSrc.map(f=>({name:f.name,budget:f.budget||0,amount:0,confirmed:false,
     pay:f.pay||'PayPayカード',memo:'',memoTags:[],history:[],startMonth:f.startMonth||null}));
-  return {salary:195000,carryover:0,foodBudget:10000,goalSavings:{},paypayTotal:0,carryExtra:[],
+  return {salary:195000,carryover:0,foodBudget:10000,payDay:15,payShift:'back',goalSavings:{},paypayTotal:0,carryExtra:[],
     fixed,expenses:[],schedules:{}};
 }
 
@@ -1029,14 +1029,12 @@ function chargePreviewLabel(method){
   return `今日買うと → ${ymLabel(cm)}の給料から`;
 }
 function payDaySettings(targetYM){
-  const s=loadSettings();
-  // 給料日は月ごとに保存。対象月の値が無ければテンプレ→既定15にフォールバック。
+  // 給料日は「その月に保存された値」だけで決まる（給料・食費と同じ月ごと管理）。
+  // 未設定の月は既定15/前倒し。テンプレート(s.payDay)は解決に使わない＝他月へ波及させない。
   const st=(targetYM!=null)?stateForYM(Number(targetYM)):null;
-  const mPay=(st&&st.payDay!=null&&st.payDay!=='')?st.payDay:s.payDay;
-  let base=Number(mPay)||15;
-  if(base<1)base=1; if(base>31)base=31;
-  const mShift=(st&&st.payShift)?st.payShift:s.payShift;
-  const shift=(mShift==='fwd')?'fwd':'back';
+  let base=(st&&st.payDay!=null&&st.payDay!=='')?Number(st.payDay):15;
+  if(!(base>=1))base=15; if(base>31)base=31;
+  const shift=((st&&st.payShift)==='fwd')?'fwd':'back';
   return {base,shift};
 }
 // 指定年月の給料日(日)。基準日が土日なら設定方向の平日へずらす。月末を超えないよう調整。
@@ -1176,6 +1174,10 @@ function migrate(d){
     if(!e.history)e.history=[];
     if(!e.memoTags)e.memoTags=e.memo?[e.memo]:[];
   });
+  // 給料日を月ごとに保存（給料・食費と同様）。未設定の旧月は既定15/前倒しへ。
+  // ※テンプレートには依存しない＝他月へ波及させないため。
+  if(d.payDay==null||d.payDay==='')d.payDay=15;
+  if(d.payShift==null||d.payShift==='')d.payShift='back';
   return d;
 }
 
@@ -3683,8 +3685,9 @@ function renderSettings(){
   if(noteEl)noteEl.textContent=`（${currentYear}年${currentMonth+1}月に適用中の値）`;
   document.getElementById('setSalary').value=pick(cur.salary,s.salary,'');
   document.getElementById('setFood').value=pick(cur.foodBudget,s.foodBudget,'');
-  const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=pick(cur.payDay,s.payDay,15);
-  const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=cur.payShift||s.payShift||'back';
+  // 給料日は月ごと保存の値のみ表示（テンプレには依存しない）。未設定なら既定15。
+  const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=(cur.payDay!=null&&cur.payDay!=='')?cur.payDay:15;
+  const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=cur.payShift||'back';
   // GitHub設定を復元
   const ghT=getGhToken();
   const ghG=getGhGistId();
