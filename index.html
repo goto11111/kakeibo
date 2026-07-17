@@ -476,7 +476,7 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="month-note">⚙️ ここで設定した内容は<b>テンプレート（毎月のひな形）</b>として保存されます。下の「適用」ボタンで、選んだ範囲の月に一括反映できます。</div>
 
   <div class="card">
-    <div style="font-weight:700;margin-bottom:8px;">💰 基本給与・予算</div>
+    <div style="font-weight:700;margin-bottom:8px;">💰 基本給与・予算<span id="setMonthNote" style="font-weight:400;font-size:11px;color:var(--text2);margin-left:6px;"></span></div>
     <div class="input-row"><label>基本給料（毎月の見込み）</label><input type="number" class="input-num" id="setSalary" placeholder="195000"><span style="font-size:11px">円</span></div>
     <div class="input-row"><label>食費予算（毎月）</label><input type="number" class="input-num" id="setFood" placeholder="10000"><span style="font-size:11px">円</span></div>
     <div class="input-row"><label>給料日（毎月の基準日）</label><input type="number" class="input-num" id="setPayDay" placeholder="15" min="1" max="31"><span style="font-size:11px">日</span></div>
@@ -486,11 +486,7 @@ input:focus,select:focus{border-color:var(--accent);}
         <option value="fwd">後の平日に繰下げ（例:17日）</option>
       </select>
     </div>
-    <div class="input-row" style="flex-wrap:wrap;"><label style="flex:0 0 auto;">給料日の変更（任意）</label>
-      <input type="text" class="input-num" id="setPayChangeFrom" placeholder="202609" style="width:78px;"><span style="font-size:11px">月から</span>
-      <input type="number" class="input-num" id="setPayChangeTo" placeholder="27" min="1" max="31" style="width:52px;"><span style="font-size:11px">日に</span>
-    </div>
-    <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。<br>🔁 <b>給料日の変更</b>：指定した月（YYYYMM）以降だけ給料日を切り替えます。空欄なら基準日をずっと使用。例）9月から27日なら「202609／27」。これより前の月は基準日のまま計算されます。</div>
+    <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。<br>📅 給料日・給料・食費は<b>月ごとに保存</b>されます。給料日を途中で変えたいときは、変わる月を上部で表示して、下の適用範囲（今月だけ／今月以降／来月以降）で反映してください。この設定タブは<b>表示中の月に適用されている値</b>を読み込みます。</div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;display:flex;gap:8px;align-items:center;">
       <select id="applyScopeBudget" style="flex:1;font-size:12px;">
         <option value="future">来月以降すべて</option>
@@ -1034,12 +1030,13 @@ function chargePreviewLabel(method){
 }
 function payDaySettings(targetYM){
   const s=loadSettings();
-  let base=Number(s.payDay)||15;
-  // 給料日の変更：指定月(YYYYMM)以降だけ新しい基準日を使う（過去月は従来どおり）
-  const chFrom=Number(s.payChangeFrom)||0, chTo=Number(s.payChangeTo)||0;
-  if(chFrom>0&&chTo>0&&targetYM!=null&&Number(targetYM)>=chFrom)base=chTo;
+  // 給料日は月ごとに保存。対象月の値が無ければテンプレ→既定15にフォールバック。
+  const st=(targetYM!=null)?stateForYM(Number(targetYM)):null;
+  const mPay=(st&&st.payDay!=null&&st.payDay!=='')?st.payDay:s.payDay;
+  let base=Number(mPay)||15;
   if(base<1)base=1; if(base>31)base=31;
-  const shift=(s.payShift==='fwd')?'fwd':'back';
+  const mShift=(st&&st.payShift)?st.payShift:s.payShift;
+  const shift=(mShift==='fwd')?'fwd':'back';
   return {base,shift};
 }
 // 指定年月の給料日(日)。基準日が土日なら設定方向の平日へずらす。月末を超えないよう調整。
@@ -1265,6 +1262,7 @@ function renderAll(){
   if(mn)mn.textContent=`📝 ${currentYear}年${currentMonth+1}月の給料で払う分（前月のカード購入含む）／この月のカード購入は${nY}年${nM}月扱い`;
   renderMikomi();renderCalendar();calcAll();renderAiPage();
   const rv=document.getElementById('page-review');if(rv&&rv.classList.contains('active'))renderReview();
+  const stg=document.getElementById('page-settings');if(stg&&stg.classList.contains('active'))renderSettings();
   // フッターの最終保存表示を常に最新へ
   if(typeof refreshFooterIdle==='function')refreshFooterIdle();
 }
@@ -3678,12 +3676,15 @@ async function autoSyncOnLoad(){
 // ══════════════════════════
 function renderSettings(){
   const s=loadSettings();
-  document.getElementById('setSalary').value=s.salary||'';
-  document.getElementById('setFood').value=s.foodBudget||'';
-  const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=s.payDay||15;
-  const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=s.payShift||'back';
-  const pcfEl=document.getElementById('setPayChangeFrom');if(pcfEl)pcfEl.value=s.payChangeFrom||'';
-  const pctEl=document.getElementById('setPayChangeTo');if(pctEl)pctEl.value=s.payChangeTo||'';
+  // 表示中の月に適用されている値を読み込む（月ごと保存。無ければテンプレ→既定）
+  const cur=(typeof state==='object'&&state)?state:{};
+  const pick=(mv,tv,dv)=>(mv!=null&&mv!=='')?mv:((tv!=null&&tv!=='')?tv:dv);
+  const noteEl=document.getElementById('setMonthNote');
+  if(noteEl)noteEl.textContent=`（${currentYear}年${currentMonth+1}月に適用中の値）`;
+  document.getElementById('setSalary').value=pick(cur.salary,s.salary,'');
+  document.getElementById('setFood').value=pick(cur.foodBudget,s.foodBudget,'');
+  const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=pick(cur.payDay,s.payDay,15);
+  const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=cur.payShift||s.payShift||'back';
   // GitHub設定を復元
   const ghT=getGhToken();
   const ghG=getGhGistId();
@@ -4052,25 +4053,18 @@ function applyBudgetSettings(){
   const _food=document.getElementById('setFood');if(_food&&_food.value!=='')s.foodBudget=Number(_food.value)||s.foodBudget;
   const _pd=document.getElementById('setPayDay');if(_pd&&_pd.value!=='')s.payDay=Math.min(31,Math.max(1,Number(_pd.value)||15));
   const _ps=document.getElementById('setPayShift');if(_ps)s.payShift=_ps.value;
-  // 給料日の変更（YYYYMM / 日）：全角→半角・区切り除去でYYYYMM正規化。空欄なら変更なし。
-  const _pcf=document.getElementById('setPayChangeFrom'),_pct=document.getElementById('setPayChangeTo');
-  if(_pcf&&_pct){
-    const rawFrom=(_pcf.value||'').replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^0-9]/g,'');
-    const fromYM=rawFrom?Number(rawFrom):0;
-    const toDay=_pct.value!==''?Math.min(31,Math.max(1,Number(_pct.value)||0)):0;
-    if(fromYM>=190000&&fromYM<=999912&&toDay>0){s.payChangeFrom=fromYM;s.payChangeTo=toDay;}
-    else{delete s.payChangeFrom;delete s.payChangeTo;}
-  }
   saveSettings(s);
   const scope=(document.getElementById('applyScopeBudget')||{}).value||'future';
   const scopeLabel=scope==='thisonly'?'今月のみ':scope==='thismonth'?'今月以降':'来月以降';
-  if(!confirm(`基本給料¥${(s.salary||0).toLocaleString()}・食費予算¥${(s.foodBudget||0).toLocaleString()}を ${scopeLabel} に適用します（固定費は変更しません）。実行しますか？`))return;
+  if(!confirm(`基本給料¥${(s.salary||0).toLocaleString()}・食費予算¥${(s.foodBudget||0).toLocaleString()}・給料日${s.payDay||15}日を ${scopeLabel} に適用します（固定費は変更しません）。実行しますか？`))return;
   let applied=0;
   _applyTargetKeys(scope).forEach(k=>{
     const saved=localStorage.getItem(k);
     const st=saved?migrate(JSON.parse(saved)):defaultState();
     st.salary=s.salary||st.salary;
     st.foodBudget=s.foodBudget||st.foodBudget;
+    st.payDay=s.payDay||st.payDay||15;
+    st.payShift=s.payShift||st.payShift||'back';
     localStorage.setItem(k,JSON.stringify(st));applied++;
   });
   state=loadData();renderAll();
@@ -4105,15 +4099,6 @@ function applySettings(){
   const _food=document.getElementById('setFood');if(_food&&_food.value!=='')s.foodBudget=Number(_food.value)||s.foodBudget;
   const _pd=document.getElementById('setPayDay');if(_pd&&_pd.value!=='')s.payDay=Math.min(31,Math.max(1,Number(_pd.value)||15));
   const _ps=document.getElementById('setPayShift');if(_ps)s.payShift=_ps.value;
-  // 給料日の変更（YYYYMM / 日）：全角→半角・区切り除去でYYYYMM正規化。空欄なら変更なし。
-  const _pcf=document.getElementById('setPayChangeFrom'),_pct=document.getElementById('setPayChangeTo');
-  if(_pcf&&_pct){
-    const rawFrom=(_pcf.value||'').replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^0-9]/g,'');
-    const fromYM=rawFrom?Number(rawFrom):0;
-    const toDay=_pct.value!==''?Math.min(31,Math.max(1,Number(_pct.value)||0)):0;
-    if(fromYM>=190000&&fromYM<=999912&&toDay>0){s.payChangeFrom=fromYM;s.payChangeTo=toDay;}
-    else{delete s.payChangeFrom;delete s.payChangeTo;}
-  }
   saveSettings(s);
   const scope=(document.getElementById('applyScope')||{}).value||'future';
   const curYM=ym(currentYear,currentMonth);
@@ -4152,9 +4137,11 @@ function applySettings(){
     if(saved){st=migrate(JSON.parse(saved));}
     else{st=defaultState();}
 
-    // 給与・食費を上書き
+    // 給与・食費・給料日を上書き
     st.salary=s.salary||st.salary;
     st.foodBudget=s.foodBudget||st.foodBudget;
+    st.payDay=s.payDay||st.payDay||15;
+    st.payShift=s.payShift||st.payShift||'back';
 
     // 固定費：テンプレの内容に合わせて再構成する
     //  - テンプレに無い項目は削除（改名時に旧名が残る重複を解消）
