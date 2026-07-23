@@ -501,7 +501,7 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="card">
     <div class="step-label"><div class="step-title">固定費テンプレート</div>
       <button class="btn btn-sm" style="margin-left:auto" onclick="openSetFixed()">＋追加</button></div>
-    <div class="hint">見込み金額・支払い方法・開始月をまとめて設定。ここの内容が各月の固定費のひな形になります。各行の📤で1項目だけ適用も可能。</div>
+    <div class="hint">見込み金額・支払い方法・支払い周期・開始月をまとめて設定。ここの内容が各月の固定費のひな形になります。<b>「年1回」</b>にすると自動車税・保険など1年単位の支払いも登録でき、指定した月だけ固定費として計上されます。各行の📤で1項目だけ適用も可能。</div>
     <div class="gridhead" style="grid-template-columns:1.6fr 1fr 1.2fr auto;"><span>項目</span><span style="text-align:right">見込み</span><span style="text-align:right">支払い</span><span></span></div>
     <div id="setFixedList"></div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;display:flex;gap:8px;align-items:center;">
@@ -565,6 +565,11 @@ input:focus,select:focus{border-color:var(--accent);}
   <div class="form-field"><label>項目名</label><input type="text" id="sfName" placeholder="携帯"></div>
   <div class="form-field"><label>見込み金額（円）</label><input type="number" id="sfBudget" placeholder="7000"></div>
   <div class="form-field"><label>支払い方法</label><select id="sfPay"><option>PayPayカード</option><option>リクルートカード</option><option>三井住友カード</option><option>口座振替</option><option>現金</option><option>その他</option></select></div>
+  <div class="form-field"><label>支払い周期</label><select id="sfCycle" onchange="onSfCycleChange()"><option value="monthly">毎月</option><option value="yearly">年1回</option></select></div>
+  <div class="form-field" id="sfPayMonthRow" style="display:none;"><label>支払い月（何月に払う？）</label>
+    <select id="sfPayMonth"><option value="1">1月</option><option value="2">2月</option><option value="3">3月</option><option value="4">4月</option><option value="5">5月</option><option value="6">6月</option><option value="7">7月</option><option value="8">8月</option><option value="9">9月</option><option value="10">10月</option><option value="11">11月</option><option value="12">12月</option></select>
+    <div style="font-size:10px;color:var(--text2);margin-top:4px;">年1回：この月だけ固定費として計上され、他の月には出ません。</div>
+  </div>
   <div class="form-field"><label>開始月（YYYYMM・空白で全月）</label><input type="text" id="sfStartMonth" placeholder="例: 202608"></div>
   <input type="hidden" id="sfEditIdx" value="">
   <div style="display:flex;gap:8px;margin-top:4px;" id="sfBtnRow"><button class="btn" onclick="saveSetFixed()">追加する</button></div>
@@ -708,7 +713,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.16b';
+const APP_VERSION='v2026.07.23';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -776,7 +781,7 @@ function defaultState(){
     fixedSrc=(s&&Array.isArray(s.fixed)&&s.fixed.length)?s.fixed:fixedTemplate();
   }catch(e){fixedSrc=fixedTemplate();}
   const fixed=fixedSrc.map(f=>({name:f.name,budget:f.budget||0,amount:0,confirmed:false,
-    pay:f.pay||'PayPayカード',memo:'',memoTags:[],history:[],startMonth:f.startMonth||null}));
+    pay:f.pay||'PayPayカード',memo:'',memoTags:[],history:[],startMonth:f.startMonth||null,payMonth:f.payMonth||null}));
   return {salary:195000,carryover:0,foodBudget:10000,payDay:15,payShift:'back',goalSavings:{},paypayTotal:0,carryExtra:[],
     fixed,expenses:[],schedules:{}};
 }
@@ -1201,10 +1206,20 @@ function adopted(item){
   return mk>amt?mk:amt;
 }
 
+// 固定費が指定月(kym=YYYYMM)に発生するか判定
+// payMonth(1-12)が設定されていれば「年1回」：その月だけ発生する。未設定なら毎月。
+// startMonth(YYYYMM)は開始年月の下限。年1回でも開始月より前の年には出さない。
+function fixedActiveInYM(f,kym){
+  if(!f)return false;
+  if(f.startMonth&&Number(f.startMonth)>kym)return false;
+  const pm=Number(f.payMonth)||0;
+  if(pm>=1&&pm<=12)return (kym%100)===pm; // 年1回：支払月のみ
+  return true; // 毎月
+}
 // 現在の月の固定費のみフィルタ
 function activeFixed(){
   const cur=ym(currentYear,currentMonth);
-  return (state.fixed||[]).filter(f=>!f.startMonth||Number(f.startMonth)<=cur);
+  return (state.fixed||[]).filter(f=>fixedActiveInYM(f,cur));
 }
 
 // ──────────────────────
@@ -1620,7 +1635,11 @@ function renderFixed(){
   const fl=document.getElementById('fixedList');fl.innerHTML='';
   const cur=ym(currentYear,currentMonth);
   (state.fixed||[]).forEach((f,i)=>{
-    const active=!f.startMonth||Number(f.startMonth)<=cur;
+    const pm=Number(f.payMonth)||0;
+    const isYearly=pm>=1&&pm<=12;
+    // 年1回の項目は「支払月」以外の月別リストには出さない（テンプレ側で管理）
+    if(isYearly&&(cur%100)!==pm)return;
+    const active=fixedActiveInYM(f,cur);
     const ad=adopted(f);
     const locked=!!f.confirmed;
     const div=document.createElement('div');
@@ -1645,6 +1664,7 @@ function renderFixed(){
         ${cardBadge}
         ${(f.memoTags||[]).map((tg,ti)=>`<span class="tag-mini">📝 ${locked?escHtml(tg):`<span class="tag-text" style="cursor:pointer" onclick="event.stopPropagation();editMemoTag('fixed',${i},${ti})">${escHtml(tg)}</span>`}${!locked?`<button onclick="event.stopPropagation();removeMemoTag('fixed',${i},${ti})">✕</button>`:''}</span>`).join('')}
         ${!locked?`<button class="tag-add-btn" onclick="event.stopPropagation();addMemoTag('fixed',${i})">＋メモ</button>`:''}
+        ${isYearly?`<span class="tag-mini" style="color:var(--c-jiyu);border-color:var(--c-jiyu)">🗓 年1回（${pm}月払い）</span>`:''}
         ${f.startMonth?`<span class="tag-mini tag-locked">📅 ${f.startMonth}〜</span>`:''}
         <span class="li-actions">
           <button class="icon-btn" onclick="event.stopPropagation();moveItem('fixed',${i},-1)" title="上へ">↑</button>
@@ -2054,7 +2074,7 @@ function monthTotalsFor(kym){
   const byMethod={},ownCardByMethod={};
   const addM=(o,k,v)=>{const key=k||'その他';o[key]=(o[key]||0)+v;};
   (st.fixed||[]).forEach(f=>{
-    if(f.startMonth&&Number(f.startMonth)>kym)return;
+    if(!fixedActiveInYM(f,kym))return;
     const a=adopted(f);
     if(cardSet.includes(f.pay))fixedCardPart+=a;else fixedCashPart+=a;
     if(poolChargeYM(kym,f.pay)===kym){fixedTotal+=a;addM(byMethod,f.pay,a);}
@@ -2076,7 +2096,7 @@ function monthTotalsFor(kym){
   let prevCardTotal=0,prevCardFood=0;
   const prevCardItems=[];
   (prevSt.fixed||[]).forEach(f=>{
-    if(f.startMonth&&Number(f.startMonth)>prevK)return;
+    if(!fixedActiveInYM(f,prevK))return;
     if(poolChargeYM(prevK,f.pay)!==kym)return;
     const a=adopted(f);prevCardTotal+=a;addM(byMethod,f.pay,a);
     prevCardItems.push({name:f.name,amt:a,pay:f.pay,cat:'固定費'});
@@ -3963,11 +3983,11 @@ function applyOneFixed(idx){
     let st=saved?migrate(JSON.parse(saved)):defaultState();
     if(!st.fixed)st.fixed=[];
     const ex=st.fixed.find(f=>f&&f.name===tf.name);
-    if(ex){ // 見込み・支払い・開始月だけ更新。実額・確定・追記は保持
-      ex.budget=tf.budget;ex.pay=tf.pay;ex.startMonth=tf.startMonth;
+    if(ex){ // 見込み・支払い・開始月・周期だけ更新。実額・確定・追記は保持
+      ex.budget=tf.budget;ex.pay=tf.pay;ex.startMonth=tf.startMonth;ex.payMonth=tf.payMonth||null;
     }else{
       st.fixed.push({name:tf.name,budget:tf.budget,amount:0,confirmed:false,
-        pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth});
+        pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth,payMonth:tf.payMonth||null});
     }
     localStorage.setItem(k,JSON.stringify(st));applied++;
   });
@@ -3984,7 +4004,7 @@ function renderSetFixedList(){
     div.innerHTML=`<div style="display:flex;align-items:center;gap:6px;">
       <button class="icon-btn" onclick="event.stopPropagation();moveSetFixed(${i},-1)" style="width:22px;height:22px;font-size:11px" title="上へ">↑</button>
       <button class="icon-btn" onclick="event.stopPropagation();moveSetFixed(${i},1)" style="width:22px;height:22px;font-size:11px" title="下へ">↓</button>
-      <span style="font-size:13px;font-weight:600;flex:1">${f.name}${f.startMonth?` <span style="color:var(--yellow);font-size:9px">${f.startMonth}〜</span>`:''}</span>
+      <span style="font-size:13px;font-weight:600;flex:1">${f.name}${(Number(f.payMonth)>=1&&Number(f.payMonth)<=12)?` <span style="color:var(--c-jiyu);font-size:9px">🗓年1回(${Number(f.payMonth)}月)</span>`:''}${f.startMonth?` <span style="color:var(--yellow);font-size:9px">${f.startMonth}〜</span>`:''}</span>
       <button onclick="event.stopPropagation();applyOneFixed(${i})" class="edit-btn" title="この項目だけ月に適用" style="font-size:10px;">📤適用</button>
       <button onclick="event.stopPropagation();openSetFixed(${i})" class="edit-btn" title="編集">✏️</button>
       <span style="font-size:12px;color:var(--yellow);min-width:55px;text-align:right">${(f.budget||0).toLocaleString()}円</span>
@@ -4010,10 +4030,22 @@ function openSetFixed(idx){
   document.getElementById('sfStartMonth').value=f?(f.startMonth||''):'';
   document.getElementById('sfEditIdx').value=idx!=null?idx:'';
   setSelectVal('sfPay',f?(f.pay||'PayPayカード'):'PayPayカード');
+  const pm=f?(Number(f.payMonth)||0):0;
+  const isYearly=pm>=1&&pm<=12;
+  setSelectVal('sfCycle',isYearly?'yearly':'monthly');
+  setSelectVal('sfPayMonth',String(isYearly?pm:(currentMonth+1)));
+  onSfCycleChange();
   document.getElementById('sfBtnRow').innerHTML=f
     ?`<button class="btn btn-ghost" style="flex:1;width:auto" onclick="delSetFixed(${idx})">削除</button><button class="btn" style="flex:2" onclick="saveSetFixed()">保存する</button>`
     :'<button class="btn" onclick="saveSetFixed()">追加する</button>';
   document.getElementById('setFixedModal').classList.add('open');
+}
+// 支払い周期セレクトの切替で「支払い月」欄の表示を出し入れ
+function onSfCycleChange(){
+  const cyc=document.getElementById('sfCycle');
+  const row=document.getElementById('sfPayMonthRow');
+  if(!cyc||!row)return;
+  row.style.display=(cyc.value==='yearly')?'':'none';
 }
 function saveSetFixed(){
   const s=loadSettings();
@@ -4021,10 +4053,12 @@ function saveSetFixed(){
   const budget=Number(document.getElementById('sfBudget').value)||0;
   const pay=document.getElementById('sfPay').value;
   const startMonth=document.getElementById('sfStartMonth').value.trim()||null;
+  const cyc=(document.getElementById('sfCycle')||{}).value||'monthly';
+  const payMonth=cyc==='yearly'?(Number((document.getElementById('sfPayMonth')||{}).value)||1):null;
   const idx=document.getElementById('sfEditIdx').value;
   if(!s.fixed)s.fixed=[];
-  if(idx!==''){Object.assign(s.fixed[Number(idx)],{name,budget,pay,startMonth});}
-  else{s.fixed.push({name,budget,amount:0,confirmed:false,pay,memo:'',history:[],startMonth});}
+  if(idx!==''){Object.assign(s.fixed[Number(idx)],{name,budget,pay,startMonth,payMonth});}
+  else{s.fixed.push({name,budget,amount:0,confirmed:false,pay,memo:'',history:[],startMonth,payMonth});}
   saveSettings(s);renderSetFixedList();closeModal('setFixedModal');
 }
 function delSetFixed(idx){
@@ -4086,8 +4120,8 @@ function applyFixedTemplate(){
     const prevByName={};(st.fixed||[]).forEach(f=>{if(f&&f.name)prevByName[f.name]=f;});
     st.fixed=(s.fixed||[]).map(tf=>{
       const ex=prevByName[tf.name];
-      if(ex)return {...ex,name:tf.name,budget:tf.budget,pay:tf.pay,startMonth:tf.startMonth};
-      return {name:tf.name,budget:tf.budget,amount:0,confirmed:false,pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth};
+      if(ex)return {...ex,name:tf.name,budget:tf.budget,pay:tf.pay,startMonth:tf.startMonth,payMonth:tf.payMonth||null};
+      return {name:tf.name,budget:tf.budget,amount:0,confirmed:false,pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth,payMonth:tf.payMonth||null};
     });
     localStorage.setItem(k,JSON.stringify(st));applied++;
   });
@@ -4155,10 +4189,10 @@ function applySettings(){
     st.fixed=(s.fixed||[]).map(tf=>{
       const ex=prevByName[tf.name];
       if(ex){
-        return {...ex,name:tf.name,budget:tf.budget,pay:tf.pay,startMonth:tf.startMonth};
+        return {...ex,name:tf.name,budget:tf.budget,pay:tf.pay,startMonth:tf.startMonth,payMonth:tf.payMonth||null};
       }
       return {name:tf.name,budget:tf.budget,amount:0,confirmed:false,
-        pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth};
+        pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth,payMonth:tf.payMonth||null};
     });
 
     localStorage.setItem(k,JSON.stringify(st));
