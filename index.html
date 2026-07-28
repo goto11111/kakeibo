@@ -487,7 +487,8 @@ input:focus,select:focus{border-color:var(--accent);}
         <option value="fwd">後の平日に繰下げ（例:17日）</option>
       </select>
     </div>
-    <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。<br>📅 給料日・給料・食費は<b>月ごとに保存</b>されます。給料日を途中で変えたいときは、変わる月を上部で表示して、下の適用範囲（今月だけ／今月以降／来月以降）で反映してください。この設定タブは<b>表示中の月に適用されている値</b>を読み込みます。</div>
+    <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。<br>📅 この欄は<b>表示中の月に「適用」した設定の数値</b>だけを表示します。見込みタブで手入力した給料・食費はこの欄には入ってきません（設定と月データは独立）。<br>✅ 入力しただけでは保存されません。<b>「この給料・予算を適用」を押したときに保存＆各月へ反映</b>されます（適用範囲：今月だけ／今月以降／来月以降）。</div>
+    <div class="hint" id="setAppliedNote" style="display:none;border-color:var(--yellow);color:var(--yellow);"></div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;display:flex;gap:8px;align-items:center;">
       <select id="applyScopeBudget" style="flex:1;font-size:12px;">
         <option value="future">来月以降すべて</option>
@@ -780,16 +781,22 @@ function settingsRO(){return lsReadJSON('kakeibo_settings')||{salary:195000,food
 
 function defaultState(){
   // 設定テンプレの固定費を継承（startMonth付き固定費を未来月にも反映するため）
-  let fixedSrc;
-  try{
-    const s=JSON.parse(localStorage.getItem('kakeibo_settings')||'null');
-    fixedSrc=(s&&Array.isArray(s.fixed)&&s.fixed.length)?s.fixed:fixedTemplate();
-  }catch(e){fixedSrc=fixedTemplate();}
+  let s=null;
+  try{s=JSON.parse(localStorage.getItem('kakeibo_settings')||'null');}catch(e){s=null;}
+  const fixedSrc=(s&&Array.isArray(s.fixed)&&s.fixed.length)?s.fixed:fixedTemplate();
   const fixed=fixedSrc.map(f=>({name:f.name,budget:f.budget||0,amount:0,confirmed:false,
     pay:f.pay||'PayPayカード',memo:'',memoTags:[],history:[],startMonth:f.startMonth||null,payMonth:f.payMonth||null,payDay:f.payDay||null}));
-  return {salary:195000,carryover:0,foodBudget:10000,payDay:15,payShift:'back',goalSavings:{},paypayTotal:0,carryExtra:[],
+  // 新規に作られる月は「今の設定」を初期値として受け取る（何を適用したかも applied に残す）。
+  // 給料日だけはテンプレを引かない：未適用の月へ給料日が波及するのを防ぐため既定15/前倒し固定。
+  const salary=(s&&s.salary!=null&&s.salary!=='')?Number(s.salary)||0:195000;
+  const foodBudget=(s&&s.foodBudget!=null&&s.foodBudget!=='')?Number(s.foodBudget)||0:10000;
+  return {salary,carryover:0,foodBudget,payDay:15,payShift:'back',goalSavings:{},paypayTotal:0,carryExtra:[],
+    applied:{salary,foodBudget,payDay:15,payShift:'back',at:new Date().toISOString()},
     fixed,expenses:[],schedules:{}};
 }
+// その月に「適用」された設定のスナップショット（無ければ null）。
+// 設定タブの表示はこれを基準にする＝見込みタブの手入力（state.salary 等）とは切り離す。
+function appliedOf(st){return (st&&st.applied&&typeof st.applied==='object')?st.applied:null;}
 
 function loadData(){
   const saved=localStorage.getItem(getKey(currentYear,currentMonth));
@@ -3741,16 +3748,22 @@ async function autoSyncOnLoad(){
 // ══════════════════════════
 function renderSettings(){
   const s=loadSettings();
-  // 表示中の月に適用されている値を読み込む（月ごと保存。無ければテンプレ→既定）
+  // 表示中の月に「適用済み」の設定値を読み込む（applied スナップショット → テンプレ → 既定）。
+  // ※ state.salary / state.foodBudget（見込みタブの手入力）は絶対に読まない。
+  //   読むと手入力した月の給料がそのまま設定欄へ流れ込み、適用で他月へ波及してしまうため。
   const cur=(typeof state==='object'&&state)?state:{};
-  const pick=(mv,tv,dv)=>(mv!=null&&mv!=='')?mv:((tv!=null&&tv!=='')?tv:dv);
+  const ap=appliedOf(cur);
+  const pick=(av,tv,dv)=>(av!=null&&av!=='')?av:((tv!=null&&tv!=='')?tv:dv);
   const noteEl=document.getElementById('setMonthNote');
-  if(noteEl)noteEl.textContent=`（${currentYear}年${currentMonth+1}月に適用中の値）`;
-  document.getElementById('setSalary').value=pick(cur.salary,s.salary,'');
-  document.getElementById('setFood').value=pick(cur.foodBudget,s.foodBudget,'');
+  if(noteEl)noteEl.textContent=`（${currentYear}年${currentMonth+1}月に適用中の設定）`;
+  const salaryVal=pick(ap&&ap.salary,s.salary,'');
+  const foodVal=pick(ap&&ap.foodBudget,s.foodBudget,'');
+  document.getElementById('setSalary').value=salaryVal;
+  document.getElementById('setFood').value=foodVal;
   // 給料日は月ごと保存の値のみ表示（テンプレには依存しない）。未設定なら既定15。
-  const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=(cur.payDay!=null&&cur.payDay!=='')?cur.payDay:15;
-  const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=cur.payShift||'back';
+  const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=pick(ap&&ap.payDay,cur.payDay,15);
+  const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=(ap&&ap.payShift)||cur.payShift||'back';
+  renderAppliedDiffNote(salaryVal,foodVal);
   // GitHub設定を復元
   const ghT=getGhToken();
   const ghG=getGhGistId();
@@ -3762,13 +3775,43 @@ function renderSettings(){
   if(ghPEl)ghPEl.value=getGhProxy();
   const tvBtn=document.getElementById('tokenVisBtn');
   if(tvBtn)tvBtn.textContent=tokenHidden?'👁️ 表示':'🙈 隠す';
-  // 給与・食費はその場で保存
-  document.getElementById('setSalary').onchange=function(){const st=loadSettings();st.salary=Number(this.value)||0;saveSettings(st);};
-  document.getElementById('setFood').onchange=function(){const st=loadSettings();st.foodBudget=Number(this.value)||0;saveSettings(st);};
+  // 給与・食費・給料日は入力した時点では保存しない（＝適用を押すまで月データにもテンプレにも触らない）。
+  // その場保存にすると、表示中の月を切り替えただけで別の月の値がテンプレへ焼き付いてしまう。
+  markBudgetClean();
+  ['setSalary','setFood','setPayDay','setPayShift'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el){el.onchange=markBudgetDirty;el.oninput=markBudgetDirty;}
+  });
   renderSetFixedList();
   renderCardCyclesUI();
   updateSaveBtnMode();
   renderLastSaved();
+}
+// 設定（適用済み）と、その月で実際に計算に使われている値がズレているときだけ知らせる。
+// 例：見込みタブで7月だけ給料を手入力 → 設定欄は設定値のまま／ここに「7月は手入力値で計算中」と出す。
+function renderAppliedDiffNote(setSalary,setFood){
+  const el=document.getElementById('setAppliedNote');if(!el)return;
+  const cur=(typeof state==='object'&&state)?state:{};
+  const yen=n=>'¥'+(Number(n)||0).toLocaleString();
+  const num=v=>(v==null||v==='')?null:(Number(v)||0);
+  const rows=[];
+  const sS=num(setSalary),sF=num(setFood);
+  const mS=Number(cur.salary)||0,mF=Number(cur.foodBudget)||0;
+  if(sS!=null&&mS!==sS)rows.push(`給料 ${yen(mS)}（設定 ${yen(sS)}）`);
+  if(sF!=null&&mF!==sF)rows.push(`食費 ${yen(mF)}（設定 ${yen(sF)}）`);
+  if(!rows.length){el.style.display='none';el.innerHTML='';return;}
+  el.style.display='';
+  el.innerHTML=`📝 ${currentYear}年${currentMonth+1}月は<b>見込みタブで手入力した値</b>で計算されています：${escHtml(rows.join(' ／ '))}`
+    +`<br>この月も設定どおりに戻すなら、適用範囲を「今月だけ」にして下の適用ボタンを押してください。`;
+}
+// 「入力しただけ・未適用」の状態表示（適用を押すまで何も保存されないことを明示する）
+function markBudgetDirty(){
+  const r=document.getElementById('applyResultBudget');
+  if(r){r.style.color='var(--yellow)';r.textContent='⚠️ まだ未適用です。「この給料・予算を適用」を押すと保存されます。';}
+}
+function markBudgetClean(){
+  const r=document.getElementById('applyResultBudget');
+  if(r){r.style.color='var(--green)';r.textContent='';}
 }
 // ── データ移行：給料の1ヶ月ズレ補正 ──
 // 旧仕様: 月Mビューの給料 = M+1月の給料。新仕様: 月Mビュー = M月の給料。
@@ -4151,10 +4194,13 @@ function applyBudgetSettings(){
     st.foodBudget=s.foodBudget||st.foodBudget;
     st.payDay=s.payDay||st.payDay||15;
     st.payShift=s.payShift||st.payShift||'back';
+    // 「この月に適用した設定」を保存。設定タブはこれを表示するので、
+    // あとで見込みタブの給料を手入力しても設定欄は動かない（設定と月データの独立）。
+    st.applied={salary:st.salary,foodBudget:st.foodBudget,payDay:st.payDay,payShift:st.payShift,at:new Date().toISOString()};
     localStorage.setItem(k,JSON.stringify(st));applied++;
   });
   state=loadData();renderAll();
-  const r=document.getElementById('applyResultBudget');if(r)r.textContent=`✅ ${applied}ヶ月に給料・食費予算を適用`;
+  const r=document.getElementById('applyResultBudget');if(r){r.style.color='var(--green)';r.textContent=`✅ ${applied}ヶ月に給料・食費予算を適用`;}
 }
 // 固定費テンプレートだけを月へ適用（給与・食費には触れない）
 function applyFixedTemplate(){
@@ -4176,82 +4222,6 @@ function applyFixedTemplate(){
   });
   state=loadData();renderAll();
   const r=document.getElementById('applyResultFixed');if(r)r.textContent=`✅ ${applied}ヶ月に固定費テンプレを適用`;
-}
-// 設定を月に適用
-function applySettings(){
-  const s=loadSettings();
-  // 基本設定をUIから保存
-  const _sal=document.getElementById('setSalary');if(_sal&&_sal.value!=='')s.salary=Number(_sal.value)||s.salary;
-  const _food=document.getElementById('setFood');if(_food&&_food.value!=='')s.foodBudget=Number(_food.value)||s.foodBudget;
-  const _pd=document.getElementById('setPayDay');if(_pd&&_pd.value!=='')s.payDay=Math.min(31,Math.max(1,Number(_pd.value)||15));
-  const _ps=document.getElementById('setPayShift');if(_ps)s.payShift=_ps.value;
-  saveSettings(s);
-  const scope=(document.getElementById('applyScope')||{}).value||'future';
-  const curYM=ym(currentYear,currentMonth);
-  let applied=0;
-
-  // 対象月キーを決定
-  // thisonly: 今月のみ / thismonth: 今月以降 / future: 来月以降
-  // 既存の月データ全部 + 今後12ヶ月分を走査
-  const targetKeys=new Set();
-  // 既存月
-  for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i);
-    if(!k||!/^kakeibo_\d{4}_\d{2}$/.test(k))continue;
-    targetKeys.add(k);
-  }
-  // 今後12ヶ月（未来反映用に空でも作る）
-  for(let off=0;off<=12;off++){
-    let y=currentYear,m=currentMonth+off;
-    while(m>11){m-=12;y++;}
-    targetKeys.add(getKey(y,m));
-  }
-
-  targetKeys.forEach(k=>{
-    const mm=k.match(/^kakeibo_(\d{4})_(\d{2})$/);
-    if(!mm)return;
-    const ky=Number(mm[1]),km=Number(mm[2])-1;
-    const kym=ky*100+(km+1);
-    // スコープ判定
-    if(scope==='thisonly'&&kym!==curYM)return;
-    if(scope==='thismonth'&&kym<curYM)return;
-    if(scope==='future'&&kym<=curYM)return;
-
-    // 既存stateを読むかデフォルト生成
-    let st;
-    const saved=localStorage.getItem(k);
-    if(saved){st=migrate(JSON.parse(saved));}
-    else{st=defaultState();}
-
-    // 給与・食費・給料日を上書き
-    st.salary=s.salary||st.salary;
-    st.foodBudget=s.foodBudget||st.foodBudget;
-    st.payDay=s.payDay||st.payDay||15;
-    st.payShift=s.payShift||st.payShift||'back';
-
-    // 固定費：テンプレの内容に合わせて再構成する
-    //  - テンプレに無い項目は削除（改名時に旧名が残る重複を解消）
-    //  - 残る項目は実額amount・確定・履歴・メモを「名前一致」で引き継ぐ
-    //  - 見込み(budget)・支払い・開始月はテンプレ値で更新
-    const prevByName={};
-    (st.fixed||[]).forEach(f=>{if(f&&f.name)prevByName[f.name]=f;});
-    st.fixed=(s.fixed||[]).map(tf=>{
-      const ex=prevByName[tf.name];
-      if(ex){
-        return {...ex,name:tf.name,budget:tf.budget,pay:tf.pay,startMonth:tf.startMonth,payMonth:tf.payMonth||null,payDay:tf.payDay||null};
-      }
-      return {name:tf.name,budget:tf.budget,amount:0,confirmed:false,
-        pay:tf.pay,memo:'',memoTags:[],history:[],startMonth:tf.startMonth,payMonth:tf.payMonth||null,payDay:tf.payDay||null};
-    });
-
-    localStorage.setItem(k,JSON.stringify(st));
-    applied++;
-  });
-
-  // 現在表示中の月が対象なら再読込
-  state=loadData();renderAll();
-  document.getElementById('applyResult').textContent=`✅ ${applied}ヶ月に適用しました`;
-  setTimeout(()=>{document.getElementById('applyResult').textContent='';},4000);
 }
 
 // 折りたたみトグル
