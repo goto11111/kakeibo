@@ -488,7 +488,6 @@ input:focus,select:focus{border-color:var(--accent);}
       </select>
     </div>
     <div class="hint">💴 現金支払いの月割り当てに使います（クレカは関係なし）。給料日以降の現金支出は当月分、給料日前は前月分の予定として扱います。<br>📅 この欄は<b>表示中の月に「適用」した設定の数値</b>だけを表示します。見込みタブで手入力した給料・食費はこの欄には入ってきません（設定と月データは独立）。<br>✅ 入力しただけでは保存されません。<b>「この給料・予算を適用」を押したときに保存＆各月へ反映</b>されます（適用範囲：今月だけ／今月以降／来月以降）。</div>
-    <div class="hint" id="setAppliedNote" style="display:none;border-color:var(--yellow);color:var(--yellow);"></div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;display:flex;gap:8px;align-items:center;">
       <select id="applyScopeBudget" style="flex:1;font-size:12px;">
         <option value="future">来月以降すべて</option>
@@ -3763,7 +3762,6 @@ function renderSettings(){
   // 給料日は月ごと保存の値のみ表示（テンプレには依存しない）。未設定なら既定15。
   const pdEl=document.getElementById('setPayDay');if(pdEl)pdEl.value=pick(ap&&ap.payDay,cur.payDay,15);
   const psEl=document.getElementById('setPayShift');if(psEl)psEl.value=(ap&&ap.payShift)||cur.payShift||'back';
-  renderAppliedDiffNote(salaryVal,foodVal);
   // GitHub設定を復元
   const ghT=getGhToken();
   const ghG=getGhGistId();
@@ -3786,23 +3784,6 @@ function renderSettings(){
   renderCardCyclesUI();
   updateSaveBtnMode();
   renderLastSaved();
-}
-// 設定（適用済み）と、その月で実際に計算に使われている値がズレているときだけ知らせる。
-// 例：見込みタブで7月だけ給料を手入力 → 設定欄は設定値のまま／ここに「7月は手入力値で計算中」と出す。
-function renderAppliedDiffNote(setSalary,setFood){
-  const el=document.getElementById('setAppliedNote');if(!el)return;
-  const cur=(typeof state==='object'&&state)?state:{};
-  const yen=n=>'¥'+(Number(n)||0).toLocaleString();
-  const num=v=>(v==null||v==='')?null:(Number(v)||0);
-  const rows=[];
-  const sS=num(setSalary),sF=num(setFood);
-  const mS=Number(cur.salary)||0,mF=Number(cur.foodBudget)||0;
-  if(sS!=null&&mS!==sS)rows.push(`給料 ${yen(mS)}（設定 ${yen(sS)}）`);
-  if(sF!=null&&mF!==sF)rows.push(`食費 ${yen(mF)}（設定 ${yen(sF)}）`);
-  if(!rows.length){el.style.display='none';el.innerHTML='';return;}
-  el.style.display='';
-  el.innerHTML=`📝 ${currentYear}年${currentMonth+1}月は<b>見込みタブで手入力した値</b>で計算されています：${escHtml(rows.join(' ／ '))}`
-    +`<br>この月も設定どおりに戻すなら、適用範囲を「今月だけ」にして下の適用ボタンを押してください。`;
 }
 // 「入力しただけ・未適用」の状態表示（適用を押すまで何も保存されないことを明示する）
 function markBudgetDirty(){
