@@ -180,6 +180,19 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 .bsub{font-size:10px;color:var(--text3);padding:2px 0 2px 12px;display:flex;gap:8px;}
 .bsub .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tap{font-size:9px;color:var(--text3);margin-top:6px;}
+.ledger{margin-top:10px;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;}
+.lrow{padding:9px 11px;border-bottom:1px solid var(--border);cursor:pointer;}
+.lrow:last-child{border-bottom:0;}
+.lrow>.k{font-size:12px;color:var(--text2);}
+.lrow>.v{float:right;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+.lrow::after{content:'';display:block;clear:both;}
+.lrow.sum{background:var(--surface2);}
+.lrow.sum>.k,.lrow.sum>.v{color:var(--text);font-weight:800;}
+.lrow.tot{background:#1c2f28;}
+.lrow.tot>.k{color:var(--text);font-weight:800;font-size:13px;}
+.lrow.tot>.v{font-size:17px;}
+.lrow .brk{clear:both;padding-top:8px;}
+.lrow.open .brk{display:block;}
 .mir{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:11px;}
 .mir-2{display:flex;gap:10px;}
 .mir-c{flex:1;text-align:center;}
@@ -244,40 +257,22 @@ details.cfg>summary::-webkit-details-marker{display:none;}
   </div>
 
   <div class="card">
-    <div class="card-h">💰 いま使っていい額<span class="sub" id="poolSub"></span></div>
-    <div id="pools"></div>
-    <details class="nt"><summary>ⓘ この数字はどこから来ているか</summary>
-      <div class="nt-body">
-        <b>本体アプリの計算そのものです。</b>本体 index.html を隠しフレームで実際に動かし、その <code>monthTotalsFor()</code> が返した値をそのまま出しています（本物のデータには書き込みません）。なので本体の「合計（今月の残り＋来月の使える分）」と必ず一致します。<br><br>
-        2つに分かれているのは、<b>どの給料から払うかで財布が別</b>だからです。現金で今使う分はいま入っている給料から、いま切るカードは次の給料から引かれます。下の段が大きくても、それは次の給料日まで手をつけられない金ではなく「カードで切るならここまで」という意味です。
-      </div>
-    </details>
-  </div>
-
-  <div class="card">
-    <div class="card-h">🧪 手元の現金から見た場合<span class="sub" id="alwSub"></span></div>
+    <div class="card-h">💰 いくら取っておいて、いくら使えるか<span class="sub" id="moneySub"></span></div>
     <div class="cashbar">
       <span>💵 手元の現金</span>
       <input type="number" id="cashIn" placeholder="0" inputmode="numeric">
       <span class="tiny muted">円 ＝ <span id="cashDate">今日</span>時点</span>
       <button class="btn pri" onclick="applyCash()">反映</button>
     </div>
-    <div id="alwList"></div>
-    <details class="nt"><summary>ⓘ この金額の出し方</summary>
+    <div id="money"></div>
+    <details class="nt"><summary>ⓘ 出し方と、本体アプリとの違い</summary>
       <div class="nt-body">
-        <b>「手元の現金」から、この先の引き落とし・現金支出を全部引き、この先入る給料を足して、一番残高が少なくなる日を探しています。</b>そこからさらに<b>食費の残り予算</b>（この先まだ食べる分）を確保した額が「今これだけ使っても大丈夫」という数字です。<br>
-        先読みの範囲は「次の給料日の次の給料日まで＋すでに確定しているカードの引き落としが終わるまで」。それより先は支出がまだ入力されていないぶん楽観的になるので、あえて見に行きません。<br><br>
-        なので<b>今月まだ使っていない現金も、この額に含まれています</b>。本体アプリの「食費／自由費の残り」は<u>予算の残り枠</u>ですが、こちらは<u>実際に手元にあるお金</u>の話なので、数字が違って当然です。<br><br>
-        <b>カードの行</b>は、その引き落とし日より後だけを見ています。引き落とし日より前に給料が入るなら、その給料も原資に入るので現金より大きい額になります。逆に給料より先に引き落としが来るカードは小さくなります。<br><br>
-        <b>起点の「手元の現金」は、本体に入っている「繰越」から自動で計算しています。</b>その月の繰越を出発点に、給料・固定費・支出・カード引き落とし・積立を日付順に足し引きして、今日の残高を出しています。なので何も入力しなくても数字は出ます。<br>
-        ただし繰越は<b>あなたが本体に入れた数字</b>なので、実際の口座残高とズレていればその分ズレます。合っていないと感じたら、上の欄に<b>銀行残高＋財布の中身の合計</b>を入れて上書きしてください（「自動に戻す」でいつでも戻せます）。入れた値はこの画面にだけ効き、本体アプリには保存されません。
+        <b>今の手元に、この先入る給料を足し、この先出ていく分（カード引き落とし・固定費・現金支出・積立）と食費の残り予算を引いています。</b>残ったのが自由に使える額です。<br><br>
+        <b>「取っておく分」は、いま手元にある金だけで賄うわけではありません。</b>途中で給料が入るので、その給料も充てにしています。だから「取っておく分」が手元より大きくても問題ありません。一方「<b>手をつけられない額</b>」は、いま手元にある金のうち動かせない分なので、こちらが実際に残しておくべき額です。<br><br>
+        <b>起点の「手元の現金」は、本体の「繰越」から自動計算しています。</b>その月の繰越を出発点に、給料・固定費・支出・カード引き落とし・積立を日付順に足し引きした結果が今日の残高です。繰越はあなたが本体に入れた数字なので、実際の口座残高とズレていれば上の欄で上書きしてください（「自動に戻す」で戻せます）。この画面にだけ効き、本体には保存されません。<br><br>
+        <b>本体アプリの「合計」と数字が違う理由</b>：本体は<u>予算の残り枠</u>（給料が未着でも枠として満額ある扱い・今月プラス来月）を出しています。こちらは<u>実際に手元にある金</u>の話で、未着の給料は入る日が来るまで足しません。どちらが正しいというより、本体＝使いすぎていないかの物差し、こちら＝今いくらまで抜いていいかの物差しです。
       </div>
     </details>
-  </div>
-
-  <div class="card">
-    <div class="card-h">📊 このサイクルの出入り<span class="sub" id="sumSub"></span></div>
-    <div class="sum-grid" id="sumGrid"></div>
   </div>
 
   <div class="card">
@@ -359,8 +354,14 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v0.9.0';
+const VERSION='v1.0.0';
 const CHANGELOG=[
+ {v:'v1.0.0',d:'2026-09-16',t:[
+   '上部の3つのパネル（本体の数字／手元の現金／サイクルの出入り）を1つにまとめ、「今の手元 ＋ 入る給料 − 取っておく分 ＝ 自由に使っていい」の一本の流れにした',
+   '「取っておく分」を日付順の内訳で表示。いつ・何に・いくら消えるかが1タップで見える（カード引き落とし／積立・返済／現金・口座振替／食費の残り予算）',
+   '「今の手元のうち、いくらが手をつけられないか」を明示。これが実際に残しておくべき額',
+   '今の給料を来月のカード引き落としに充てる前提で、先読み範囲を見出しに表示',
+   '本体アプリの「合計」は参考値として1行に格納']},
  {v:'v0.9.0',d:'2026-09-16',t:[
    '最上段の「いま使っていい額」を、本体アプリを実際に動かして得た数字そのものに変更。本体の「合計（今月の残り＋来月の使える分）」と必ず一致する',
    'その内訳を「今の給料の残り（現金で使える分）」と「次の給料で使える分（カードで切れる分）」の2段に分け、それぞれ給料日の日付つきで表示',
@@ -825,7 +826,7 @@ async function bootSandbox(){
   if(tk!==SB_TOKEN)return;
   // 本体の数字に依存する表示は、起動が終わってから描き直す
   renderMirror();
-  if(CTX){renderPools();renderAllowance();renderAudit();renderSummary();}
+  if(CTX){renderMoney();renderAudit();}
 }
 // 指定の給料月に切り替えて、本体が描画した文字列をそのまま読み出す
 function sandboxRead(kym){
@@ -983,12 +984,12 @@ const colorOf=n=>{const i=cardNames().indexOf(n);return i<0?'#8a8aa8':CARD_COLOR
 function renderAll(){
   if(!monthKeys().length){
     $('cycMain').textContent='データがありません';$('cycSub').textContent='';
-    ['flowList','cal','alwList','cmp','audit','mirror','pools'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
-    $('sumGrid').innerHTML='';$('dayPanel').innerHTML='';
+    ['flowList','cal','cmp','audit','mirror','money'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
+    $('dayPanel').innerHTML='';
     return;
   }
   recompute();
-  renderHeader();renderConfig();renderPools();renderAllowance();renderMirror();renderSummary();renderFlow();
+  renderHeader();renderConfig();syncCashInput();renderMoney();renderMirror();renderFlow();
   renderCalendar();renderDayPanel();renderSpark();renderAudit();renderCompare();
 }
 
@@ -996,26 +997,6 @@ function renderHeader(){
   const {start,end}=CTX.range;
   $('cycMain').textContent=`${start.getFullYear()}/${md(start)} 〜 ${md(end)}`;
   $('cycSub').textContent=`${ymLabel(CUR)}の給料 ${yen(Number(CTX.st.salary)||0)} で回す期間`;
-}
-
-function renderSummary(){
-  const {start,end}=CTX.range;
-  let inc=0,cashOut=0,chgOut=0,goalOut=0,lowest=Infinity,lowDay=null;
-  for(let d=new Date(start);d<=end;d=addDays(d,1)){
-    const b=CTX.bal[dkey(d)];if(!b)continue;
-    b.e.in.forEach(x=>inc+=x.amt);
-    b.e.out.forEach(x=>{if(x.type==='charge')chgOut+=x.amt;else if(x.type==='goal')goalOut+=x.amt;else cashOut+=x.amt;});
-    if(b.bal<lowest){lowest=b.bal;lowDay=new Date(d);}
-  }
-  const endBal=balanceAt(end),nowIn=(TODAY>=start&&TODAY<=end);
-  const openCycle=(start>CTX.start)?balanceAt(addDays(start,-1)):CTX.opening;
-  const span=`${md(start)}〜${md(end)}`;
-  $('sumSub').textContent=`${span} の1サイクル`;
-  $('sumGrid').innerHTML=`
-    <div class="sum-cell"><div class="k">${md(start)}に持っていた額 ＋ この期間に入る額</div><div class="v mono">${yen(openCycle+inc)}</div><div class="s">開始時 ${yen(openCycle)} ＋ 給料など ${yen(inc)}</div></div>
-    <div class="sum-cell"><div class="k">${span} に出ていく額</div><div class="v mono neg">${yen(cashOut+chgOut+goalOut)}</div><div class="s">💳カード ${yen(chgOut)} ／ 💵現金 ${yen(cashOut)}${goalOut?` ／ 🏦積立 ${yen(goalOut)}`:''}</div></div>
-    <div class="sum-cell"><div class="k">${nowIn?`今日 ${md(TODAY)} の手元`:`${span} の最低残高`}</div><div class="v mono ${(nowIn?balanceAt(TODAY):lowest)<0?'neg':''}">${yen(nowIn?balanceAt(TODAY):lowest)}</div><div class="s">${nowIn?`この期間の最低は ${yen(lowest)}（${lowDay?md(lowDay):'-'}）`:(lowDay?md(lowDay):'')}</div></div>
-    <div class="sum-cell"><div class="k">${md(end)}（次の給料日の前日）の手元</div><div class="v mono ${endBal<0?'neg':'pos'}">${yen(endBal)}</div><div class="s">この期間を終えた時点の残高</div></div>`;
 }
 
 // カード名で1ブロックにまとめ、引き落とし日ごとに行を並べる
@@ -1179,101 +1160,88 @@ function renderSpark(){
   $('sparkX').innerHTML=`<span>💰${md(days[0].d)}</span><span>${md(days[mi].d)}</span><span>${md(days[days.length-1].d)}</span>`;
 }
 
-function renderPools(){
-  const el=$('pools');if(!el)return;
-  if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';return;}
-  const t=SBT(CUR), tN=SBT(nextYM(CUR));
-  if(!t||!tN){
-    el.innerHTML=`<div class="alert"><div class="alert-t">⚠️ 本体の数字を読み出せませんでした</div>
-      <div class="alert-b">${esc(SB.err||'起動できませんでした')}<br>下の「手元の現金から見た場合」はこちらの計算で表示しています。</div></div>`;
-    return;
-  }
-  const a=t.foodLeft+t.jiyuLeft, b=tN.foodLeft+tN.jiyuLeft, tot=a+b;
-  const dA=payDate(CUR), dB=payDate(nextYM(CUR));
-  const cls=n=>n<0?'neg':'pos';
-  $('poolSub').textContent='本体アプリと同じ数字';
-  const pool=(d,label,val,t2,note)=>`
-    <div class="arow" style="--cc:${val<0?'var(--red)':'var(--green)'};cursor:default">
-      <div class="arow-l">
-        <div class="arow-n">${label}</div>
-        <div class="arow-s">🍚 食費 <b class="${cls(t2.foodLeft)}">${yen(t2.foodLeft)}</b> ／ 💴 自由費 <b class="${cls(t2.jiyuLeft)}">${yen(t2.jiyuLeft)}</b>${note?`<br><span class="tiny">${note}</span>`:''}</div>
-      </div>
-      <div class="arow-v mono ${cls(val)}">${yen(val)}</div>
-    </div>`;
-  el.innerHTML=`<div class="hero" style="background:linear-gradient(160deg,#1c2f28,#1e1e2a 70%)">
-      <div class="hero-k">💰 合計（今の給料の残り ＋ 次の給料で使える分）</div>
-      <div class="hero-v mono ${cls(tot)}">${yen(tot)}</div>
-      <div class="hero-s">本体アプリの「合計」と同じ数字です。${md(dB)}に入る給料と、そこで引き落とされるカード分まで織り込み済み。</div>
-    </div>`
-    +pool(dA,`💵 ${md(dA)}の給料の残り <span class="tiny muted">現金で今使える分</span>`,a,t,
-          '今使っている現金・口座振替はここから減ります')
-    +pool(dB,`💳 ${md(dB)}の給料で使える分 <span class="tiny muted">カードで今切れる分</span>`,b,tN,
-          `いまカードで買うと ${md(dB)} の給料から引かれるので、上限はこちら`);
-}
-function renderAllowance(){
+function renderMoney(){
+  const el=$('money');if(!el)return;
   const base=(TODAY>=CTX.start&&TODAY<=CTX.horizon)?TODAY:CTX.range.start;
-  const low=lowPointFrom(base);
-  $('alwSub').textContent=`${md(CTX.horizon)}まで先読み`;
-  // 手元現金の入力欄
-  $('cashIn').value=cashSet()?UI.cash.v:Math.round(balanceAt(base));
-  $('cashDate').textContent=md(cashAnchorDate())+(cashSet()?'':'・自動計算');
+  const hz=CTX.horizon;
+  const low=lowPointFrom(base);                 // 途中で一番きつくなる日（安全な上限はここで決まる）
+  const cash=balanceAt(base);                   // 今の手元
+  const f=flowsBetween(base,hz);                // 今日〜先読み期限 の全入出金（＝取っておく分の対象）
+  const fr=foodReserve(base,hz);                // 食費の残り予算
+  const keepTotal=f.outSum+fr.total;            // 取っておく分
+  const endBal=cash+f.inSum-keepTotal;          // 期限時点に残る見込み
+  const canUse=low.amt;                         // いま自由に使っていい（底を割らない範囲）
+  const locked=Math.max(0,cash-canUse);         // 今の手元のうち動かせない分
+  const tight=(dkey(low.day)!==dkey(hz));       // 途中に底がある
 
-  // 起点の説明：手入力があればそれ、無ければ本体の「繰越」から自動計算
+  $('moneySub').textContent=`${md(hz)}までの支払いを賄う前提`;
+
   const winYM=cycleOfDate(CTX.start);
   const carry=Number((stateFor(winYM)||{}).carryover)||0;
-  let srcLine;
-  if(cashSet()){
-    srcLine=`<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝<b>手入力</b>の ${yen(UI.cash.v)}（${md(cashAnchorDate())}時点）。<a href="javascript:void(0)" onclick="autoCash()" style="color:var(--accent)">自動に戻す</a></div>`;
-  }else{
-    srcLine=`<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝<b>本体の「${ymLabel(winYM)}の繰越」${yen(carry)}</b>。そこに給料・支出・引き落とし・積立を全部足し引きして、今日の手元 <b>${yen(balanceAt(base))}</b> を出しています。${carry===0?'<br><span class="warn">※ 本体の繰越が ¥0 です。実際に手元にある額を上の欄に入れると精度が上がります。</span>':'<br>実際の残高と違うなら上の欄で上書きできます。'}</div>`;
-  }
-  let h=srcLine;
-  h+=`<div class="hero" onclick="this.querySelector('.brk').classList.toggle('open')">
-      <div class="hero-k">💵 現金でいま使っていい額</div>
-      <div class="hero-v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</div>
-      <div class="hero-s">${md(base)}の手元 <b>${yen(balanceAt(base))}</b> に、${md(CTX.horizon)}までの引き落とし・支出・給料を全部織り込むと${dkey(low.day)===dkey(base)?'、この先は給料で増えていくので<b>今が一番きつい</b>状態です':`、<b>${md(low.day)}</b>が一番きつくなって残高 ${yen(low.raw)} まで減ります`}。${low.reserve>0?`そこから食費の残り予算 ${yen(low.reserve)} を確保した残りが使っていい額です。`:''}${low.amt<0?'<br><b class="neg">このままだと足りません。</b>':''}</div>
-      ${breakdownHTML(base,low)}
-      <div class="tap">タップで内訳</div>
-    </div>`;
+  const srcLine=cashSet()
+    ? `<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝<b>手入力</b>の ${yen(UI.cash.v)}（${md(cashAnchorDate())}時点）。<a href="javascript:void(0)" onclick="autoCash()" style="color:var(--accent)">自動に戻す</a></div>`
+    : `<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝本体の「${ymLabel(winYM)}の繰越」${yen(carry)} ＋ その後の給料・支出。${carry===0?'<span class="warn">繰越が¥0なので、実際の残高を上の欄に入れてください。</span>':'実際の残高と違うなら上の欄で上書きできます。'}</div>`;
 
-  const rows=[];
-  cardNames().forEach(n=>{
-    const cy=cardConf()[n];
-    const cd=chargeDateOf(base,n);
-    const lw=lowPointFrom(cd,base);
-    const salD=payDate(cycleOfDate(cd));
-    const diff=lw.amt-low.amt;
-    const closeTxt=(cy.close==='end')?'末締め':`${cy.close}日締め`;
-    // 締め日をまたぐと引き落としが1ヶ月ずれるので、その境目を明記する
-    let edge='';
-    if(cy.close!=='end'){
-      const c=Number(cy.close), y=base.getFullYear(), m=base.getMonth();
-      const passed=base.getDate()>c;
-      const other=chargeDateOf(new Date(y,m,passed?c:Math.min(c+1,lastDay(y,m))),n);
-      edge=`<br><span class="tiny">${closeTxt}：${passed?`今月の${c}日を過ぎているので ${md(cd)} 払い（${c}日までに買っていれば ${md(other)} でした）`:`あと${c-base.getDate()}日以内に買えば ${md(cd)} 払い、${c+1}日以降だと ${md(other)} 払い`}</span>`;
-    }
-    rows.push({n,amt:lw.amt});
-    h+=`<div class="arow" style="--cc:${colorOf(n)}" onclick="this.classList.toggle('open')">
-      <div class="arow-l">
-        <div class="arow-n">💳 ${esc(n)} <span class="tiny muted">${closeTxt}</span></div>
-        <div class="arow-s">今日買うと <b>${md(cd)}</b> 引落（💰${md(salD)}の給料から）→ その後 <b>${md(lw.day)}</b> が底（残高 ${yen(lw.raw)}）
-          ${diff>0?`<span class="pos">・現金より ${yen(diff)} 多く使える</span>`:(diff<0?`<span class="neg">・現金より ${yen(-diff)} 少ない</span>`:'')}${edge}</div>
-        ${breakdownHTML(base,lw)}
-        <div class="tap">タップで内訳</div>
-      </div>
-      <div class="arow-v mono ${lw.amt<0?'neg':''}">${yen(lw.amt)}</div>
-    </div>`;
-  });
-  if(rows.length>1&&rows.every(r=>r.amt===rows[0].amt)){
-    h+=`<div class="tiny muted" style="margin-top:2px;line-height:1.7">※ 引き落とし日はカードごとに違いますが、<b>そこを越えた後で一番きつくなる日が全部同じ ${md(lowPointFrom(chargeDateOf(base,cardNames()[0]),base).day)}</b> なので、使える上限も同額になります。どのカードで買っても結果は変わりません。</div>`;
+  // ── 取っておく分（今日〜先読み期限の出金を日付順に）──
+  const items=[];
+  f.charges.forEach(x=>items.push({d:x.d,icon:'💳',name:`${x.pay} 引き落とし`,amt:x.amt}));
+  f.goals.forEach(x=>items.push({d:x.d,icon:'🏦',name:`${x.name}（積立・返済）`,amt:x.amt}));
+  const byDay={};
+  f.cashes.forEach(x=>{const k=dkey(x.d);(byDay[k]||(byDay[k]={d:x.d,n:0,amt:0}));byDay[k].n++;byDay[k].amt+=x.amt;});
+  Object.values(byDay).forEach(x=>items.push({d:x.d,icon:'💵',name:`現金・口座振替${x.n>1?` ${x.n}件`:''}`,amt:x.amt}));
+  items.sort((a,b)=>a.d-b.d);
+  let keepRows=items.map(x=>
+    `<div class="brow"><span class="k">${md(x.d)} ${x.icon} ${esc(x.name)}</span><span class="v mono">${yen(x.amt)}</span></div>`).join('');
+  if(fr.total>0){
+    keepRows+=`<div class="brow"><span class="k">〜${md(hz)} 🍚 食費の残り予算</span><span class="v mono">${yen(fr.total)}</span></div>`;
+    fr.items.forEach(x=>keepRows+=`<div class="bsub"><span class="k">${ymLabel(x.ym)}の給料ぶん</span><span>${yen(x.amt)}</span></div>`);
   }
-  $('alwList').innerHTML=h;
+  if(!keepRows)keepRows='<div class="brow"><span class="k">この期間に確定している支払いはありません</span><span class="v">—</span></div>';
+  const cnt=items.length+(fr.total>0?1:0);
+
+  const inRows=f.sals.map(x=>
+    `<div class="brow"><span class="k">${md(x.d)} 💰 ${esc(x.name)}</span><span class="v mono pos">+${yen(x.amt)}</span></div>`).join('')
+    ||'<div class="brow"><span class="k">この期間に入ってくる予定はありません</span><span class="v">—</span></div>';
+
+  const t=SBT(CUR),tN=SBT(nextYM(CUR));
+  const appLine=(t&&tN)
+    ? `<div class="mir-cmp"><span class="k">参考：本体アプリの「合計」（予算の残り枠なので別の数え方）</span><span class="v mono">${yen(t.foodLeft+t.jiyuLeft+tN.foodLeft+tN.jiyuLeft)}</span></div>`
+    : '';
+
+  el.innerHTML=srcLine
+   +`<div class="hero">
+      <div class="hero-k">🆓 いま自由に使っていい</div>
+      <div class="hero-v mono ${canUse<0?'neg':'pos'}">${yen(canUse)}</div>
+      <div class="hero-s">今の手元 <b>${yen(cash)}</b> のうち <b class="warn">${yen(locked)}</b> は ${md(hz)} までの支払いに要るので手をつけられません。${canUse<0?'<br><b class="neg">このままだと足りません。</b>':''}</div>
+    </div>
+    <div class="ledger">
+      <div class="lrow"><span class="k">今の手元（${md(base)}）</span><span class="v mono">${yen(cash)}</span></div>
+      <div class="lrow" onclick="this.classList.toggle('open')">
+        <span class="k">＋ ${md(hz)}までに入る給料 <span class="tiny muted">${f.sals.length}回・タップで内訳</span></span>
+        <span class="v mono pos">+${yen(f.inSum)}</span>
+        <div class="brk">${inRows}</div>
+      </div>
+      <div class="lrow" onclick="this.classList.toggle('open')">
+        <span class="k">− 取っておく分 <span class="tiny muted">${cnt}件・タップで内訳</span></span>
+        <span class="v mono neg">−${yen(keepTotal)}</span>
+        <div class="brk">${keepRows}</div>
+      </div>
+      <div class="lrow sum"><span class="k">＝ ${md(hz)} 時点に残る見込み</span><span class="v mono ${endBal<0?'neg':''}">${yen(endBal)}</span></div>
+      <div class="lrow tot"><span class="k">🆓 いま自由に使っていい</span><span class="v mono ${canUse<0?'neg':'pos'}">${yen(canUse)}</span></div>
+    </div>
+    ${tight?`<div class="tiny muted" style="margin-top:7px;line-height:1.7">※ 期限に残る見込みは ${yen(endBal)} ですが、途中の <b>${md(low.day)}</b> に一度 ${yen(low.raw)} まで減ります。そこで足りなくならない範囲が「いま自由に使っていい」額です。</div>`:''}`
+   +appLine;
 }
 function autoCash(){UI.cash=null;saveUI();renderAll();}
 function applyCash(){
   const v=$('cashIn').value.trim();
   UI.cash=(v===''||!(Number(v)>0))?null:{d:dkey(TODAY),v:Number(v)};
   saveUI();renderAll();
+}
+function syncCashInput(){
+  const base=(TODAY>=CTX.start&&TODAY<=CTX.horizon)?TODAY:CTX.range.start;
+  $('cashIn').value=cashSet()?UI.cash.v:Math.round(balanceAt(base));
+  $('cashDate').textContent=md(cashAnchorDate())+(cashSet()?'':'・自動計算');
 }
 
 function renderMirror(){
