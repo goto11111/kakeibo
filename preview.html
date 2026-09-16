@@ -258,7 +258,8 @@ details.cfg>summary::-webkit-details-marker{display:none;}
         先読みの範囲は「次の給料日の次の給料日まで＋すでに確定しているカードの引き落としが終わるまで」。それより先は支出がまだ入力されていないぶん楽観的になるので、あえて見に行きません。<br><br>
         なので<b>今月まだ使っていない現金も、この額に含まれています</b>。本体アプリの「食費／自由費の残り」は<u>予算の残り枠</u>ですが、こちらは<u>実際に手元にあるお金</u>の話なので、数字が違って当然です。<br><br>
         <b>カードの行</b>は、その引き落とし日より後だけを見ています。引き落とし日より前に給料が入るなら、その給料も原資に入るので現金より大きい額になります。逆に給料より先に引き落としが来るカードは小さくなります。<br><br>
-        ここに入れる「手元の現金」は、<b>銀行残高＋財布の中身の合計</b>を入れてください。入れた値はこの画面にだけ効き、本体アプリには保存されません。
+        <b>起点の「手元の現金」は、本体に入っている「繰越」から自動で計算しています。</b>その月の繰越を出発点に、給料・固定費・支出・カード引き落とし・積立を日付順に足し引きして、今日の残高を出しています。なので何も入力しなくても数字は出ます。<br>
+        ただし繰越は<b>あなたが本体に入れた数字</b>なので、実際の口座残高とズレていればその分ズレます。合っていないと感じたら、上の欄に<b>銀行残高＋財布の中身の合計</b>を入れて上書きしてください（「自動に戻す」でいつでも戻せます）。入れた値はこの画面にだけ効き、本体アプリには保存されません。
       </div>
     </details>
   </div>
@@ -347,8 +348,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v0.7.0';
+const VERSION='v0.8.0';
 const CHANGELOG=[
+ {v:'v0.8.0',d:'2026-09-16',t:[
+   '手元の現金の入力を必須にするのをやめ、本体に入っている「繰越」を起点に自動計算するよう戻した。給料も支出も本体に入っているので、何も入力しなくても残高は計算できる',
+   '起点が何なのか（本体の◯月の繰越 ¥X から計算／手入力）を画面に明記し、「自動に戻す」も追加',
+   '本体の繰越が ¥0 の月は、実額を入れると精度が上がる旨を表示',
+   '点検パネルに「繰越」の列を追加し、起点の根拠を確認できるようにした']},
  {v:'v0.7.0',d:'2026-09-16',t:[
    '手元の現金が未入力・0のときは金額を出さず、入力を促す画面にした（0のまま全部¥0になり、意味が分からなくなっていたため）',
    '「本体アプリの表示をそのまま」は本流から外し、点検パネルの中に畳んだ',
@@ -1138,22 +1144,18 @@ function renderAllowance(){
   $('alwSub').textContent=`${md(CTX.horizon)}まで先読み`;
   // 手元現金の入力欄
   $('cashIn').value=(UI.cash&&UI.cash.v!=null)?UI.cash.v:Math.round(balanceAt(base));
-  $('cashDate').textContent=md(cashAnchorDate());
+  $('cashDate').textContent=md(cashAnchorDate())+(UI.cash?'':'・自動計算');
 
-  // 手元の現金が入っていないと全部0になって意味が無いので、入力前は金額を出さない
-  const noCash=(!UI.cash||!(Number(UI.cash.v)>0));
-  if(noCash){
-    $('alwList').innerHTML=`<div class="alert">
-      <div class="alert-t">💵 まず「手元の現金」を入れてください</div>
-      <div class="alert-b">
-        家計簿アプリ本体は<b>あなたの口座残高を知りません</b>（予算と支出しか持っていないため）。なので、いくら使っていいかを出すには実際の残高が要ります。<br><br>
-        上の欄に <b>銀行残高 ＋ 財布の中身</b> の合計を入れて「反映」を押してください。<br>
-        ${UI.cash?'<b class="warn">いまは ¥0 が入っているので、下の金額も全部 ¥0 になります。</b>':''}
-      </div></div>
-      <div class="tiny muted" style="line-height:1.7">入れた金額は<b>この画面の中だけ</b>で使い、本体にも Gist にも保存しません（タブを閉じると消えます）。</div>`;
-    return;
+  // 起点の説明：手入力があればそれ、無ければ本体の「繰越」から自動計算
+  const winYM=cycleOfDate(CTX.start);
+  const carry=Number((stateFor(winYM)||{}).carryover)||0;
+  let srcLine;
+  if(UI.cash){
+    srcLine=`<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝<b>手入力</b>の ${yen(UI.cash.v)}（${md(cashAnchorDate())}時点）。<a href="javascript:void(0)" onclick="autoCash()" style="color:var(--accent)">自動に戻す</a></div>`;
+  }else{
+    srcLine=`<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝<b>本体の「${ymLabel(winYM)}の繰越」${yen(carry)}</b>。そこに給料・支出・引き落とし・積立を全部足し引きして、今日の手元 <b>${yen(balanceAt(base))}</b> を出しています。${carry===0?'<br><span class="warn">※ 本体の繰越が ¥0 です。実際に手元にある額を上の欄に入れると精度が上がります。</span>':'<br>実際の残高と違うなら上の欄で上書きできます。'}</div>`;
   }
-  let h='';
+  let h=srcLine;
   h+=`<div class="hero" onclick="this.querySelector('.brk').classList.toggle('open')">
       <div class="hero-k">💵 現金でいま使っていい額</div>
       <div class="hero-v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</div>
@@ -1195,6 +1197,7 @@ function renderAllowance(){
   }
   $('alwList').innerHTML=h;
 }
+function autoCash(){UI.cash=null;saveUI();renderAll();}
 function applyCash(){
   const v=$('cashIn').value.trim();
   UI.cash=(v==='')?null:{d:dkey(TODAY),v:Number(v)};
@@ -1250,6 +1253,7 @@ function renderAudit(){
     if(!sal)warn.push(`${ymLabel(k)}は給料が0円です`);
     if(!ex.length)warn.push(`${ymLabel(k)}は支出が0件です`);
     rows+=`<tr class="${k===CUR?'cur':''} ${bad?'bad':''}"><td>${ymLabel(k)}</td>
+      <td>${yen(Number(st.carryover)||0)}</td>
       <td>${yen(sal)}</td><td>${yen(fxSum)}<span class="muted">(${fx.length})</span></td>
       <td>${yen(exSum)}<span class="muted">(${ex.length})</span></td><td>${yen(gl)}</td>
       <td>${Number(st.foodBudget)||0?yen(Number(st.foodBudget)):'—'}</td></tr>`;
@@ -1263,7 +1267,7 @@ function renderAudit(){
     : '登録なし';
   $('audit').innerHTML=
     (warn.length?`<div class="alert"><div class="alert-t">⚠️ 抜けがあるかもしれません</div><div class="alert-b">${warn.slice(0,6).map(esc).join('<br>')}</div></div>`:'')
-    +`<table class="aud"><tr><th>月</th><th>給料</th><th>固定費</th><th>支出</th><th>積立</th><th>食費枠</th></tr>${rows}</table>`
+    +`<table class="aud"><tr><th>月</th><th>繰越</th><th>給料</th><th>固定費</th><th>支出</th><th>積立</th><th>食費枠</th></tr>${rows}</table>`
     +`<div class="tiny muted" style="margin-top:8px;line-height:1.7">積立・返済の設定：${goalsTxt}${refTxt}<br>カード設定：${cardNames().map(n=>`${esc(n)}（${cardConf()[n].close==='end'?'末':cardConf()[n].close}締/${cardConf()[n].payDay}日払）`).join('・')}</div>`;
 }
 function renderCompare(){
