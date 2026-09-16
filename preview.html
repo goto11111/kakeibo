@@ -18,7 +18,7 @@ body{background:#0a0a0e;color:var(--text);font-family:'Hiragino Kaku Gothic ProN
 #app{max-width:640px;margin:0 auto;background:var(--bg);min-height:100vh;box-shadow:0 0 40px rgba(0,0,0,.5);}
 .mono{font-variant-numeric:tabular-nums;}
 .pos{color:var(--green);}.neg{color:var(--red);}
-.muted{color:var(--text2);}.tiny{font-size:10px;}
+.muted{color:var(--text2);}.tiny{font-size:10px;}.warn{color:var(--yellow);}
 
 /* ── ヘッダ ── */
 .hd{background:var(--surface);border-bottom:1px solid var(--border);padding:11px 14px;position:sticky;top:0;z-index:50;}
@@ -149,6 +149,36 @@ textarea{width:100%;min-height:92px;background:#0d0d14;border:1px solid var(--bo
 details.cfg>summary{list-style:none;cursor:pointer;font-size:12px;font-weight:800;}
 details.cfg>summary::-webkit-details-marker{display:none;}
 .empty{text-align:center;color:var(--text3);font-size:11px;padding:16px 0;line-height:1.7;}
+
+/* ── バージョン ── */
+.ver{font-size:9px;color:var(--text3);border:1px solid var(--border);border-radius:99px;padding:2px 7px;cursor:pointer;}
+.ver:active{color:var(--accent);border-color:var(--accent);}
+.chg{font-size:10px;line-height:1.8;}
+.chg b{color:var(--accent);}
+.chg ul{margin:2px 0 8px 15px;color:var(--text2);}
+
+/* ── 使っていい額 ── */
+.cashbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:8px 10px;margin-bottom:10px;font-size:11px;}
+.cashbar input{background:#0d0d14;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 8px;font-size:15px;font-weight:800;width:120px;text-align:right;font-variant-numeric:tabular-nums;}
+.hero{background:linear-gradient(160deg,#1c2f28,#1e1e2a 70%);border:1px solid #2f7a5b;border-radius:var(--r);padding:13px;margin-bottom:9px;}
+.hero-k{font-size:11px;color:var(--text2);font-weight:700;}
+.hero-v{font-size:32px;font-weight:800;letter-spacing:-1.5px;line-height:1.15;margin:2px 0;}
+.hero-s{font-size:10px;color:var(--text2);line-height:1.6;}
+.arow{display:flex;align-items:center;gap:9px;background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--cc,var(--accent));border-radius:var(--rs);padding:9px 11px;margin-bottom:7px;cursor:pointer;}
+.arow-l{flex:1;min-width:0;}
+.arow-n{font-size:12px;font-weight:800;color:var(--cc,var(--text));}
+.arow-s{font-size:10px;color:var(--text2);margin-top:2px;line-height:1.45;}
+.arow-v{font-size:18px;font-weight:800;letter-spacing:-.6px;white-space:nowrap;}
+.brk{display:none;margin-top:9px;border-top:1px dashed var(--border);padding-top:8px;}
+.arow.open .brk,.brk.open{display:block;}
+.brow{display:flex;gap:8px;font-size:11px;padding:3px 0;align-items:baseline;}
+.brow .k{flex:1;color:var(--text2);}
+.brow .v{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.brow.sum{border-top:1px solid var(--border);margin-top:5px;padding-top:6px;}
+.brow.sum .k,.brow.sum .v{font-weight:800;color:var(--text);}
+.bsub{font-size:10px;color:var(--text3);padding:2px 0 2px 12px;display:flex;gap:8px;}
+.bsub .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tap{font-size:9px;color:var(--text3);margin-top:6px;}
 </style>
 </head>
 <body>
@@ -158,6 +188,7 @@ details.cfg>summary::-webkit-details-marker{display:none;}
   <div class="hd-top">
     <span class="hd-title">🧪 給料サイクル ビュー</span>
     <span class="badge-exp">試作</span>
+    <span class="ver" id="verBadge" onclick="toggleChg()">—</span>
     <a class="hd-link" href="index.html">← 本体へ</a>
   </div>
   <div class="cyc-nav">
@@ -177,13 +208,34 @@ details.cfg>summary::-webkit-details-marker{display:none;}
       <textarea id="jsonIn" placeholder="Gistのバックアップ JSON を貼り付け（別ドメイン・別端末で見るとき用）"></textarea>
       <button class="btn pri" style="margin-top:7px" onclick="importJson()">この内容で表示</button>
     </div>
+    <div style="flex-basis:100%" id="chgBox" hidden><div class="nt-body chg" id="chgBody"></div></div>
     <details class="nt" style="flex-basis:100%"><summary>ⓘ データの扱い</summary>
       <div class="nt-body">このページは本体の保存データを<b>読むだけ</b>です。localStorage への書き込みは一度も行わないので、本体の表示にも Gist バックアップにも影響しません。画面上の設定（給料日・カードの引落日・起点残高）は sessionStorage に置いているため、本体データとは別管理でタブを閉じると消えます。</div>
     </details>
   </div>
 
   <div class="card">
-    <div class="card-h">💰 このサイクルの資金<span class="sub" id="sumSub"></span></div>
+    <div class="card-h">💰 いま使っていい額<span class="sub" id="alwSub"></span></div>
+    <div class="cashbar">
+      <span>💵 手元の現金</span>
+      <input type="number" id="cashIn" placeholder="0" inputmode="numeric">
+      <span class="tiny muted">円 ＝ <span id="cashDate">今日</span>時点</span>
+      <button class="btn pri" onclick="applyCash()">反映</button>
+    </div>
+    <div id="alwList"></div>
+    <details class="nt"><summary>ⓘ この金額の出し方</summary>
+      <div class="nt-body">
+        <b>「手元の現金」から、この先の引き落とし・現金支出を全部引き、この先入る給料を足して、一番残高が少なくなる日を探しています。</b>そこからさらに<b>食費の残り予算</b>（この先まだ食べる分）を確保した額が「今これだけ使っても大丈夫」という数字です。<br>
+        先読みの範囲は「次の給料日の次の給料日まで＋すでに確定しているカードの引き落としが終わるまで」。それより先は支出がまだ入力されていないぶん楽観的になるので、あえて見に行きません。<br><br>
+        なので<b>今月まだ使っていない現金も、この額に含まれています</b>。本体アプリの「食費／自由費の残り」は<u>予算の残り枠</u>ですが、こちらは<u>実際に手元にあるお金</u>の話なので、数字が違って当然です。<br><br>
+        <b>カードの行</b>は、その引き落とし日より後だけを見ています。引き落とし日より前に給料が入るなら、その給料も原資に入るので現金より大きい額になります。逆に給料より先に引き落としが来るカードは小さくなります。<br><br>
+        ここに入れる「手元の現金」は、<b>銀行残高＋財布の中身の合計</b>を入れてください。入れた値はこの画面にだけ効き、本体アプリには保存されません。
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="card-h">📊 このサイクルの出入り<span class="sub" id="sumSub"></span></div>
     <div class="sum-grid" id="sumGrid"></div>
   </div>
 
@@ -219,17 +271,6 @@ details.cfg>summary::-webkit-details-marker{display:none;}
   </div>
 
   <div class="card">
-    <div class="card-h">🛒 いま買うなら、いくらまで</div>
-    <div id="useList"></div>
-    <details class="nt"><summary>ⓘ 考え方</summary>
-      <div class="nt-body">
-        <b>現金・口座振替</b>はその場で手元から減るので、今の残高がそのまま上限です。<br>
-        <b>カード</b>は引き落とし日までに入る給料も原資になるので「今の手元 ＋ その日までの入金 − すでに分かっている支払い」を上限としています。つまり<b>その引き落とし日に手元がマイナスにならないギリギリの額</b>です。翌サイクルの生活費は引かれていないので、余裕を見て使ってください。
-      </div>
-    </details>
-  </div>
-
-  <div class="card">
     <div class="card-h">📋 本体アプリの数字と見比べる<span class="sub">タップで内訳</span></div>
     <div id="cmp"></div>
     <details class="nt"><summary>ⓘ 何を比べているか</summary>
@@ -258,6 +299,23 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    localStorage への書き込みは一切しない（画面設定は sessionStorage のみ）。
    ══════════════════════════════════════════════════════ */
 
+// ── バージョン（更新されたか一目で分かるように画面に出す） ──
+const VERSION='v0.3.0';
+const CHANGELOG=[
+ {v:'v0.3.0',d:'2026-09-16',t:[
+   '「いま使っていい額」を最上部に新設。手元の現金から、この先の引き落とし・現金支出・入ってくる給料を全部織り込んで「一番きつくなる日にいくら残るか」を出す方式に',
+   '手元の現金を直接入力できるように（銀行残高＋財布の合計）',
+   '「いま買うなら、いくらまで」は上の新パネルに統合',
+   'バージョン表示と更新履歴を追加']},
+ {v:'v0.2.0',d:'2026-09-16',t:[
+   'カードと給料の対応をカードごとに1ブロックへ集約',
+   'カレンダーの日付タップでその日の内訳を表示',
+   '説明文をすべて「ⓘ」の折りたたみへ格納し、画面を簡素化',
+   '本体アプリの月次集計を移植し、同じ数字を並べて比較できるように',
+   '返金の参照キーの誤りを修正']},
+ {v:'v0.1.0',d:'2026-09-16',t:['給料サイクル ビュー 初版']},
+];
+
 const $=id=>document.getElementById(id);
 const yen=n=>'¥'+Math.round(n||0).toLocaleString();
 const k1=n=>Math.round((n||0)/1000)+'k';
@@ -276,7 +334,7 @@ const TODAY=new Date(new Date().getFullYear(),new Date().getMonth(),new Date().g
 
 // ──────────────── 画面設定（sessionStorage のみ・本体と非共有） ────────────────
 const UI_KEY='cycleview_ui_v1';
-const UI_DEFAULT={payDay:25,payShift:'back',opening:null,cards:null};
+const UI_DEFAULT={payDay:25,payShift:'back',cash:null,cards:null,reserveFood:true}; // cash={d:'YYYY-MM-DD',v:金額}
 let UI=Object.assign({},UI_DEFAULT);
 function loadUI(){try{const s=sessionStorage.getItem(UI_KEY);if(s)UI=Object.assign({},UI_DEFAULT,JSON.parse(s));}catch(e){}}
 function saveUI(){try{sessionStorage.setItem(UI_KEY,JSON.stringify(UI));}catch(e){}}
@@ -548,18 +606,117 @@ function defaultCycle(){
   if(!ks.length||ks.includes(c))return c;
   return ks.reduce((b,k)=>Math.abs(k-c)<Math.abs(b-c)?k:b,ks[0]);
 }
+const cashAnchorDate=()=>(UI.cash&&parseISO(UI.cash.d))||TODAY;
+
 function recompute(){
   ITEMS=buildItems();
-  const {ev,start,end}=buildEvents(CUR,5);            // 表示サイクル＋先4ヶ月を射程に
-  const st=stateFor(CUR)||{};
-  const opening=(UI.opening!=null&&UI.opening!=='')?Number(UI.opening):(Number(st.carryover)||0);
-  CTX={ev,start,end,bal:runBalance(ev,start,end,opening),opening,range:cycleRange(CUR),st};
+  // 手元現金を入れた日と表示中サイクルの両方を含む期間で計算する
+  const anchorYM=cycleOfDate(cashAnchorDate());
+  const winStart=Math.min(CUR,anchorYM), tail=Math.max(CUR,anchorYM);
+  let months=1,k=winStart;while(k<tail){k=nextYM(k);months++;}
+  months+=4;
+  const {ev,start,end}=buildEvents(winStart,months);
+  // ① 相対カーブ（起点0）を作り ② 手元現金の実額に合わせて全体をずらす
+  const rel=runBalance(ev,start,end,0);
+  let opening;
+  if(UI.cash&&UI.cash.v!=null){
+    let ad=cashAnchorDate();
+    if(ad<start)ad=start;if(ad>end)ad=end;
+    opening=Number(UI.cash.v)-((rel[dkey(ad)]||{}).bal||0);
+  }else{
+    opening=Number((stateFor(winStart)||{}).carryover)||0;   // 未入力なら本体の繰越を仮置き
+  }
+  const bal=runBalance(ev,start,end,opening);
+  // 先読みの上限：①次のサイクルの終わりまで ②すでに確定しているカード引き落としは全部含む
+  //（給料だけ入っていて支出が未入力の先の月まで伸ばすと、逆に楽観的すぎる数字になるため上限を切る）
+  const baseD=(TODAY>=start&&TODAY<=end)?TODAY:cycleRange(CUR).start;
+  let hz=cycleRange(nextYM(cycleOfDate(baseD))).end;
+  ITEMS.forEach(it=>{if(it.charge>=baseD&&it.charge>hz&&it.charge<=end)hz=it.charge;});
+  if(hz>end)hz=end;
+  CTX={ev,start,end,bal,opening,range:cycleRange(CUR),st:stateFor(CUR)||{},
+       horizon:hz,anchor:cashAnchorDate()};
 }
 function balanceAt(d){
   if(!CTX)return 0;
   if(d<CTX.start)return CTX.opening;
   const b=CTX.bal[dkey(d>CTX.end?CTX.end:d)];
   return b?b.bal:CTX.opening;
+}
+// d 以降、先読み期限までで一番残高が少なくなる日とその額
+function lowPointFrom(d,reserveFrom){
+  let from=new Date(Math.max(d,CTX.start));
+  const rFrom=reserveFrom?new Date(Math.max(reserveFrom,CTX.start)):from;
+  let mn=Infinity,mnD=null;
+  for(let x=new Date(from);x<=CTX.horizon;x=addDays(x,1)){
+    const b=CTX.bal[dkey(x)];if(!b)continue;
+    if(b.bal<mn){mn=b.bal;mnD=new Date(x);}
+  }
+  if(mnD===null){mn=balanceAt(from);mnD=from;}
+  const fr=foodReserve(rFrom,mnD);
+  return {raw:mn,day:mnD,reserve:fr.total,reserveItems:fr.items,amt:mn-fr.total};
+}
+// 給料サイクルkに、まだ使っていない食費予算がいくら残っているか（＝この先必ず出ていく生活費）
+function foodReserveOf(kym){
+  if(!UI.reserveFood)return 0;
+  const st=stateFor(kym);if(!st)return 0;
+  const budget=Number(st.foodBudget)||0;if(!budget)return 0;
+  const r=cycleRange(kym);
+  let used=0;
+  ITEMS.forEach(it=>{if(it.cat==='食費'&&it.charge>=r.start&&it.charge<=r.end)used+=it.amt;});
+  return Math.max(0,budget-used);
+}
+// base〜till がまたぐ各サイクルの食費確保額
+function foodReserve(base,till){
+  const out=[];let k=cycleOfDate(base);
+  const endK=cycleOfDate(till);
+  for(let i=0;i<8;i++){
+    const a=foodReserveOf(k);
+    if(a>0)out.push({ym:k,amt:a});
+    if(k>=endK)break;
+    k=nextYM(k);
+  }
+  return {total:out.reduce((s,x)=>s+x.amt,0),items:out};
+}
+
+// base の翌日〜till までの入出金を集計（内訳表示用）
+function flowsBetween(base,till){
+  let inSum=0,outSum=0;const sals=[],charges=[],cashes=[];
+  for(let d=addDays(base,1);d<=till;d=addDays(d,1)){
+    const b=CTX.bal[dkey(d)];if(!b)continue;
+    b.e.in.forEach(x=>{inSum+=x.amt;sals.push({d:new Date(d),name:x.name,amt:x.amt});});
+    const byCard={};
+    b.e.out.forEach(x=>{
+      outSum+=x.amt;
+      if(x.type==='charge')byCard[x.pay]=(byCard[x.pay]||0)+x.amt;
+      else cashes.push({d:new Date(d),name:x.name,amt:x.amt});
+    });
+    Object.keys(byCard).forEach(p=>charges.push({d:new Date(d),pay:p,amt:byCard[p]}));
+  }
+  return {inSum,outSum,sals,charges,cashes};
+}
+// 内訳ブロックのHTML（手元 ＋入る −出る ＝ 底の残高）
+function breakdownHTML(base,low){
+  const f=flowsBetween(base,low.day);
+  const now=balanceAt(base);
+  const cashTotal=f.cashes.reduce((s,x)=>s+x.amt,0);
+  let h=`<div class="brk">
+    <div class="brow"><span class="k">手元の現金（${md(base)}時点）</span><span class="v mono">${yen(now)}</span></div>`;
+  if(f.inSum){
+    h+=`<div class="brow"><span class="k">＋ ${md(low.day)}までに入る</span><span class="v mono pos">+${yen(f.inSum)}</span></div>`;
+    f.sals.forEach(x=>h+=`<div class="bsub"><span class="k">${md(x.d)} ${esc(x.name)}</span><span>${yen(x.amt)}</span></div>`);
+  }
+  if(f.outSum){
+    h+=`<div class="brow"><span class="k">− ${md(low.day)}までに出ていく</span><span class="v mono neg">−${yen(f.outSum)}</span></div>`;
+    f.charges.sort((a,b)=>a.d-b.d).forEach(x=>h+=`<div class="bsub"><span class="k">${md(x.d)} 💳 ${esc(x.pay)}</span><span>${yen(x.amt)}</span></div>`);
+    if(cashTotal)h+=`<div class="bsub"><span class="k">💵 現金・口座振替 ${f.cashes.length}件</span><span>${yen(cashTotal)}</span></div>`;
+  }
+  h+=`<div class="brow"><span class="k">＝ ${md(low.day)}（一番きつい日）の残高</span><span class="v mono ${low.raw<0?'neg':''}">${yen(low.raw)}</span></div>`;
+  if(low.reserve>0){
+    h+=`<div class="brow"><span class="k">− 食費の残り予算を確保</span><span class="v mono neg">−${yen(low.reserve)}</span></div>`;
+    low.reserveItems.forEach(x=>h+=`<div class="bsub"><span class="k">${ymLabel(x.ym)}の給料ぶん</span><span>${yen(x.amt)}</span></div>`);
+  }
+  h+=`<div class="brow sum"><span class="k">＝ 自由に使っていい</span><span class="v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</span></div></div>`;
+  return h;
 }
 
 // ──────────────── 描画 ────────────────
@@ -569,13 +726,13 @@ const colorOf=n=>{const i=cardNames().indexOf(n);return i<0?'#8a8aa8':CARD_COLOR
 function renderAll(){
   if(!monthKeys().length){
     $('cycMain').textContent='データがありません';$('cycSub').textContent='';
-    ['flowList','cal','useList','cmp'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
+    ['flowList','cal','alwList','cmp'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
     $('sumGrid').innerHTML='';$('dayPanel').innerHTML='';
     return;
   }
   recompute();
-  renderHeader();renderConfig();renderSummary();renderFlow();
-  renderCalendar();renderDayPanel();renderSpark();renderUsable();renderCompare();
+  renderHeader();renderConfig();renderAllowance();renderSummary();renderFlow();
+  renderCalendar();renderDayPanel();renderSpark();renderCompare();
 }
 
 function renderHeader(){
@@ -594,9 +751,10 @@ function renderSummary(){
     if(b.bal<lowest){lowest=b.bal;lowDay=new Date(d);}
   }
   const endBal=balanceAt(end),nowIn=(TODAY>=start&&TODAY<=end);
+  const openCycle=(start>CTX.start)?balanceAt(addDays(start,-1)):CTX.opening;
   $('sumSub').textContent=nowIn?`今日 ${md(TODAY)} 時点`:'今日はこのサイクル外';
   $('sumGrid').innerHTML=`
-    <div class="sum-cell"><div class="k">手元 ＋ 入金</div><div class="v mono">${yen(CTX.opening+inc)}</div><div class="s">繰越 ${yen(CTX.opening)} ＋ 入金 ${yen(inc)}</div></div>
+    <div class="sum-cell"><div class="k">手元 ＋ 入金</div><div class="v mono">${yen(openCycle+inc)}</div><div class="s">開始時 ${yen(openCycle)} ＋ 入金 ${yen(inc)}</div></div>
     <div class="sum-cell"><div class="k">出ていく</div><div class="v mono neg">${yen(cashOut+chgOut)}</div><div class="s">💳 ${yen(chgOut)} ／ 💵 ${yen(cashOut)}</div></div>
     <div class="sum-cell"><div class="k">${nowIn?'今日の手元':'期間の最低残高'}</div><div class="v mono ${(nowIn?balanceAt(TODAY):lowest)<0?'neg':''}">${yen(nowIn?balanceAt(TODAY):lowest)}</div><div class="s">${nowIn?`最低 ${yen(lowest)}（${lowDay?md(lowDay):'-'}）`:(lowDay?md(lowDay):'')}</div></div>
     <div class="sum-cell"><div class="k">次の給料日の直前</div><div class="v mono ${endBal<0?'neg':'pos'}">${yen(endBal)}</div><div class="s">${md(end)} 時点</div></div>`;
@@ -756,29 +914,45 @@ function renderSpark(){
   $('sparkX').innerHTML=`<span>💰${md(days[0].d)}</span><span>${md(days[mi].d)}</span><span>${md(days[days.length-1].d)}</span>`;
 }
 
-function renderUsable(){
-  const base=(TODAY>=CTX.start&&TODAY<=CTX.end)?TODAY:CTX.range.start;
-  const now=balanceAt(base);
-  let h=`<div class="use-row" style="--cc:var(--yellow)">
-      <div class="use-l"><div class="use-n">💵 現金・口座振替</div>
-      <div class="use-s">その場で手元から減る。${md(base)}時点の残高が上限。</div></div>
-      <div class="use-v mono ${now<0?'neg':''}">${yen(now)}</div></div>`;
+function renderAllowance(){
+  const base=(TODAY>=CTX.start&&TODAY<=CTX.horizon)?TODAY:CTX.range.start;
+  const low=lowPointFrom(base);
+  $('alwSub').textContent=`${md(CTX.horizon)}まで先読み`;
+  // 手元現金の入力欄
+  $('cashIn').value=(UI.cash&&UI.cash.v!=null)?UI.cash.v:Math.round(balanceAt(base));
+  $('cashDate').textContent=md(cashAnchorDate());
+
+  const hint=UI.cash?'':'<span class="warn">← 実際の残高（銀行＋財布）を入れると精度が上がります</span>';
+  let h=`<div class="hero" onclick="this.querySelector('.brk').classList.toggle('open')">
+      <div class="hero-k">💵 現金でいま使っていい額</div>
+      <div class="hero-v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</div>
+      <div class="hero-s">${md(base)}の手元 <b>${yen(balanceAt(base))}</b> に、${md(CTX.horizon)}までの引き落とし・支出・給料を全部織り込むと${dkey(low.day)===dkey(base)?'、この先は給料で増えていくので<b>今が一番きつい</b>状態です':`、<b>${md(low.day)}</b>が一番きつくなって残高 ${yen(low.raw)} まで減ります`}。${low.reserve>0?`そこから食費の残り予算 ${yen(low.reserve)} を確保した残りが使っていい額です。`:''}${low.amt<0?'<br><b class="neg">このままだと足りません。</b>':''}</div>
+      ${breakdownHTML(base,low)}
+      <div class="tap">タップで内訳 ${hint}</div>
+    </div>`;
+
   cardNames().forEach(n=>{
-    const cd=chargeDateOf(base,n),salD=payDate(cycleOfDate(cd)),proj=balanceAt(cd);
-    let inSum=0,outSum=0;const sals=[];
-    for(let d=addDays(base,1);d<=cd&&d<=CTX.end;d=addDays(d,1)){
-      const b=CTX.bal[dkey(d)];if(!b)continue;
-      b.e.in.forEach(x=>{inSum+=x.amt;if(x.type==='salary')sals.push(new Date(d));});
-      b.e.out.forEach(x=>outSum+=x.amt);
-    }
-    h+=`<div class="use-row" style="--cc:${colorOf(n)}">
-      <div class="use-l"><div class="use-n">💳 ${esc(n)}</div>
-        <div class="use-s">今日買うと <b>${md(cd)}</b> 引落 → 💰<b>${md(salD)}</b>の給料${sals.length?`（給料${sals.length}回：${sals.map(md).join('・')}）`:'（次の給料前に引かれます）'}</div>
-        <div class="use-c">手元 ${yen(now)} ＋入金 ${yen(inSum)} −予定 ${yen(outSum)}</div>
+    const cd=chargeDateOf(base,n);
+    const lw=lowPointFrom(cd,base);
+    const salD=payDate(cycleOfDate(cd));
+    const diff=lw.amt-low.amt;
+    h+=`<div class="arow" style="--cc:${colorOf(n)}" onclick="this.classList.toggle('open')">
+      <div class="arow-l">
+        <div class="arow-n">💳 ${esc(n)}</div>
+        <div class="arow-s">今日買うと <b>${md(cd)}</b> 引落（💰${md(salD)}の給料から）→ その後 <b>${md(lw.day)}</b> が底（残高 ${yen(lw.raw)}）
+          ${diff>0?`<span class="pos">・現金より ${yen(diff)} 多く使える</span>`:(diff<0?`<span class="neg">・現金より ${yen(-diff)} 少ない</span>`:'')}</div>
+        ${breakdownHTML(base,lw)}
+        <div class="tap">タップで内訳</div>
       </div>
-      <div class="use-v mono ${proj<0?'neg':''}">${yen(proj)}</div></div>`;
+      <div class="arow-v mono ${lw.amt<0?'neg':''}">${yen(lw.amt)}</div>
+    </div>`;
   });
-  $('useList').innerHTML=h;
+  $('alwList').innerHTML=h;
+}
+function applyCash(){
+  const v=$('cashIn').value.trim();
+  UI.cash=(v==='')?null:{d:dkey(TODAY),v:Number(v)};
+  saveUI();renderAll();
 }
 
 function renderCompare(){
@@ -791,7 +965,7 @@ function renderCompare(){
     ITEMS.forEach(it=>{if(it.charge>=r.start&&it.charge<=r.end){if(isCard(it.pay))chg+=it.amt;else cash+=it.amt;}});
     const stK=stateFor(k)||{};
     inc=(Number(stK.salary)||0)+(stK.carryExtra||[]).reduce((s,c)=>s+(Number(c.amt)||0),0)+refundsForYM(k).reduce((s,x)=>s+x.amt,0);
-    const open=(k===CUR)?CTX.opening:(Number(stK.carryover)||0);
+    const open=(r.start>=CTX.start&&r.start<=CTX.end)?balanceAt(addDays(r.start,-1)):(Number(stK.carryover)||0);
     const endBal=open+inc-cash-chg;
     return `<div class="cmp ${k===CUR?'open':''}">
       <div class="cmp-h" onclick="this.parentNode.classList.toggle('open')">
@@ -822,7 +996,7 @@ function renderCompare(){
 // ──────────────── 設定 ────────────────
 function renderConfig(){
   let h=`<div class="cfg-lbl">給料日（土日は前倒し）</div><div><input type="number" id="cfgPd" value="${UI.payDay||''}" placeholder="データ" min="1" max="31"></div><div class="tiny muted">日</div>`;
-  h+=`<div class="cfg-lbl">サイクル開始時の手元残高</div><div><input type="number" id="cfgOp" value="${UI.opening!=null?UI.opening:''}" placeholder="${Number(CTX.st.carryover)||0}"></div><div class="tiny muted">円</div>`;
+  h+=`<div class="cfg-lbl">食費の残り予算を確保する</div><div style="grid-column:2/-1"><input type="checkbox" id="cfgRf" ${UI.reserveFood?'checked':''} style="width:auto"> <span class="tiny muted">使っていい額から差し引く</span></div>`;
   cardNames().forEach(n=>{
     const c=cardConf()[n];
     h+=`<div class="cfg-lbl" style="color:${colorOf(n)}">${esc(n)}</div>`
@@ -838,7 +1012,7 @@ function renderConfig(){
 }
 function applyCfg(){
   const pd=$('cfgPd').value.trim();UI.payDay=pd?Number(pd):null;
-  const op=$('cfgOp').value.trim();UI.opening=op===''?null:Number(op);
+  UI.reserveFood=$('cfgRf').checked;
   const cards={};
   document.querySelectorAll('.cfgClose').forEach(el=>{
     const v=el.value.trim();
@@ -860,6 +1034,12 @@ function importJson(){
   ITEMS=buildItems();showIO();renderAll();$('jsonBox').hidden=true;
 }
 function reimport(){DB=readFromLocalStorage();UI.cards=null;CUR=defaultCycle();SELDAY=null;ITEMS=buildItems();showIO();renderAll();}
+function renderVersion(){
+  $('verBadge').textContent=VERSION;
+  $('chgBody').innerHTML=CHANGELOG.map(c=>
+    `<div><b>${c.v}</b> <span class="muted">${c.d}</span><ul>${c.t.map(t=>`<li>${t}</li>`).join('')}</ul></div>`).join('');
+}
+function toggleChg(){const b=$('chgBox');b.hidden=!b.hidden;if(!b.hidden)b.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function showIO(){
   const ks=monthKeys();
   $('ioState').innerHTML=ks.length
@@ -869,6 +1049,7 @@ function showIO(){
 
 // ──────────────── 起動 ────────────────
 loadUI();
+renderVersion();
 DB=readFromLocalStorage();
 cardConf();
 CUR=defaultCycle();
