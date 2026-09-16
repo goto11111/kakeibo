@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<title>🧪 給料サイクル ビュー（試作）</title>
+<meta name="theme-color" content="#1e1e2a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="サイクル試作">
+<style>
+:root{
+  --bg:#13131a;--surface:#1e1e2a;--surface2:#2a2a3a;--border:#3a3a4e;
+  --accent:#9579ff;--green:#4fe3a0;--yellow:#ffd75e;--red:#ff7a96;--blue:#5aa9ff;
+  --text:#f2f2f8;--text2:#a8a8c4;--text3:#76768f;--r:12px;--rs:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{background:#0a0a0e;color:var(--text);font-family:'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif;font-size:14px;min-height:100vh;padding-bottom:60px;}
+#app{max-width:640px;margin:0 auto;background:var(--bg);min-height:100vh;box-shadow:0 0 40px rgba(0,0,0,.5);}
+
+/* ── ヘッダ ── */
+.hd{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 14px;position:sticky;top:0;z-index:50;}
+.hd-top{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+.hd-title{font-size:15px;font-weight:800;}
+.badge-exp{font-size:9px;font-weight:800;background:#4a2f7a;color:#d9c8ff;border:1px solid #6a4fae;padding:2px 7px;border-radius:99px;letter-spacing:.5px;}
+.hd-link{margin-left:auto;font-size:11px;color:var(--text2);text-decoration:none;border:1px solid var(--border);border-radius:6px;padding:4px 9px;background:var(--surface2);}
+.cyc-nav{display:flex;align-items:center;gap:10px;}
+.cyc-nav button{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:8px;width:34px;height:34px;font-size:15px;cursor:pointer;flex-shrink:0;}
+.cyc-nav button:active{background:var(--accent);}
+.cyc-label{flex:1;text-align:center;line-height:1.35;}
+.cyc-main{font-size:15px;font-weight:800;letter-spacing:-.2px;}
+.cyc-sub{font-size:10px;color:var(--text2);margin-top:1px;}
+
+.wrap{padding:12px;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:13px;margin-bottom:11px;}
+.card-h{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800;margin-bottom:10px;}
+.card-h .sub{font-weight:400;color:var(--text3);font-size:10px;margin-left:auto;text-align:right;}
+.muted{color:var(--text2);}.tiny{font-size:10px;}.mini{font-size:11px;}
+.mono{font-variant-numeric:tabular-nums;}
+.pos{color:var(--green);}.neg{color:var(--red);}.warn{color:var(--yellow);}
+
+/* ── 取り込みバー ── */
+.io{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:11px 13px;margin-bottom:11px;}
+.io-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.io-state{font-size:11px;flex:1;min-width:180px;line-height:1.5;}
+.btn{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:7px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer;}
+.btn:active{background:var(--accent);}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff;}
+.io-note{font-size:10px;color:var(--text3);margin-top:8px;line-height:1.6;border-top:1px dashed var(--border);padding-top:8px;}
+textarea{width:100%;min-height:96px;background:#0d0d14;border:1px solid var(--border);color:var(--text);border-radius:8px;padding:9px;font-size:11px;font-family:ui-monospace,Menlo,monospace;margin-top:9px;}
+
+/* ── サマリー ── */
+.sum-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;}
+.sum-cell{background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:9px 10px;}
+.sum-cell .k{font-size:10px;color:var(--text2);margin-bottom:3px;}
+.sum-cell .v{font-size:17px;font-weight:800;letter-spacing:-.5px;}
+.sum-cell.wide{grid-column:1 / -1;}
+.inline-in{background:#0d0d14;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 7px;font-size:13px;width:110px;text-align:right;font-weight:700;}
+
+/* ── FROM→TO フロー ── */
+.flow{border-left:3px solid var(--cc,var(--accent));background:var(--surface2);border-radius:var(--rs);padding:10px 11px;margin-bottom:8px;cursor:pointer;}
+.flow-top{display:flex;align-items:center;gap:7px;}
+.flow-name{font-size:12px;font-weight:800;color:var(--cc,var(--text));}
+.flow-amt{margin-left:auto;font-size:15px;font-weight:800;letter-spacing:-.4px;}
+.flow-track{display:flex;align-items:center;gap:6px;margin-top:8px;}
+.flow-from,.flow-to{font-size:11px;font-weight:700;white-space:nowrap;}
+.flow-bar{flex:1;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--cc,var(--accent)) 0%,var(--cc,var(--accent)) 100%);opacity:.45;position:relative;}
+.flow-bar::after{content:'';position:absolute;right:-1px;top:-3px;border-left:7px solid var(--cc,var(--accent));border-top:6px solid transparent;border-bottom:6px solid transparent;}
+.flow-meta{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;}
+.chip{font-size:10px;font-weight:700;border-radius:99px;padding:3px 8px;border:1px solid var(--border);background:var(--surface);color:var(--text2);white-space:nowrap;}
+.chip.pay{border-color:#8b5cf6;color:#c4b0ff;}
+.chip.sal{border-color:var(--green);color:var(--green);}
+.chip.cash{border-color:var(--yellow);color:var(--yellow);}
+.flow-items{display:none;margin-top:9px;border-top:1px dashed var(--border);padding-top:8px;}
+.flow.open .flow-items{display:block;}
+.it{display:flex;gap:8px;font-size:11px;padding:3px 0;color:var(--text2);}
+.it .d{width:42px;color:var(--text3);flex-shrink:0;}
+.it .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.it .a{font-weight:700;color:var(--text);}
+
+/* ── カレンダー ── */
+.cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:3px;}
+.cal-head div{text-align:center;font-size:9px;color:var(--text3);font-weight:700;padding:2px 0;}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+.cel{background:var(--surface2);border:1px solid var(--border);border-radius:6px;min-height:58px;padding:3px;display:flex;flex-direction:column;gap:2px;overflow:hidden;}
+.cel.blank{background:transparent;border-color:transparent;}
+.cel.sat .dn{color:#7fb6ff;}.cel.sun .dn{color:#ff9db1;}
+.cel.today{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+.cel.salday{background:#173a2c;border-color:#2f7a5b;}
+.dn{font-size:10px;font-weight:800;color:var(--text2);line-height:1.1;}
+.dn .mo{font-size:8px;color:var(--text3);}
+.pip{font-size:9px;font-weight:700;border-radius:3px;padding:1px 3px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pip.sal{background:#1f6a4b;color:#b9ffdf;}
+.pip.chg{background:#3a2c66;color:#d3c4ff;}
+.pip.cash{background:#5a4416;color:#ffe3a3;}
+.pip.use{background:transparent;color:var(--text3);border:1px dashed var(--border);}
+.bal{margin-top:auto;font-size:8px;text-align:right;color:var(--text3);font-variant-numeric:tabular-nums;}
+.bal.minus{color:var(--red);font-weight:800;}
+.legend{display:flex;flex-wrap:wrap;gap:4px 10px;margin-top:9px;}
+.lg{display:inline-flex;align-items:center;gap:4px;font-size:9px;color:var(--text3);}
+.lgd{width:9px;height:9px;border-radius:3px;}
+
+/* ── 残高ライン ── */
+.spark{width:100%;height:96px;display:block;}
+.spark-x{display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-top:3px;}
+.sect-div{display:flex;align-items:center;gap:7px;margin:13px 0 9px;font-size:11px;font-weight:800;color:var(--text2);}
+.sect-div::after{content:'';flex:1;height:1px;background:var(--border);}
+.calc{font-size:9px;color:var(--text3);margin-top:3px;font-variant-numeric:tabular-nums;}
+
+/* ── 使える額 ── */
+.use-row{display:flex;align-items:center;gap:9px;background:var(--surface2);border:1px solid var(--border);border-left:3px solid var(--cc,var(--accent));border-radius:var(--rs);padding:9px 11px;margin-bottom:7px;}
+.use-l{flex:1;min-width:0;}
+.use-n{font-size:12px;font-weight:800;color:var(--cc,var(--text));}
+.use-s{font-size:10px;color:var(--text2);margin-top:2px;line-height:1.45;}
+.use-v{font-size:17px;font-weight:800;letter-spacing:-.5px;white-space:nowrap;}
+
+/* ── 対比テーブル ── */
+table{width:100%;border-collapse:collapse;font-size:11px;}
+th,td{padding:5px 4px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;}
+th{color:var(--text3);font-size:9px;font-weight:700;}
+th:first-child,td:first-child{text-align:left;}
+tr.cur td{color:var(--accent);font-weight:800;}
+
+.empty{text-align:center;color:var(--text3);font-size:11px;padding:18px 0;line-height:1.7;}
+details.cfg summary{cursor:pointer;font-size:12px;font-weight:800;list-style:none;}
+details.cfg summary::-webkit-details-marker{display:none;}
+.cfg-grid{display:grid;grid-template-columns:1fr auto auto;gap:6px 8px;align-items:center;margin-top:10px;font-size:11px;}
+.cfg-grid input{background:#0d0d14;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-size:11px;width:62px;text-align:center;}
+.cfg-lbl{color:var(--text2);}
+</style>
+</head>
+<body>
+<div id="app">
+
+<div class="hd">
+  <div class="hd-top">
+    <span class="hd-title">🧪 給料サイクル ビュー</span>
+    <span class="badge-exp">試作</span>
+    <a class="hd-link" href="index.html">← 本体へ</a>
+  </div>
+  <div class="cyc-nav">
+    <button onclick="moveCycle(-1)">‹</button>
+    <div class="cyc-label"><div class="cyc-main" id="cycMain">—</div><div class="cyc-sub" id="cycSub">データ読込中…</div></div>
+    <button onclick="moveCycle(1)">›</button>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="io">
+    <div class="io-row">
+      <div class="io-state" id="ioState">読込中…</div>
+      <button class="btn" onclick="reimport()">🔄 再取込</button>
+      <button class="btn" onclick="toggleJson()">📄 JSON</button>
+    </div>
+    <div id="jsonBox" style="display:none;">
+      <textarea id="jsonIn" placeholder="Gistのバックアップ JSON、または本体の書き出しJSONを貼り付け（別の端末・別ドメインで見るとき用）"></textarea>
+      <div class="io-row" style="margin-top:7px;"><button class="btn pri" onclick="importJson()">この内容で表示する</button></div>
+    </div>
+    <div class="io-note">🔒 このページは <b>localStorage に一切書き込みません</b>（読むだけ）。クラウド同期も呼びません。表示用の設定だけ sessionStorage に置くので、本体データにもGistバックアップにも混ざりません。</div>
+  </div>
+
+  <div class="card">
+    <details class="cfg" id="cfgBox">
+      <summary>⚙️ この画面だけの前提（保存されません） <span class="tiny muted" id="cfgSum"></span></summary>
+      <div class="cfg-grid" id="cfgGrid"></div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="card-h">💰 このサイクルの資金<span class="sub" id="sumSub"></span></div>
+    <div class="sum-grid" id="sumGrid"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">💳 いつ買った分が、いつ・どの給料から引かれるか<span class="sub">タップで明細</span></div>
+    <div id="flowList"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">📅 サイクルカレンダー<span class="sub" id="calSub"></span></div>
+    <div class="cal-head"><div>日</div><div>月</div><div>火</div><div>水</div><div>木</div><div>金</div><div>土</div></div>
+    <div class="cal" id="cal"></div>
+    <div class="legend">
+      <span class="lg"><span class="lgd" style="background:#1f6a4b"></span>給料</span>
+      <span class="lg"><span class="lgd" style="background:#3a2c66"></span>カード引き落とし</span>
+      <span class="lg"><span class="lgd" style="background:#5a4416"></span>現金・口座振替で出る</span>
+      <span class="lg"><span class="lgd" style="border:1px dashed var(--border)"></span>カード利用（この日は減らない）</span>
+      <span class="lg">右下の小さい数字＝その日終わりの手元残高</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">📈 手元残高の推移<span class="sub" id="sparkSub"></span></div>
+    <svg class="spark" id="spark" viewBox="0 0 320 96" preserveAspectRatio="none"></svg>
+    <div class="spark-x" id="sparkX"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">🛒 いま買うなら、いくらまで<span class="sub">支払い方法ごと</span></div>
+    <div id="useList"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">📋 現行（月単位）との対比<span class="sub">同じデータを月で切った場合</span></div>
+    <div id="cmp"></div>
+  </div>
+
+</div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════
+   給料サイクル ビュー（試作）
+   - 本体(index.html)のデータを「読むだけ」で別の切り方を試す実験ページ
+   - localStorage への書き込みは一切行わない（sessionStorage のみ使用）
+   ══════════════════════════════════════════════════════ */
+
+// ──────────────── 小道具 ────────────────
+const $=id=>document.getElementById(id);
+const yen=n=>'¥'+Math.round(n||0).toLocaleString();
+const pad2=n=>String(n).padStart(2,'0');
+const ymOf=(y,m)=>y*100+(m+1);                       // m:0-11 → YYYYMM
+const ymLabel=k=>`${Math.floor(k/100)}年${k%100}月`;
+const nextYM=k=>{let y=Math.floor(k/100),m=k%100;m++;if(m>12){m=1;y++;}return y*100+m;};
+const prevYM=k=>{let y=Math.floor(k/100),m=k%100;m--;if(m<1){m=12;y--;}return y*100+m;};
+const lastDay=(y,m)=>new Date(y,m+1,0).getDate();
+const dkey=d=>`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+const md=d=>`${d.getMonth()+1}/${d.getDate()}`;
+const addDays=(d,n)=>{const x=new Date(d.getFullYear(),d.getMonth(),d.getDate());x.setDate(x.getDate()+n);return x;};
+const parseISO=s=>{if(!s)return null;const p=String(s).split('-');if(p.length<3)return null;const y=+p[0],m=+p[1]-1,d=+p[2];if(!(y>1900))return null;return new Date(y,m,d);};
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const TODAY=new Date(new Date().getFullYear(),new Date().getMonth(),new Date().getDate());
+
+// ──────────────── 表示用の前提（sessionStorage のみ・本体と非共有） ────────────────
+const UI_KEY='cycleview_ui_v1';
+const UI_DEFAULT={payDay:25,payShift:'back',opening:null,cards:null};
+let UI=Object.assign({},UI_DEFAULT);
+function loadUI(){try{const s=sessionStorage.getItem(UI_KEY);if(s)UI=Object.assign({},UI_DEFAULT,JSON.parse(s));}catch(e){}}
+function saveUI(){try{sessionStorage.setItem(UI_KEY,JSON.stringify(UI));}catch(e){}}
+
+// ──────────────── データ取り込み（読み取り専用） ────────────────
+// DB.months[YYYYMM] = 月state / DB.settings / DB.goals / DB.refunds
+let DB={months:{},settings:{},goals:[],refunds:[],source:'',count:0};
+
+function readFromLocalStorage(){
+  const db={months:{},settings:{},goals:[],refunds:[],source:'この端末の保存データ（localStorage）',count:0};
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);if(!k)continue;
+      const mm=k.match(/^kakeibo_(\d{4})_(\d{2})$/);
+      let v=null;try{v=JSON.parse(localStorage.getItem(k));}catch(e){continue;}
+      if(mm){db.months[+mm[1]*100+ +mm[2]]=v||{};db.count++;}
+      else if(k==='kakeibo_settings')db.settings=v||{};
+      else if(k==='kakeibo_goals')db.goals=v||[];
+      else if(k==='kakeibo_refunds')db.refunds=v||[];
+    }
+  }catch(e){db.source='localStorage を読めませんでした（'+e.message+'）';}
+  return db;
+}
+// 本体の collectAllData() 形式（Gistバックアップ）をそのまま受け取る
+function readFromObject(o){
+  const db={months:{},settings:o.kakeibo_settings||{},goals:o.kakeibo_goals||[],refunds:o.kakeibo_refunds||[],source:'貼り付けJSON',count:0};
+  Object.keys(o||{}).forEach(k=>{
+    const mm=k.match(/^kakeibo_(\d{4})_(\d{2})$/);
+    if(mm){db.months[+mm[1]*100+ +mm[2]]=o[k]||{};db.count++;}
+  });
+  return db;
+}
+function stateFor(kym){return DB.months[kym]||null;}
+function monthKeys(){return Object.keys(DB.months).map(Number).sort((a,b)=>a-b);}
+
+// ──────────────── 給料日・カードサイクル ────────────────
+// 本体と同じ考え方：給料日は月ごとの state.payDay、土日は前倒し/後ろ倒し
+function payDaySetting(kym){
+  if(UI.payDay){return {base:Math.min(Math.max(+UI.payDay,1),31),shift:UI.payShift==='fwd'?'fwd':'back'};}
+  const st=stateFor(kym);
+  let base=(st&&st.payDay!=null&&st.payDay!=='')?Number(st.payDay):15;
+  if(!(base>=1))base=15;if(base>31)base=31;
+  return {base,shift:((st&&st.payShift)==='fwd')?'fwd':'back'};
+}
+function payDayOf(y,m){
+  const {base,shift}=payDaySetting(ymOf(y,m));
+  const last=lastDay(y,m);
+  let d=Math.min(base,last),guard=0;
+  while(guard++<12){
+    const wd=new Date(y,m,d).getDay();
+    if(wd!==0&&wd!==6)break;
+    if(shift==='fwd'){d++;if(d>last){d=last;while([0,6].includes(new Date(y,m,d).getDay())&&d>1)d--;break;}}
+    else{d--;if(d<1){d=1;while([0,6].includes(new Date(y,m,d).getDay())&&d<last)d++;break;}}
+  }
+  return d;
+}
+function payDate(kym){const y=Math.floor(kym/100),m=(kym%100)-1;return new Date(y,m,payDayOf(y,m));}
+
+// 既定：本人申告ベース（27日引き落とし組＋リクルート翌月10日）。保存済み設定があればそちらを優先。
+function defaultCards(){
+  return {
+    'PayPayカード'  :{close:'end',offset:1,payDay:27},
+    'オリコカード'  :{close:'end',offset:1,payDay:27},
+    '三井住友カード':{close:'end',offset:1,payDay:27},
+    'リクルートカード':{close:15,offset:1,payDay:10},
+  };
+}
+function cardConf(){
+  if(UI.cards)return UI.cards;
+  const base=defaultCards();
+  const saved=(DB.settings&&DB.settings.cardCycles)||{};
+  Object.keys(saved).forEach(k=>{if(saved[k]&&saved[k].payDay)base[k]=Object.assign({},base[k]||{close:'end',offset:1},saved[k]);});
+  UI.cards=base;
+  return base;
+}
+const isCard=m=>!!cardConf()[m];
+const cardNames=()=>Object.keys(cardConf());
+
+// 購入日 → 実際に口座から出ていく日
+function chargeDateOf(buy,method){
+  const cy=cardConf()[method];
+  if(!cy)return new Date(buy.getFullYear(),buy.getMonth(),buy.getDate()); // 現金・振替は即時
+  let y=buy.getFullYear(),m=buy.getMonth();
+  if(cy.close!=='end'&&buy.getDate()>Number(cy.close)){m++;if(m>11){m=0;y++;}}   // 締め日超え＝翌締め
+  m+=(cy.offset||0);while(m>11){m-=12;y++;}
+  return new Date(y,m,Math.min(cy.payDay||15,lastDay(y,m)));
+}
+// 引き落とし日 → その支払いの対象になる利用期間 FROM–TO
+function usageWindow(chargeD,method){
+  const cy=cardConf()[method];
+  if(!cy)return null;
+  let y=chargeD.getFullYear(),m=chargeD.getMonth()-(cy.offset||0);
+  while(m<0){m+=12;y--;}
+  if(cy.close==='end')return {from:new Date(y,m,1),to:new Date(y,m,lastDay(y,m))};
+  const c=Number(cy.close);
+  let py=y,pm=m-1;if(pm<0){pm=11;py--;}
+  return {from:new Date(py,pm,Math.min(c+1,lastDay(py,pm))),to:new Date(y,m,Math.min(c,lastDay(y,m)))};
+}
+// ある日が属する給料サイクル（＝その日を賄う給料の月 YYYYMM）
+function cycleOfDate(d){
+  const y=d.getFullYear(),m=d.getMonth();
+  if(d.getDate()>=payDayOf(y,m))return ymOf(y,m);
+  return prevYM(ymOf(y,m));
+}
+function cycleRange(kym){
+  const s=payDate(kym);
+  return {start:s,end:addDays(payDate(nextYM(kym)),-1)};
+}
+
+// ──────────────── 明細の展開 ────────────────
+// 本体の採用額ロジックに合わせる（未確定は見込みと実額の大きい方）
+function adopted(it){
+  const mk=(it.mikomi||0)||(it.budget||0);
+  if(it.confirmed){if(it.amount==null||it.amount==='')return mk;return Number(it.amount)||0;}
+  const a=Number(it.amount)||0;return mk>a?mk:a;
+}
+function fixedActive(f,kym){
+  if(!f)return false;
+  if(f.startMonth&&Number(f.startMonth)>kym)return false;
+  const pm=Number(f.payMonth)||0;
+  if(pm>=1&&pm<=12)return (kym%100)===pm;
+  return true;
+}
+function savingLinked(e){
+  if(!e)return false;
+  const gs=DB.goals||[];
+  for(const g of gs){
+    if(g.type!=='saving')continue;
+    if(e.goalId&&e.goalId===g.id)return true;
+    if(g.tag&&e.memoTags&&e.memoTags.includes(g.tag))return true;
+  }
+  return false;
+}
+
+// 全月の固定費＋支出を「購入日 / 引き落とし日」付きのフラットな配列にする
+let ITEMS=null;
+function buildItems(){
+  const out=[];
+  monthKeys().forEach(kym=>{
+    const st=DB.months[kym]||{};
+    const y=Math.floor(kym/100),m=(kym%100)-1;
+    (st.fixed||[]).forEach(f=>{
+      if(!fixedActive(f,kym))return;
+      const a=adopted(f);if(!a)return;
+      const yearly=Number(f.payMonth)>=1&&Number(f.payMonth)<=12;
+      const day=Math.min(yearly&&Number(f.payDay)?Number(f.payDay):28,lastDay(y,m)); // 本体の固定費判定は28日基準
+      const buy=new Date(y,m,day);
+      out.push({name:f.name,amt:a,pay:f.pay||'その他',cat:'固定費',buy,charge:chargeDateOf(buy,f.pay),srcYM:kym,kind:'fixed'});
+    });
+    (st.expenses||[]).forEach(e=>{
+      if(savingLinked(e))return;
+      const a=adopted(e);if(!a)return;
+      let buy=parseISO(e.addedAt);
+      if(!buy||ymOf(buy.getFullYear(),buy.getMonth())!==kym)buy=new Date(y,m,Math.min(28,lastDay(y,m)));
+      out.push({name:e.name,amt:a,pay:e.pay||'その他',cat:e.cat||'自由費',buy,charge:chargeDateOf(buy,e.pay),srcYM:kym,kind:'exp'});
+    });
+  });
+  out.sort((a,b)=>a.charge-b.charge);
+  return out;
+}
+
+// ──────────────── 入出金イベント → 残高 ────────────────
+// 1日分のイベント：給料・臨時収入・返金（＋）／現金支出・カード引き落とし（−）
+function buildEvents(fromKym,months){
+  const ev={};  // dkey → {in:[],out:[]}
+  const push=(d,side,o)=>{const k=dkey(d);(ev[k]||(ev[k]={in:[],out:[]}))[side].push(o);};
+  let k=fromKym;
+  for(let i=0;i<months;i++){
+    const st=stateFor(k);
+    const pd=payDate(k);
+    if(st){
+      const sal=Number(st.salary)||0;
+      if(sal)push(pd,'in',{name:'給料',amt:sal,type:'salary'});
+      (st.carryExtra||[]).forEach(c=>{const a=Number(c.amt)||0;if(a)push(pd,'in',{name:c.name||'臨時収入',amt:a,type:'extra'});});
+    }
+    (DB.refunds||[]).forEach(r=>{if(Number(r.ym)===k){const a=Number(r.amt)||0;if(a)push(pd,'in',{name:(r.name||'返金'),amt:a,type:'refund'});}});
+    k=nextYM(k);
+  }
+  const start=payDate(fromKym), end=addDays(payDate(k),-1);
+  ITEMS.forEach(it=>{
+    if(it.charge<start||it.charge>end)return;
+    push(it.charge,'out',{name:it.name,amt:it.amt,type:isCard(it.pay)?'charge':'cash',pay:it.pay,buy:it.buy,cat:it.cat});
+  });
+  return {ev,start,end};
+}
+// 起点残高から日ごとに積み上げる
+function runBalance(ev,start,end,opening){
+  const map={};let bal=opening;
+  for(let d=new Date(start);d<=end;d=addDays(d,1)){
+    const e=ev[dkey(d)];
+    let din=0,dout=0;
+    if(e){e.in.forEach(x=>din+=x.amt);e.out.forEach(x=>dout+=x.amt);}
+    bal+=din-dout;
+    map[dkey(d)]={bal,in:din,out:dout,e:e||{in:[],out:[]}};
+  }
+  return map;
+}
+
+// ──────────────── 状態 ────────────────
+let CUR=null;        // 表示中サイクル YYYYMM
+let CTX=null;        // 計算済みコンテキスト
+
+function defaultCycle(){
+  const ks=monthKeys();
+  const c=cycleOfDate(TODAY);
+  if(ks.includes(c))return c;
+  if(!ks.length)return c;
+  // データのある月のうち、今日に一番近いもの
+  return ks.reduce((best,k)=>Math.abs(k-c)<Math.abs(best-c)?k:best,ks[0]);
+}
+function recompute(){
+  ITEMS=buildItems();
+  const {ev,start,end}=buildEvents(CUR,5);      // 表示サイクル＋先4ヶ月ぶんを射程に
+  const st=stateFor(CUR)||{};
+  const opening=(UI.opening!=null&&UI.opening!=='')?Number(UI.opening):(Number(st.carryover)||0);
+  const bal=runBalance(ev,start,end,opening);
+  const r=cycleRange(CUR);
+  CTX={ev,start,end,bal,opening,range:r,st};
+}
+function balanceAt(d){
+  if(!CTX)return 0;
+  if(d<CTX.start)return CTX.opening;
+  const k=dkey(d>CTX.end?CTX.end:d);
+  return CTX.bal[k]?CTX.bal[k].bal:CTX.opening;
+}
+
+// ──────────────── 描画 ────────────────
+const CARD_COLORS=['#9579ff','#5aa9ff','#4fe3a0','#ffd75e','#ff7a96','#7ee0d3'];
+const colorOf=name=>{const n=cardNames();const i=n.indexOf(name);return i<0?'#8a8aa8':CARD_COLORS[i%CARD_COLORS.length];};
+
+function renderAll(){
+  if(!monthKeys().length){
+    $('cycMain').textContent='データがありません';
+    $('cycSub').textContent='';
+    ['flowList','cal','useList','cmp'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gistのバックアップ JSON を貼り付けてください。</div>');
+    $('sumGrid').innerHTML='';
+    return;
+  }
+  recompute();
+  renderHeader();renderConfig();renderSummary();renderFlow();renderCalendar();renderSpark();renderUsable();renderCompare();
+}
+
+function renderHeader(){
+  const {start,end}=CTX.range;
+  $('cycMain').textContent=`${start.getFullYear()}/${md(start)} 〜 ${md(end)}`;
+  const sal=Number(CTX.st.salary)||0;
+  $('cycSub').textContent=`${ymLabel(CUR)}の給料 ${yen(sal)} で回す期間（${Math.round((end-start)/86400000)+1}日間）`;
+}
+
+function renderConfig(){
+  const g=$('cfgGrid');
+  let h=`<div class="cfg-lbl">給料日（土日は前倒し）</div><div><input type="number" id="cfgPd" value="${UI.payDay||''}" placeholder="データ" min="1" max="31"></div><div class="tiny muted">日</div>`;
+  h+=`<div class="cfg-lbl">サイクル開始時の手元残高</div><div><input type="number" id="cfgOp" value="${UI.opening!=null?UI.opening:''}" placeholder="${Number(CTX.st.carryover)||0}"></div><div class="tiny muted">円</div>`;
+  cardNames().forEach(n=>{
+    const c=cardConf()[n];
+    h+=`<div class="cfg-lbl" style="color:${colorOf(n)}">${esc(n)}</div>`
+      +`<div><input class="cfgClose" data-n="${esc(n)}" value="${c.close==='end'?'末':c.close}" style="width:44px"> 締</div>`
+      +`<div><input class="cfgPay" data-n="${esc(n)}" type="number" value="${c.payDay}" style="width:50px"> 日払</div>`;
+  });
+  h+=`<div style="grid-column:1/-1;display:flex;gap:7px;margin-top:6px;">
+        <button class="btn pri" onclick="applyCfg()">反映</button>
+        <button class="btn" onclick="resetCfg()">既定に戻す</button>
+      </div>
+      <div style="grid-column:1/-1" class="tiny muted">※ ここの値は本体の設定を書き換えません。タブを閉じると消えます。</div>`;
+  g.innerHTML=h;
+  $('cfgSum').textContent=`給料${UI.payDay||'データ'}日／`+cardNames().map(n=>`${n.replace(/カード$/,'')}${cardConf()[n].payDay}日`).join('・');
+}
+function applyCfg(){
+  const pd=$('cfgPd').value.trim();UI.payDay=pd?Number(pd):null;
+  const op=$('cfgOp').value.trim();UI.opening=op===''?null:Number(op);
+  const cards={};
+  document.querySelectorAll('.cfgClose').forEach(el=>{
+    const n=el.dataset.n,v=el.value.trim();
+    cards[n]=Object.assign({},cardConf()[n],{close:(v==='末'||v==='end'||v==='')?'end':Number(v)});
+  });
+  document.querySelectorAll('.cfgPay').forEach(el=>{const n=el.dataset.n;cards[n].payDay=Number(el.value)||1;});
+  UI.cards=cards;saveUI();renderAll();
+}
+function resetCfg(){UI=Object.assign({},UI_DEFAULT);saveUI();cardConf();renderAll();$('cfgBox').open=true;}
+
+function renderSummary(){
+  const {start,end}=CTX.range;
+  let inc=0,cashOut=0,chgOut=0;
+  for(let d=new Date(start);d<=end;d=addDays(d,1)){
+    const b=CTX.bal[dkey(d)];if(!b)continue;
+    b.e.in.forEach(x=>inc+=x.amt);
+    b.e.out.forEach(x=>{if(x.type==='charge')chgOut+=x.amt;else cashOut+=x.amt;});
+  }
+  const endBal=balanceAt(end);
+  const nowIn=(TODAY>=start&&TODAY<=end);
+  let lowest=Infinity,lowDay=null;
+  for(let d=new Date(start);d<=end;d=addDays(d,1)){const b=CTX.bal[dkey(d)];if(b&&b.bal<lowest){lowest=b.bal;lowDay=new Date(d);}}
+  $('sumSub').textContent=nowIn?`今日 ${md(TODAY)} 時点`:'（今日はこのサイクル外）';
+  $('sumGrid').innerHTML=`
+    <div class="sum-cell"><div class="k">開始時の手元 ＋ 入金</div><div class="v mono">${yen(CTX.opening+inc)}</div><div class="tiny muted">繰越 ${yen(CTX.opening)} ＋ 入金 ${yen(inc)}</div></div>
+    <div class="sum-cell"><div class="k">この期間に出ていく</div><div class="v mono neg">${yen(cashOut+chgOut)}</div><div class="tiny muted">💳引落 ${yen(chgOut)} ／ 💵現金等 ${yen(cashOut)}</div></div>
+    <div class="sum-cell"><div class="k">次の給料日の直前に残る</div><div class="v mono ${endBal<0?'neg':'pos'}">${yen(endBal)}</div><div class="tiny muted">${md(end)} 時点</div></div>
+    <div class="sum-cell"><div class="k">${nowIn?'今日の手元':'期間中の最低残高'}</div><div class="v mono ${(nowIn?balanceAt(TODAY):lowest)<0?'neg':''}">${yen(nowIn?balanceAt(TODAY):lowest)}</div><div class="tiny muted">${nowIn?`最低 ${yen(lowest)}（${lowDay?md(lowDay):'-'}）`:(lowDay?md(lowDay):'')}</div></div>`;
+}
+
+function renderFlow(){
+  const {start,end}=CTX.range;
+  // このサイクル中に起きる引き落としを「カード × 引き落とし日」でまとめる
+  const groups={};
+  ITEMS.forEach(it=>{
+    if(it.charge<start||it.charge>end)return;
+    if(!isCard(it.pay))return;
+    const k=it.pay+'@'+dkey(it.charge);
+    (groups[k]||(groups[k]={pay:it.pay,charge:it.charge,amt:0,items:[]}));
+    groups[k].amt+=it.amt;groups[k].items.push(it);
+  });
+  const list=Object.values(groups).sort((a,b)=>a.charge-b.charge||b.amt-a.amt);
+  const salD=payDate(CUR);
+  const headIn='<div class="sect-div">⬅️ この給料から引かれるもの（利用期間 → 引き落とし）</div>';
+  const headOut='<div class="sect-div">➡️ この期間に使ったカードの行き先（利用 → いつ引かれる）</div>';
+  if(!list.length){
+    $('flowList').innerHTML=headIn+'<div class="empty">このサイクルに引き落とされるカード利用はありません。<br><span class="tiny">前の月のデータが無いと、ここは空になります。</span></div>'+headOut+renderOutgoing();
+    return;
+  }
+  $('flowList').innerHTML=headIn+list.map((g,i)=>{
+    const w=usageWindow(g.charge,g.pay);
+    const c=colorOf(g.pay);
+    const items=g.items.slice().sort((a,b)=>a.buy-b.buy).map(it=>
+      `<div class="it"><span class="d">${md(it.buy)}</span><span class="n">${esc(it.name)}</span><span class="a mono">${yen(it.amt)}</span></div>`).join('');
+    return `<div class="flow" style="--cc:${c}" onclick="this.classList.toggle('open')">
+      <div class="flow-top"><span class="flow-name">💳 ${esc(g.pay)}</span><span class="flow-amt mono">${yen(g.amt)}</span></div>
+      <div class="flow-track">
+        <span class="flow-from">${w?md(w.from):'?'}</span>
+        <span class="flow-bar"></span>
+        <span class="flow-to">${w?md(w.to):'?'}</span>
+      </div>
+      <div class="flow-meta">
+        <span class="chip">この期間の利用 ${g.items.length}件</span>
+        <span class="chip pay">💸 ${md(g.charge)} 引き落とし</span>
+        <span class="chip sal">💰 ${md(salD)} の給料から</span>
+      </div>
+      <div class="flow-items">${items}</div>
+    </div>`;
+  }).join('')
+  +`<div class="tiny muted" style="margin-top:4px;line-height:1.7">↑ 左の日付〜右の日付が「使った期間」。その分が 💸 の日にまとめて引かれ、原資は 💰 の給料です。</div>`
+  +headOut+renderOutgoing();
+}
+
+// このサイクル中に使ったカード分が、いつ・どの給料から引かれるか（出ていく方向）
+function renderOutgoing(){
+  const {start,end}=CTX.range;
+  const groups={};
+  ITEMS.forEach(it=>{
+    if(!isCard(it.pay))return;
+    if(it.buy<start||it.buy>end)return;
+    const k=it.pay+'@'+dkey(it.charge);
+    (groups[k]||(groups[k]={pay:it.pay,charge:it.charge,amt:0,n:0,first:it.buy,last:it.buy}));
+    const g=groups[k];g.amt+=it.amt;g.n++;
+    if(it.buy<g.first)g.first=it.buy;if(it.buy>g.last)g.last=it.buy;
+  });
+  const list=Object.values(groups).sort((a,b)=>a.charge-b.charge);
+  if(!list.length)return '<div class="empty">このサイクル中のカード利用はまだありません。</div>';
+  return list.map(g=>{
+    const salM=cycleOfDate(g.charge),salD=payDate(salM);
+    const inThis=(g.charge>=start&&g.charge<=end);
+    return `<div class="flow" style="--cc:${colorOf(g.pay)}">
+      <div class="flow-top"><span class="flow-name">💳 ${esc(g.pay)}</span><span class="flow-amt mono">${yen(g.amt)}</span></div>
+      <div class="flow-track"><span class="flow-from">${md(g.first)}</span><span class="flow-bar"></span><span class="flow-to">${md(g.last)}</span></div>
+      <div class="flow-meta">
+        <span class="chip">利用 ${g.n}件</span>
+        <span class="chip pay">💸 ${md(g.charge)} に引かれる</span>
+        <span class="chip sal">💰 ${md(salD)} の給料から${inThis?'（このサイクル内）':'（先のサイクル）'}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderCalendar(){
+  const {start,end}=CTX.range;
+  const cal=$('cal');let h='';
+  for(let i=0;i<start.getDay();i++)h+='<div class="cel blank"></div>';
+  for(let d=new Date(start);d<=end;d=addDays(d,1)){
+    const b=CTX.bal[dkey(d)]||{bal:0,e:{in:[],out:[]}};
+    const wd=d.getDay();
+    const cls=['cel'];
+    if(wd===0)cls.push('sun');if(wd===6)cls.push('sat');
+    if(dkey(d)===dkey(TODAY))cls.push('today');
+    if(b.e.in.some(x=>x.type==='salary'))cls.push('salday');
+    let pips='';
+    b.e.in.forEach(x=>{pips+=`<div class="pip sal">${x.type==='salary'?'💰':'＋'}${Math.round(x.amt/1000)}k</div>`;});
+    const chg={};b.e.out.forEach(x=>{if(x.type==='charge'){chg[x.pay]=(chg[x.pay]||0)+x.amt;}});
+    Object.keys(chg).forEach(p=>{pips+=`<div class="pip chg" style="box-shadow:inset 2px 0 0 ${colorOf(p)}">💸${Math.round(chg[p]/1000)}k</div>`;});
+    const cashSum=b.e.out.filter(x=>x.type==='cash').reduce((s,x)=>s+x.amt,0);
+    if(cashSum)pips+=`<div class="pip cash">💵${Math.round(cashSum/1000)}k</div>`;
+    const used=ITEMS.filter(it=>isCard(it.pay)&&dkey(it.buy)===dkey(d));
+    if(used.length)pips+=`<div class="pip use">🛒${used.length}</div>`;
+    const showMo=(d.getDate()===1||dkey(d)===dkey(start));
+    h+=`<div class="${cls.join(' ')}">
+      <div class="dn">${showMo?`<span class="mo">${d.getMonth()+1}/</span>`:''}${d.getDate()}</div>
+      ${pips}
+      <div class="bal ${b.bal<0?'minus':''}">${Math.round(b.bal/1000)}k</div>
+    </div>`;
+  }
+  cal.innerHTML=h;
+  $('calSub').textContent=`${md(start)} 給料日 → ${md(end)}`;
+}
+
+function renderSpark(){
+  const {start,end}=CTX.range;
+  const days=[];
+  for(let d=new Date(start);d<=end;d=addDays(d,1))days.push({d:new Date(d),b:(CTX.bal[dkey(d)]||{}).bal||0});
+  if(!days.length)return;
+  const W=320,H=96,P=6;
+  const vals=days.map(x=>x.b);
+  const mx=Math.max(...vals,0),mn=Math.min(...vals,0);
+  const span=(mx-mn)||1;
+  const X=i=>P+(W-2*P)*(i/Math.max(1,days.length-1));
+  const Y=v=>H-P-(H-2*P)*((v-mn)/span);
+  const pts=days.map((x,i)=>`${X(i).toFixed(1)},${Y(x.b).toFixed(1)}`).join(' ');
+  const zero=Y(0);
+  let marks='';
+  days.forEach((x,i)=>{
+    const e=(CTX.bal[dkey(x.d)]||{}).e||{in:[],out:[]};
+    if(e.in.some(z=>z.type==='salary'))marks+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(x.b).toFixed(1)}" r="3" fill="#4fe3a0"/>`;
+    if(e.out.some(z=>z.type==='charge'))marks+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(x.b).toFixed(1)}" r="3" fill="#9579ff"/>`;
+  });
+  $('spark').innerHTML=
+    `<polygon points="${X(0)},${H-P} ${pts} ${X(days.length-1)},${H-P}" fill="url(#g)" opacity=".28"/>
+     <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9579ff"/><stop offset="1" stop-color="#9579ff" stop-opacity="0"/></linearGradient></defs>
+     ${mn<0?`<line x1="${P}" y1="${zero}" x2="${W-P}" y2="${zero}" stroke="#ff7a96" stroke-width="1" stroke-dasharray="3 3"/>`:''}
+     <polyline points="${pts}" fill="none" stroke="#9579ff" stroke-width="2" stroke-linejoin="round"/>
+     ${marks}`;
+  $('sparkSub').textContent=`最高 ${yen(mx)} / 最低 ${yen(mn)}`;
+  const midI=Math.floor(days.length/2);
+  $('sparkX').innerHTML=`<span>💰${md(days[0].d)}</span><span>${md(days[midI].d)}</span><span>${md(days[days.length-1].d)}</span>`;
+}
+
+function renderUsable(){
+  const base=(TODAY>=CTX.start&&TODAY<=CTX.end)?TODAY:CTX.range.start;
+  const now=balanceAt(base);
+  let h=`<div class="use-row" style="--cc:var(--yellow)">
+      <div class="use-l"><div class="use-n">💵 現金・口座振替で買う</div>
+      <div class="use-s">その場で手元から減ります。${md(base)}時点の残高がそのまま上限。</div></div>
+      <div class="use-v mono ${now<0?'neg':''}">${yen(now)}</div>
+    </div>`;
+  cardNames().forEach(n=>{
+    const cd=chargeDateOf(base,n);
+    const salM=cycleOfDate(cd), salD=payDate(salM);
+    const proj=balanceAt(cd);
+    // base の翌日〜引き落とし日 の入出金内訳
+    let inSum=0,outSum=0;const sals=[];
+    for(let d=addDays(base,1);d<=cd&&d<=CTX.end;d=addDays(d,1)){
+      const b=CTX.bal[dkey(d)];if(!b)continue;
+      b.e.in.forEach(x=>{inSum+=x.amt;if(x.type==='salary')sals.push(new Date(d));});
+      b.e.out.forEach(x=>outSum+=x.amt);
+    }
+    const c=colorOf(n);
+    h+=`<div class="use-row" style="--cc:${c}">
+      <div class="use-l"><div class="use-n">💳 ${esc(n)}</div>
+        <div class="use-s">今日買うと <b>${md(cd)}</b> 引き落とし → 💰<b>${md(salD)}</b>の給料が原資${sals.length?`（それまでに給料 ${sals.length}回：${sals.map(md).join('・')}）`:'（次の給料を待たずに引かれます）'}</div>
+        <div class="calc">手元 ${yen(now)} ＋ 入金 ${yen(inSum)} − 予定 ${yen(outSum)}</div>
+      </div>
+      <div class="use-v mono ${proj<0?'neg':''}">${yen(proj)}</div>
+    </div>`;
+  });
+  h+=`<div class="tiny muted" style="margin-top:6px;line-height:1.7">右の金額＝「今わかっている予定を全部こなした上で、その引き落とし日に残っている見込み額」。ここまでなら追加で使っても手元がマイナスにならない、という目安です。</div>`;
+  $('useList').innerHTML=h;
+}
+
+function renderCompare(){
+  const ks=monthKeys().filter(k=>k>=prevYM(prevYM(CUR))&&k<=nextYM(nextYM(CUR)));
+  if(!ks.length){$('cmp').innerHTML='<div class="empty">比較できる月がありません。</div>';return;}
+  let rows='';
+  ks.forEach(k=>{
+    const st=DB.months[k]||{};
+    const income=(Number(st.salary)||0)+(Number(st.carryover)||0)+((st.carryExtra||[]).reduce((s,c)=>s+(Number(c.amt)||0),0));
+    // 現行方式：その月の給料から実際に引かれる分（＝引き落とし日がその給料サイクルに入るもの）
+    const r=cycleRange(k);
+    let out=0,cardOut=0;
+    ITEMS.forEach(it=>{if(it.charge>=r.start&&it.charge<=r.end){out+=it.amt;if(isCard(it.pay))cardOut+=it.amt;}});
+    // 月そのもので切った場合（カレンダー月）
+    let mOut=0;
+    ITEMS.forEach(it=>{if(ymOf(it.charge.getFullYear(),it.charge.getMonth())===k)mOut+=it.amt;});
+    rows+=`<tr class="${k===CUR?'cur':''}"><td>${ymLabel(k)}</td><td class="mono">${yen(income)}</td><td class="mono">${yen(mOut)}</td><td class="mono">${yen(out)}</td><td class="mono">${yen(cardOut)}</td></tr>`;
+  });
+  $('cmp').innerHTML=`<table>
+    <tr><th>月</th><th>収入</th><th>月で切る<br><span style="font-weight:400">1日〜末日</span></th><th>サイクルで切る<br><span style="font-weight:400">給料日〜</span></th><th>うちカード</th></tr>
+    ${rows}</table>
+    <div class="tiny muted" style="margin-top:8px;line-height:1.7">同じ明細を「カレンダー月」で集計した場合と「給料日起点のサイクル」で集計した場合の差です。給料日が25日なので、25日以降の引き落とし（27日組）がどちらに寄るかで数字が動きます。</div>`;
+}
+
+// ──────────────── 操作 ────────────────
+function moveCycle(n){
+  CUR=n>0?nextYM(CUR):prevYM(CUR);
+  renderAll();window.scrollTo({top:0,behavior:'smooth'});
+}
+function toggleJson(){const b=$('jsonBox');b.style.display=b.style.display==='none'?'block':'none';}
+function importJson(){
+  const t=$('jsonIn').value.trim();
+  if(!t){alert('JSONを貼り付けてください');return;}
+  let o;try{o=JSON.parse(t);}catch(e){alert('JSONとして読めませんでした：'+e.message);return;}
+  DB=readFromObject(o);
+  UI.cards=null;cardConf();
+  CUR=defaultCycle();
+  showIO();renderAll();
+  $('jsonBox').style.display='none';
+}
+function reimport(){DB=readFromLocalStorage();UI.cards=null;cardConf();CUR=defaultCycle();showIO();renderAll();}
+function showIO(){
+  const ks=monthKeys();
+  const range=ks.length?`${ymLabel(ks[0])}〜${ymLabel(ks[ks.length-1])}`:'—';
+  $('ioState').innerHTML=ks.length
+    ? `✅ <b>${esc(DB.source)}</b> を取り込みました<br><span class="muted">${ks.length}ヶ月分（${range}）</span>`
+    : `⚠️ データが見つかりません<br><span class="muted">本体と同じ場所（同じドメイン）で開くか、JSONを貼り付けてください</span>`;
+}
+
+// ──────────────── 起動 ────────────────
+loadUI();
+DB=readFromLocalStorage();
+cardConf();
+CUR=defaultCycle();
+ITEMS=buildItems();
+showIO();
+renderAll();
+</script>
+</body>
+</html>
