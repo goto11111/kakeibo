@@ -101,6 +101,7 @@ textarea{width:100%;min-height:92px;background:#0d0d14;border:1px solid var(--bo
 .pip.sal{background:#1f6a4b;color:#b9ffdf;}
 .pip.chg{background:#3a2c66;color:#d3c4ff;}
 .pip.cash{background:#5a4416;color:#ffe3a3;}
+.pip.goal{background:#5a2333;color:#ffc9d6;}
 .pip.use{background:transparent;color:var(--text3);border:1px dashed var(--border);}
 .bal{margin-top:auto;font-size:8px;text-align:right;color:var(--text3);font-variant-numeric:tabular-nums;}
 .bal.minus{color:var(--red);font-weight:800;}
@@ -179,6 +180,15 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 .bsub{font-size:10px;color:var(--text3);padding:2px 0 2px 12px;display:flex;gap:8px;}
 .bsub .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tap{font-size:9px;color:var(--text3);margin-top:6px;}
+.alert{background:#4a2020;border:1px solid var(--red);border-radius:var(--r);padding:11px 13px;margin-bottom:9px;}
+.alert-t{font-size:12px;font-weight:800;color:#ffc2cf;margin-bottom:4px;}
+.alert-b{font-size:10px;color:#ffd9e1;line-height:1.7;}
+.aud{width:100%;border-collapse:collapse;font-size:10px;}
+.aud th,.aud td{padding:4px 3px;border-bottom:1px solid var(--border);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.aud th{color:var(--text3);font-size:9px;}
+.aud td:first-child,.aud th:first-child{text-align:left;}
+.aud tr.cur td{color:var(--accent);font-weight:800;}
+.aud tr.bad td{color:var(--yellow);}
 </style>
 </head>
 <body>
@@ -271,6 +281,17 @@ details.cfg>summary::-webkit-details-marker{display:none;}
   </div>
 
   <div class="card">
+    <div class="card-h">🔍 取り込んだデータの点検<span class="sub">数字が変なときはここ</span></div>
+    <div id="audit"></div>
+    <details class="nt"><summary>ⓘ 見方</summary>
+      <div class="nt-body">
+        本体アプリに入っている各月のデータを、そのまま件数と合計で出しています。<b>「支出0件」や「給料0円」の月があれば、その月は取り込めていない（または本体側で未入力）</b>ということです。<br>
+        「使っていい額」は、ここに出ている月のデータだけで計算しています。先の月が未入力だと、その月は支出ゼロとみなされるので金額が甘く出ます。
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
     <div class="card-h">📋 本体アプリの数字と見比べる<span class="sub">タップで内訳</span></div>
     <div id="cmp"></div>
     <details class="nt"><summary>ⓘ 何を比べているか</summary>
@@ -300,8 +321,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v0.3.0';
+const VERSION='v0.4.0';
 const CHANGELOG=[
+ {v:'v0.4.0',d:'2026-09-16',t:[
+   '【不具合修正】積立・返済（借金返済など）が現金の流出として計上されていなかった。本体では毎月引かれている額が無視されていたため、「使っていい額」が月あたりその分だけ過大に出ていた',
+   '「🔍 取り込んだデータの点検」を追加。月ごとの給料・固定費・支出・積立・食費枠を件数つきで表示し、給料0円や支出0件の月には警告を出す',
+   '手元の現金が未入力のときに、金額があてにならない旨の警告を大きく表示',
+   'カレンダー・日別詳細・対比にも積立の行を追加']},
  {v:'v0.3.0',d:'2026-09-16',t:[
    '「いま使っていい額」を最上部に新設。手元の現金から、この先の引き落とし・現金支出・入ってくる給料を全部織り込んで「一番きつくなる日にいくら残るか」を出す方式に',
    '手元の現金を直接入力できるように（銀行残高＋財布の合計）',
@@ -506,6 +532,11 @@ function refundsForYM(kym){
   });
   return out;
 }
+// その給料月に積み立て／返済で出ていく額（本体アプリと同じ判定）
+function goalOutflowFor(kym){
+  const st=stateFor(kym);if(!st)return [];
+  return (DB.goals||[]).map(g=>({name:(g.name||'積立'),amt:goalDeductForMonth(g,kym,st)})).filter(x=>x.amt>0);
+}
 function buildEvents(fromKym,months){
   const ev={};
   const push=(d,side,o)=>{const k=dkey(d);(ev[k]||(ev[k]={in:[],out:[]}))[side].push(o);};
@@ -518,6 +549,7 @@ function buildEvents(fromKym,months){
       (st.carryExtra||[]).forEach(c=>{const a=Number(c.amt)||0;if(a)push(pd,'in',{name:c.name||'臨時収入',amt:a,type:'extra'});});
     }
     refundsForYM(k).forEach(r=>{if(r.amt)push(pd,'in',{name:r.name,amt:r.amt,type:'refund'});});
+    goalOutflowFor(k).forEach(g=>push(pd,'out',{name:g.name,amt:g.amt,type:'goal',pay:'積立・返済'}));
     k=nextYM(k);
   }
   const start=payDate(fromKym),end=addDays(payDate(k),-1);
@@ -538,7 +570,8 @@ function runBalance(ev,start,end,opening){
   return map;
 }
 
-// ──────────────── 本体アプリと同じ月次集計（対比用に移植） ────────────────
+// ──────────────── 積立・本体と同じ月次集計（対比用に移植） ────────────────
+// ※ goalDeductForMonth は buildEvents からも使う（積立・返済の流出計上）
 function goalSavingsByMonth(goalId){
   const g=(DB.goals||[]).find(x=>x.id===goalId);
   const start=(g&&g.startMonth)?Number(g.startMonth):0;
@@ -680,7 +713,7 @@ function foodReserve(base,till){
 
 // base の翌日〜till までの入出金を集計（内訳表示用）
 function flowsBetween(base,till){
-  let inSum=0,outSum=0;const sals=[],charges=[],cashes=[];
+  let inSum=0,outSum=0;const sals=[],charges=[],cashes=[],goals=[];
   for(let d=addDays(base,1);d<=till;d=addDays(d,1)){
     const b=CTX.bal[dkey(d)];if(!b)continue;
     b.e.in.forEach(x=>{inSum+=x.amt;sals.push({d:new Date(d),name:x.name,amt:x.amt});});
@@ -688,11 +721,12 @@ function flowsBetween(base,till){
     b.e.out.forEach(x=>{
       outSum+=x.amt;
       if(x.type==='charge')byCard[x.pay]=(byCard[x.pay]||0)+x.amt;
+      else if(x.type==='goal')goals.push({d:new Date(d),name:x.name,amt:x.amt});
       else cashes.push({d:new Date(d),name:x.name,amt:x.amt});
     });
     Object.keys(byCard).forEach(p=>charges.push({d:new Date(d),pay:p,amt:byCard[p]}));
   }
-  return {inSum,outSum,sals,charges,cashes};
+  return {inSum,outSum,sals,charges,cashes,goals};
 }
 // 内訳ブロックのHTML（手元 ＋入る −出る ＝ 底の残高）
 function breakdownHTML(base,low){
@@ -709,6 +743,7 @@ function breakdownHTML(base,low){
     h+=`<div class="brow"><span class="k">− ${md(low.day)}までに出ていく</span><span class="v mono neg">−${yen(f.outSum)}</span></div>`;
     f.charges.sort((a,b)=>a.d-b.d).forEach(x=>h+=`<div class="bsub"><span class="k">${md(x.d)} 💳 ${esc(x.pay)}</span><span>${yen(x.amt)}</span></div>`);
     if(cashTotal)h+=`<div class="bsub"><span class="k">💵 現金・口座振替 ${f.cashes.length}件</span><span>${yen(cashTotal)}</span></div>`;
+    f.goals.forEach(x=>h+=`<div class="bsub"><span class="k">${md(x.d)} 🏦 ${esc(x.name)}（積立・返済）</span><span>${yen(x.amt)}</span></div>`);
   }
   h+=`<div class="brow"><span class="k">＝ ${md(low.day)}（一番きつい日）の残高</span><span class="v mono ${low.raw<0?'neg':''}">${yen(low.raw)}</span></div>`;
   if(low.reserve>0){
@@ -726,13 +761,13 @@ const colorOf=n=>{const i=cardNames().indexOf(n);return i<0?'#8a8aa8':CARD_COLOR
 function renderAll(){
   if(!monthKeys().length){
     $('cycMain').textContent='データがありません';$('cycSub').textContent='';
-    ['flowList','cal','alwList','cmp'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
+    ['flowList','cal','alwList','cmp','audit'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
     $('sumGrid').innerHTML='';$('dayPanel').innerHTML='';
     return;
   }
   recompute();
   renderHeader();renderConfig();renderAllowance();renderSummary();renderFlow();
-  renderCalendar();renderDayPanel();renderSpark();renderCompare();
+  renderCalendar();renderDayPanel();renderSpark();renderAudit();renderCompare();
 }
 
 function renderHeader(){
@@ -743,11 +778,11 @@ function renderHeader(){
 
 function renderSummary(){
   const {start,end}=CTX.range;
-  let inc=0,cashOut=0,chgOut=0,lowest=Infinity,lowDay=null;
+  let inc=0,cashOut=0,chgOut=0,goalOut=0,lowest=Infinity,lowDay=null;
   for(let d=new Date(start);d<=end;d=addDays(d,1)){
     const b=CTX.bal[dkey(d)];if(!b)continue;
     b.e.in.forEach(x=>inc+=x.amt);
-    b.e.out.forEach(x=>{if(x.type==='charge')chgOut+=x.amt;else cashOut+=x.amt;});
+    b.e.out.forEach(x=>{if(x.type==='charge')chgOut+=x.amt;else if(x.type==='goal')goalOut+=x.amt;else cashOut+=x.amt;});
     if(b.bal<lowest){lowest=b.bal;lowDay=new Date(d);}
   }
   const endBal=balanceAt(end),nowIn=(TODAY>=start&&TODAY<=end);
@@ -755,7 +790,7 @@ function renderSummary(){
   $('sumSub').textContent=nowIn?`今日 ${md(TODAY)} 時点`:'今日はこのサイクル外';
   $('sumGrid').innerHTML=`
     <div class="sum-cell"><div class="k">手元 ＋ 入金</div><div class="v mono">${yen(openCycle+inc)}</div><div class="s">開始時 ${yen(openCycle)} ＋ 入金 ${yen(inc)}</div></div>
-    <div class="sum-cell"><div class="k">出ていく</div><div class="v mono neg">${yen(cashOut+chgOut)}</div><div class="s">💳 ${yen(chgOut)} ／ 💵 ${yen(cashOut)}</div></div>
+    <div class="sum-cell"><div class="k">出ていく</div><div class="v mono neg">${yen(cashOut+chgOut+goalOut)}</div><div class="s">💳 ${yen(chgOut)} ／ 💵 ${yen(cashOut)}${goalOut?` ／ 🏦 ${yen(goalOut)}`:''}</div></div>
     <div class="sum-cell"><div class="k">${nowIn?'今日の手元':'期間の最低残高'}</div><div class="v mono ${(nowIn?balanceAt(TODAY):lowest)<0?'neg':''}">${yen(nowIn?balanceAt(TODAY):lowest)}</div><div class="s">${nowIn?`最低 ${yen(lowest)}（${lowDay?md(lowDay):'-'}）`:(lowDay?md(lowDay):'')}</div></div>
     <div class="sum-cell"><div class="k">次の給料日の直前</div><div class="v mono ${endBal<0?'neg':'pos'}">${yen(endBal)}</div><div class="s">${md(end)} 時点</div></div>`;
 }
@@ -835,6 +870,8 @@ function renderCalendar(){
     Object.keys(chg).forEach(p=>pips+=`<div class="pip chg" style="box-shadow:inset 2px 0 0 ${colorOf(p)}">💸${k1(chg[p])}</div>`);
     const cash=b.e.out.filter(x=>x.type==='cash').reduce((s,x)=>s+x.amt,0);
     if(cash)pips+=`<div class="pip cash">💵${k1(cash)}</div>`;
+    const gl=b.e.out.filter(x=>x.type==='goal').reduce((s,x)=>s+x.amt,0);
+    if(gl)pips+=`<div class="pip goal">🏦${k1(gl)}</div>`;
     const used=ITEMS.filter(it=>isCard(it.pay)&&dkey(it.buy)===key).length;
     if(used)pips+=`<div class="pip use">🛒${used}</div>`;
     const showMo=(d.getDate()===1||key===dkey(start));
@@ -874,6 +911,11 @@ function renderDayPanel(){
         +rows.map(x=>`<div class="it"><span class="d">${md(x.buy)}</span><span class="n">${esc(x.name)}</span><span class="a mono">${yen(x.amt)}</span></div>`).join('')+`</div>`;
     });
     h+=`</div>`;
+  }
+  const gls=b.e.out.filter(x=>x.type==='goal');
+  if(gls.length){
+    h+=`<div class="dp-sec"><div class="dp-sh">🏦 積立・返済<span class="t neg mono">−${yen(gls.reduce((s,x)=>s+x.amt,0))}</span></div>`
+      +gls.map(x=>`<div class="it"><span class="n">${esc(x.name)}</span><span class="a mono">${yen(x.amt)}</span></div>`).join('')+`</div>`;
   }
   const cash=b.e.out.filter(x=>x.type==='cash');
   if(cash.length){
@@ -922,8 +964,14 @@ function renderAllowance(){
   $('cashIn').value=(UI.cash&&UI.cash.v!=null)?UI.cash.v:Math.round(balanceAt(base));
   $('cashDate').textContent=md(cashAnchorDate());
 
-  const hint=UI.cash?'':'<span class="warn">← 実際の残高（銀行＋財布）を入れると精度が上がります</span>';
-  let h=`<div class="hero" onclick="this.querySelector('.brk').classList.toggle('open')">
+  let h='';
+  if(!UI.cash){
+    h+=`<div class="alert"><div class="alert-t">⚠️ 手元の現金がまだ未入力です</div>
+      <div class="alert-b">いまは本体の「繰越」${yen(CTX.opening)} を仮置きして計算しているので、<b>下の金額はあてになりません</b>。
+      上の欄に<b>銀行残高＋財布の中身の合計</b>を入れて「反映」を押してください。</div></div>`;
+  }
+  const hint=UI.cash?'':'<span class="warn">← まず実際の残高を入れてください</span>';
+  h+=`<div class="hero" onclick="this.querySelector('.brk').classList.toggle('open')">
       <div class="hero-k">💵 現金でいま使っていい額</div>
       <div class="hero-v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</div>
       <div class="hero-s">${md(base)}の手元 <b>${yen(balanceAt(base))}</b> に、${md(CTX.horizon)}までの引き落とし・支出・給料を全部織り込むと${dkey(low.day)===dkey(base)?'、この先は給料で増えていくので<b>今が一番きつい</b>状態です':`、<b>${md(low.day)}</b>が一番きつくなって残高 ${yen(low.raw)} まで減ります`}。${low.reserve>0?`そこから食費の残り予算 ${yen(low.reserve)} を確保した残りが使っていい額です。`:''}${low.amt<0?'<br><b class="neg">このままだと足りません。</b>':''}</div>
@@ -955,6 +1003,38 @@ function applyCash(){
   saveUI();renderAll();
 }
 
+function renderAudit(){
+  const ks=monthKeys();
+  if(!ks.length){$('audit').innerHTML='<div class="empty">データがありません</div>';return;}
+  let rows='',warn=[];
+  ks.forEach(k=>{
+    const st=DB.months[k]||{};
+    const sal=Number(st.salary)||0;
+    const fx=(st.fixed||[]).filter(f=>fixedActive(f,k));
+    const fxSum=fx.reduce((s2,f)=>s2+adopted(f),0);
+    const ex=(st.expenses||[]).filter(e=>!savingLinked(e));
+    const exSum=ex.reduce((s2,e)=>s2+adopted(e),0);
+    const gl=goalOutflowFor(k).reduce((s2,g)=>s2+g.amt,0);
+    const bad=(!sal||!ex.length);
+    if(!sal)warn.push(`${ymLabel(k)}は給料が0円です`);
+    if(!ex.length)warn.push(`${ymLabel(k)}は支出が0件です`);
+    rows+=`<tr class="${k===CUR?'cur':''} ${bad?'bad':''}"><td>${ymLabel(k)}</td>
+      <td>${yen(sal)}</td><td>${yen(fxSum)}<span class="muted">(${fx.length})</span></td>
+      <td>${yen(exSum)}<span class="muted">(${ex.length})</span></td><td>${yen(gl)}</td>
+      <td>${Number(st.foodBudget)||0?yen(Number(st.foodBudget)):'—'}</td></tr>`;
+  });
+  let refTxt='';
+  const refs=[];
+  ks.forEach(k=>{const t=refundsForYM(k).reduce((s2,r)=>s2+r.amt,0);if(t)refs.push(`${ymLabel(k)} ${yen(t)}`);});
+  if(refs.length)refTxt=`<br>収入に足している返金：${refs.join('・')}`;
+  const goalsTxt=(DB.goals||[]).length
+    ? (DB.goals||[]).map(g=>`${esc(g.name||'目標')} 毎月${yen(g.monthly||0)}`).join('・')
+    : '登録なし';
+  $('audit').innerHTML=
+    (warn.length?`<div class="alert"><div class="alert-t">⚠️ 抜けがあるかもしれません</div><div class="alert-b">${warn.slice(0,6).map(esc).join('<br>')}</div></div>`:'')
+    +`<table class="aud"><tr><th>月</th><th>給料</th><th>固定費</th><th>支出</th><th>積立</th><th>食費枠</th></tr>${rows}</table>`
+    +`<div class="tiny muted" style="margin-top:8px;line-height:1.7">積立・返済の設定：${goalsTxt}${refTxt}<br>カード設定：${cardNames().map(n=>`${esc(n)}（${cardConf()[n].close==='end'?'末':cardConf()[n].close}締/${cardConf()[n].payDay}日払）`).join('・')}</div>`;
+}
 function renderCompare(){
   const ks=monthKeys().filter(k=>k>=prevYM(CUR)&&k<=nextYM(CUR));
   if(!ks.length){$('cmp').innerHTML='<div class="empty">比較できる月がありません。</div>';return;}
@@ -963,10 +1043,11 @@ function renderCompare(){
     const r=cycleRange(k);
     let inc=0,cash=0,chg=0;
     ITEMS.forEach(it=>{if(it.charge>=r.start&&it.charge<=r.end){if(isCard(it.pay))chg+=it.amt;else cash+=it.amt;}});
+    const gout=goalOutflowFor(k).reduce((s2,g)=>s2+g.amt,0);
     const stK=stateFor(k)||{};
     inc=(Number(stK.salary)||0)+(stK.carryExtra||[]).reduce((s,c)=>s+(Number(c.amt)||0),0)+refundsForYM(k).reduce((s,x)=>s+x.amt,0);
     const open=(r.start>=CTX.start&&r.start<=CTX.end)?balanceAt(addDays(r.start,-1)):(Number(stK.carryover)||0);
-    const endBal=open+inc-cash-chg;
+    const endBal=open+inc-cash-chg-gout;
     return `<div class="cmp ${k===CUR?'open':''}">
       <div class="cmp-h" onclick="this.parentNode.classList.toggle('open')">
         <span>${ymLabel(k)}</span>
@@ -988,6 +1069,7 @@ function renderCompare(){
         <div class="kv"><span class="k">＋ 入金（給料・臨時・返金）</span><span class="v mono">${yen(inc)}</span></div>
         <div class="kv"><span class="k">− カード引き落とし</span><span class="v mono">${yen(chg)}</span></div>
         <div class="kv"><span class="k">− 現金・口座振替</span><span class="v mono">${yen(cash)}</span></div>
+        <div class="kv"><span class="k">− 積立・返済</span><span class="v mono">${yen(gout)}</span></div>
         <div class="kv tot"><span class="k">次の給料日の直前に残る</span><span class="v mono ${endBal<0?'neg':'pos'}">${yen(endBal)}</span></div>
       </div></div>`;
   }).join('');
