@@ -212,15 +212,22 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 
   <div class="io">
     <div class="io-state" id="ioState">読込中…</div>
-    <button class="btn" onclick="reimport()">🔄</button>
-    <button class="btn" onclick="toggleJson()">📄 JSON</button>
+    <button class="btn" id="btnGist" onclick="loadFromGist(true)">☁️ Gist</button>
+    <button class="btn" onclick="reimport()">📱 端末</button>
+    <button class="btn" onclick="toggleJson()">📄</button>
     <div style="flex-basis:100%" id="jsonBox" hidden>
       <textarea id="jsonIn" placeholder="Gistのバックアップ JSON を貼り付け（別ドメイン・別端末で見るとき用）"></textarea>
       <button class="btn pri" style="margin-top:7px" onclick="importJson()">この内容で表示</button>
     </div>
     <div style="flex-basis:100%" id="chgBox" hidden><div class="nt-body chg" id="chgBody"></div></div>
     <details class="nt" style="flex-basis:100%"><summary>ⓘ データの扱い</summary>
-      <div class="nt-body">このページは本体の保存データを<b>読むだけ</b>です。localStorage への書き込みは一度も行わないので、本体の表示にも Gist バックアップにも影響しません。画面上の設定（給料日・カードの引落日・起点残高）は sessionStorage に置いているため、本体データとは別管理でタブを閉じると消えます。</div>
+      <div class="nt-body">
+        <b>☁️ Gist</b>＝本体がクラウド保存している Gist から読み込みます（本体と同じ Token・Gist ID を使用）。端末をまたいでも同じデータが見られ、本体の最新の保存内容と必ず一致します。起動時に自動で読みに行き、失敗したら端末の保存データにフォールバックします。<br>
+        <b>📱 端末</b>＝このブラウザの localStorage から読み込みます（オフラインでも動作）。<br>
+        <b>📄</b>＝Gist のバックアップ JSON を貼り付けて表示します。<br><br>
+        いずれの場合も<b>読むだけ</b>です。Gist への書き戻し（PATCH/POST）は一切行わず、localStorage への書き込みも一度も行いません。本体の表示にも Gist の中身にも影響しません。Token は本体が localStorage に保存しているものをそのまま GitHub（または本体が設定した中継URL）へのリクエストにだけ使い、他のどこにも送りません。<br>
+        画面上の設定（給料日・カードの引落日・手元の現金）は sessionStorage に置いているため、本体データとは別管理でタブを閉じると消えます。
+      </div>
     </details>
   </div>
 
@@ -321,8 +328,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v0.4.0';
+const VERSION='v0.5.0';
 const CHANGELOG=[
+ {v:'v0.5.0',d:'2026-09-16',t:[
+   '本体と同じ Gist から直接読み込めるように。起動時に自動でクラウドを読みに行き、本体の最新の保存内容と必ず一致する状態で表示する（失敗したら端末の保存データにフォールバック）',
+   'データ元を「☁️ Gist／📱 端末／📄 JSON」で切り替え可能に。クラウドの最終保存時刻も表示',
+   'Gist と端末で月数が違う場合に注意を表示',
+   '※ Gist への書き戻しは一切行わない（GET のみ）']},
  {v:'v0.4.0',d:'2026-09-16',t:[
    '【不具合修正】積立・返済（借金返済など）が現金の流出として計上されていなかった。本体では毎月引かれている額が無視されていたため、「使っていい額」が月あたりその分だけ過大に出ていた',
    '「🔍 取り込んだデータの点検」を追加。月ごとの給料・固定費・支出・積立・食費枠を件数つきで表示し、給料0円や支出0件の月には警告を出す',
@@ -389,6 +401,51 @@ function readFromObject(o){
   Object.keys(o||{}).forEach(k=>{const mm=k.match(/^kakeibo_(\d{4})_(\d{2})$/);if(mm)db.months[+mm[1]*100+ +mm[2]]=o[k]||{};});
   return db;
 }
+// ── Gist から読み込む（本体と同じ Token / Gist ID を使う。GET のみで書き戻さない）──
+function ghCfg(){
+  try{return {token:localStorage.getItem('gh_token')||'',gist:localStorage.getItem('gh_gist_id')||'',
+              proxy:(localStorage.getItem('gh_proxy')||'').trim()};}
+  catch(e){return {token:'',gist:'',proxy:''};}
+}
+function ghBase(){const p=ghCfg().proxy;return p?p.replace(/\/+$/,''):'https://api.github.com';}
+let DB_LOCAL=null;   // 端末側のデータ（切り戻し用に保持）
+let GIST_STATE='';   // '' | 'loading' | 'ok' | 'error'
+
+async function loadFromGist(manual){
+  const c=ghCfg();
+  if(!c.token||!c.gist){
+    GIST_STATE='error';GIST_ERR=c.token?'Gist ID が未設定です':'Token が未設定です（本体の設定タブでクラウド同期を設定してください）';
+    showIO();if(manual)alert('本体側でクラウド同期が設定されていません。\n本体アプリの設定タブで Token と Gist ID を登録してから、もう一度お試しください。');
+    return false;
+  }
+  GIST_STATE='loading';showIO();
+  try{
+    // ※ X-GitHub-Api-Version は CORS 非許可ヘッダーのため付けない（本体と同じ）
+    const res=await fetch(`${ghBase()}/gists/${c.gist}`,{headers:{'Authorization':`Bearer ${c.token}`}});
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||('HTTP '+res.status));}
+    const json=await res.json();
+    const content=json.files&&json.files['kakeibo_data.json']&&json.files['kakeibo_data.json'].content;
+    if(!content)throw new Error('Gist に kakeibo_data.json がありません');
+    const db=readFromObject(JSON.parse(content));
+    if(!Object.keys(db.months).length)throw new Error('Gist に月データが入っていません');
+    db.source='☁️ Gist（クラウド）';
+    db.updatedAt=json.updated_at||'';
+    DB=db;GIST_STATE='ok';GIST_ERR='';
+    UI.cards=null;CUR=defaultCycle();SELDAY=null;
+    ITEMS=buildItems();showIO();renderAll();
+    return true;
+  }catch(e){
+    GIST_STATE='error';
+    GIST_ERR=(e&&e.message==='Failed to fetch')
+      ? (c.proxy?'中継サーバーに接続できませんでした':'GitHub に直接接続できません（本体の設定で中継URLを登録してください）')
+      : (e&&e.message?e.message:'不明なエラー');
+    showIO();
+    if(manual)alert('Gist から読み込めませんでした：\n'+GIST_ERR);
+    return false;
+  }
+}
+let GIST_ERR='';
+
 const monthKeys=()=>Object.keys(DB.months).map(Number).sort((a,b)=>a-b);
 const stateFor=k=>DB.months[k]||null;
 
@@ -1115,7 +1172,10 @@ function importJson(){
   DB=readFromObject(o);UI.cards=null;CUR=defaultCycle();SELDAY=null;
   ITEMS=buildItems();showIO();renderAll();$('jsonBox').hidden=true;
 }
-function reimport(){DB=readFromLocalStorage();UI.cards=null;CUR=defaultCycle();SELDAY=null;ITEMS=buildItems();showIO();renderAll();}
+function reimport(){
+  DB=DB_LOCAL?JSON.parse(JSON.stringify(DB_LOCAL)):readFromLocalStorage();
+  GIST_STATE='';UI.cards=null;CUR=defaultCycle();SELDAY=null;ITEMS=buildItems();showIO();renderAll();
+}
 function renderVersion(){
   $('verBadge').textContent=VERSION;
   $('chgBody').innerHTML=CHANGELOG.map(c=>
@@ -1124,20 +1184,37 @@ function renderVersion(){
 function toggleChg(){const b=$('chgBox');b.hidden=!b.hidden;if(!b.hidden)b.scrollIntoView({behavior:'smooth',block:'nearest'});}
 function showIO(){
   const ks=monthKeys();
-  $('ioState').innerHTML=ks.length
-    ? `✅ ${esc(DB.source)} <span class="muted">${ks.length}ヶ月分（${ymLabel(ks[0])}〜${ymLabel(ks[ks.length-1])}）</span>`
+  const b=$('btnGist');
+  if(b){b.textContent=GIST_STATE==='loading'?'☁️ …':'☁️ Gist';b.disabled=(GIST_STATE==='loading');}
+  let head=ks.length
+    ? `✅ <b>${esc(DB.source)}</b> <span class="muted">${ks.length}ヶ月分（${ymLabel(ks[0])}〜${ymLabel(ks[ks.length-1])}）</span>`
     : `⚠️ データが見つかりません`;
+  if(DB.updatedAt){
+    const t=new Date(DB.updatedAt);
+    head+=`<br><span class="muted tiny">クラウド最終保存 ${t.getMonth()+1}/${t.getDate()} ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}</span>`;
+  }
+  if(GIST_STATE==='loading')head+=`<br><span class="muted tiny">☁️ Gist を確認中…</span>`;
+  if(GIST_STATE==='error')head+=`<br><span class="warn tiny">☁️ Gist は読めませんでした（${esc(GIST_ERR)}）／端末のデータを表示中</span>`;
+  // 端末側と件数が違うときは知らせる（どちらが新しいかの手がかり）
+  if(GIST_STATE==='ok'&&DB_LOCAL){
+    const lk=Object.keys(DB_LOCAL.months).length;
+    if(lk!==ks.length)head+=`<br><span class="warn tiny">※ この端末の保存データは ${lk}ヶ月分です（Gist と件数が違います）</span>`;
+  }
+  $('ioState').innerHTML=head;
 }
 
 // ──────────────── 起動 ────────────────
 loadUI();
 renderVersion();
 DB=readFromLocalStorage();
+DB_LOCAL=JSON.parse(JSON.stringify(DB));
 cardConf();
 CUR=defaultCycle();
 ITEMS=buildItems();
 showIO();
 renderAll();
+// 本体と同じ Gist が設定されていれば、そちらを正として読み直す（失敗しても端末データのまま）
+if(ghCfg().token&&ghCfg().gist)loadFromGist(false);
 </script>
 </body>
 </html>
