@@ -180,6 +180,18 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 .bsub{font-size:10px;color:var(--text3);padding:2px 0 2px 12px;display:flex;gap:8px;}
 .bsub .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tap{font-size:9px;color:var(--text3);margin-top:6px;}
+.mir{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:11px;}
+.mir-2{display:flex;gap:10px;}
+.mir-c{flex:1;text-align:center;}
+.mir-k{font-size:10px;color:var(--text2);margin-bottom:2px;}
+.mir-v{font-size:19px;font-weight:800;}
+.mir-s{font-size:9px;color:var(--text2);margin-top:3px;}
+.mir-sep{width:1px;background:var(--border);}
+.mir-tot{border-top:1px solid var(--border);margin-top:10px;padding-top:8px;text-align:center;font-size:10px;color:var(--text2);}
+.mir-tot b{font-size:18px;margin-left:8px;}
+.mir-cmp{display:flex;align-items:baseline;gap:8px;margin-top:9px;padding:8px 10px;background:var(--surface);border:1px dashed var(--border);border-radius:var(--rs);font-size:11px;}
+.mir-cmp .k{flex:1;color:var(--text2);}
+.mir-cmp .v{font-weight:800;font-variant-numeric:tabular-nums;}
 .alert{background:#4a2020;border:1px solid var(--red);border-radius:var(--r);padding:11px 13px;margin-bottom:9px;}
 .alert-t{font-size:12px;font-weight:800;color:#ffc2cf;margin-bottom:4px;}
 .alert-b{font-size:10px;color:#ffd9e1;line-height:1.7;}
@@ -247,6 +259,21 @@ details.cfg>summary::-webkit-details-marker{display:none;}
         なので<b>今月まだ使っていない現金も、この額に含まれています</b>。本体アプリの「食費／自由費の残り」は<u>予算の残り枠</u>ですが、こちらは<u>実際に手元にあるお金</u>の話なので、数字が違って当然です。<br><br>
         <b>カードの行</b>は、その引き落とし日より後だけを見ています。引き落とし日より前に給料が入るなら、その給料も原資に入るので現金より大きい額になります。逆に給料より先に引き落としが来るカードは小さくなります。<br><br>
         ここに入れる「手元の現金」は、<b>銀行残高＋財布の中身の合計</b>を入れてください。入れた値はこの画面にだけ効き、本体アプリには保存されません。
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="card-h">📱 本体アプリの表示をそのまま<span class="sub" id="mirSub"></span></div>
+    <div id="mirror"></div>
+    <details class="nt"><summary>ⓘ なぜ本体と数字が違うのか</summary>
+      <div class="nt-body">
+        上の枠は<b>本体 index.html のコードを隠しフレームで実際に動かして、本体が描いた数字をそのまま読み出したもの</b>です。式を書き写していないので、本体とズレようがありません。
+        （本体を動かすときの localStorage は偽物に差し替えているので、本物のデータは1バイトも変わりません。通信も塞いでいるので Gist にも触れません。）<br><br>
+        そのうえで<b>本体の「合計」と、このページの「使っていい額」は、そもそも別のものを数えています</b>。<br>
+        ・本体の合計＝<b>予算の残り枠</b>。「今月の給料プールの残り」＋「来月の給料プールの残り」。給料はまだ入っていなくても、枠として最初から満額あるものとして数える<br>
+        ・このページ＝<b>実際に手元にある金</b>。今の残高から、この先の引き落とし・支出を引き、まだ入っていない給料は入る日が来るまで足さない<br><br>
+        なので「来月の給料が入る前に大きい引き落としがある」ような月は、本体の方が大きく出ます。どちらが正しいというより、<b>本体＝使いすぎていないかの物差し／こちら＝今日引き出して大丈夫かの物差し</b>です。
       </div>
     </details>
   </div>
@@ -328,8 +355,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v0.5.0';
+const VERSION='v0.6.0';
 const CHANGELOG=[
+ {v:'v0.6.0',d:'2026-09-16',t:[
+   '本体アプリのコードを隠しフレームで実際に起動し、本体が描いた数字をそのまま読み出す方式に変更。式を書き写さないので本体とズレようがない',
+   '「📱 本体アプリの表示をそのまま」を追加。食費／自由費の残り合計・現金／クレカの内訳・合計を本体と同じ並びで表示し、このページの数字との差も出す',
+   '本体を動かすときの localStorage は偽物に差し替え、通信も塞ぐため、本物のデータにも Gist にも一切触れない',
+   '本体と数字が違う理由（予算の残り枠 vs 実際の手元の金）を注釈に明記']},
  {v:'v0.5.0',d:'2026-09-16',t:[
    '本体と同じ Gist から直接読み込めるように。起動時に自動でクラウドを読みに行き、本体の最新の保存内容と必ず一致する状態で表示する（失敗したら端末の保存データにフォールバック）',
    'データ元を「☁️ Gist／📱 端末／📄 JSON」で切り替え可能に。クラウドの最終保存時刻も表示',
@@ -391,13 +423,14 @@ function readFromLocalStorage(){
       else if(k==='kakeibo_settings')db.settings=v||{};
       else if(k==='kakeibo_goals')db.goals=v||[];
       else if(k==='kakeibo_refunds')db.refunds=v||[];
+      else if(k==='kakeibo_schedules')db.schedules=v||{};
     }
   }catch(e){db.source='localStorage を読めませんでした';}
   return db;
 }
 // 本体の collectAllData() 形式（Gist バックアップ）をそのまま受け取る
 function readFromObject(o){
-  const db={months:{},settings:o.kakeibo_settings||{},goals:o.kakeibo_goals||[],refunds:o.kakeibo_refunds||[],source:'貼り付けJSON'};
+  const db={months:{},settings:o.kakeibo_settings||{},goals:o.kakeibo_goals||[],refunds:o.kakeibo_refunds||[],schedules:o.kakeibo_schedules||{},source:'貼り付けJSON'};
   Object.keys(o||{}).forEach(k=>{const mm=k.match(/^kakeibo_(\d{4})_(\d{2})$/);if(mm)db.months[+mm[1]*100+ +mm[2]]=o[k]||{};});
   return db;
 }
@@ -432,7 +465,7 @@ async function loadFromGist(manual){
     db.updatedAt=json.updated_at||'';
     DB=db;GIST_STATE='ok';GIST_ERR='';
     UI.cards=null;CUR=defaultCycle();SELDAY=null;
-    ITEMS=buildItems();showIO();renderAll();
+    ITEMS=buildItems();showIO();renderAll();bootSandbox();
     return true;
   }catch(e){
     GIST_STATE='error';
@@ -688,6 +721,90 @@ function appTotals(kym){
   }finally{APP_MODE=false;}
 }
 
+// ──────────────── 本体アプリのコードをそのまま動かして数字を取る ────────────────
+// 再実装した式が本体とズレる問題を根本から無くすため、index.html を隠しフレームで
+// 実際に起動し、本体が描画した数字をそのまま読み出す。
+//  - localStorage は偽物（メモリ）に差し替えるので、本物のデータは一切書き換わらない
+//  - fetch も潰すので、本体の自動クラウド同期は走らない（Gistにも触れない）
+let SB={frame:null,win:null,doc:null,state:'idle',err:'',cache:{}};
+
+function seedFromDB(){
+  const o={};
+  Object.keys(DB.months).forEach(k=>{
+    const y=Math.floor(k/100),m=k%100;
+    o['kakeibo_'+y+'_'+pad2(m)]=JSON.stringify(DB.months[k]);
+  });
+  o['kakeibo_settings']=JSON.stringify(DB.settings||{});
+  o['kakeibo_goals']=JSON.stringify(DB.goals||[]);
+  o['kakeibo_refunds']=JSON.stringify(DB.refunds||[]);
+  o['kakeibo_schedules']=JSON.stringify(DB.schedules||{});
+  return o;
+}
+const SHIM=`<script>(function(){
+  var mem=__SEED__;
+  var fake={
+    getItem:function(k){return Object.prototype.hasOwnProperty.call(mem,k)?mem[k]:null;},
+    setItem:function(k,v){mem[k]=String(v);},
+    removeItem:function(k){delete mem[k];},
+    clear:function(){mem={};},
+    key:function(i){return Object.keys(mem)[i]||null;}
+  };
+  Object.defineProperty(fake,'length',{get:function(){return Object.keys(mem).length;}});
+  try{Object.defineProperty(window,'localStorage',{configurable:true,get:function(){return fake;}});}catch(e){}
+  window.fetch=function(){return Promise.reject(new Error('sandbox'));};
+  window.alert=function(){};window.confirm=function(){return false;};window.prompt=function(){return null;};
+  window.__SANDBOX__=true;
+})();<\/script>`;
+
+let SB_TOKEN=0;
+async function bootSandbox(){
+  const tk=++SB_TOKEN;
+  SB.state='loading';SB.cache={};renderMirror();
+  try{
+    const res=await fetch('index.html',{cache:'no-cache'});
+    if(tk!==SB_TOKEN)return;                     // 後から別の起動が始まっていたら捨てる
+    if(!res.ok)throw new Error('index.html を読めません（HTTP '+res.status+'）');
+    let html=await res.text();
+    if(tk!==SB_TOKEN)return;
+    const seed=JSON.stringify(seedFromDB()).replace(/</g,'\\u003c');
+    const shim=SHIM.replace('__SEED__',seed);
+    if(html.indexOf('<head>')<0)throw new Error('index.html の形式が想定外です');
+    html=html.replace('<head>','<head>'+shim);
+    if(SB.frame)SB.frame.remove();
+    const f=document.createElement('iframe');
+    f.style.cssText='position:absolute;left:-9999px;top:0;width:430px;height:900px;opacity:0;pointer-events:none;border:0;';
+    document.body.appendChild(f);
+    SB.frame=f;
+    await new Promise((ok,ng)=>{
+      f.onload=ok;f.onerror=()=>ng(new Error('フレームの読み込みに失敗'));
+      f.src=URL.createObjectURL(new Blob([html],{type:'text/html'}));
+      setTimeout(()=>ng(new Error('タイムアウト')),15000);
+    });
+    await new Promise(r=>setTimeout(r,400));   // init() の完了待ち
+    if(tk!==SB_TOKEN){f.remove();return;}
+    SB.win=f.contentWindow;SB.doc=f.contentDocument;
+    if(!SB.win||typeof SB.win.goToMonth!=='function')throw new Error('本体の関数を呼び出せません');
+    SB.state='ok';SB.err='';
+  }catch(e){
+    SB.state='error';SB.err=(e&&e.message)?e.message:'不明なエラー';
+  }
+  renderMirror();
+}
+// 指定の給料月に切り替えて、本体が描画した文字列をそのまま読み出す
+function sandboxRead(kym){
+  if(SB.state!=='ok')return null;
+  if(SB.cache[kym])return SB.cache[kym];
+  try{
+    SB.win.goToMonth(kym,'mikomi');
+    const t=id=>{const el=SB.doc.getElementById(id);return el?el.textContent.trim():'';};
+    const o={food:t('foodLeftTop'),foodCash:t('foodCashTop'),foodCard:t('foodCardTop'),
+             jiyu:t('jiyuLeftTop'),jiyuCash:t('jiyuCashTop'),jiyuCard:t('jiyuCardTop'),
+             total:t('totalLeftTop'),pool:t('methodTotalLeft')};
+    SB.cache[kym]=o;return o;
+  }catch(e){SB.state='error';SB.err='読み出しに失敗：'+(e.message||e);return null;}
+}
+const num=t=>Number(String(t||'').replace(/[\u2212]/g,'-').replace(/[^\-0-9]/g,''))||0;
+
 // ──────────────── 状態 ────────────────
 let CUR=null,CTX=null,SELDAY=null;
 
@@ -818,12 +935,12 @@ const colorOf=n=>{const i=cardNames().indexOf(n);return i<0?'#8a8aa8':CARD_COLOR
 function renderAll(){
   if(!monthKeys().length){
     $('cycMain').textContent='データがありません';$('cycSub').textContent='';
-    ['flowList','cal','alwList','cmp','audit'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
+    ['flowList','cal','alwList','cmp','audit','mirror'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
     $('sumGrid').innerHTML='';$('dayPanel').innerHTML='';
     return;
   }
   recompute();
-  renderHeader();renderConfig();renderAllowance();renderSummary();renderFlow();
+  renderHeader();renderConfig();renderAllowance();renderMirror();renderSummary();renderFlow();
   renderCalendar();renderDayPanel();renderSpark();renderAudit();renderCompare();
 }
 
@@ -1060,6 +1177,39 @@ function applyCash(){
   saveUI();renderAll();
 }
 
+function renderMirror(){
+  const el=$('mirror');if(!el)return;
+  const sub=$('mirSub');
+  if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';if(sub)sub.textContent='';return;}
+  if(SB.state==='error'){
+    el.innerHTML=`<div class="alert"><div class="alert-t">⚠️ 本体の数字を読み出せませんでした</div>
+      <div class="alert-b">${esc(SB.err)}<br>下の「本体アプリの数字と見比べる」は、こちらで計算した値を表示します。</div></div>`;
+    if(sub)sub.textContent='';return;
+  }
+  if(SB.state!=='ok'){el.innerHTML='<div class="empty">待機中…</div>';return;}
+  const r=sandboxRead(CUR);
+  if(!r){el.innerHTML='<div class="empty">読み出せませんでした</div>';return;}
+  if(sub)sub.textContent=`${ymLabel(CUR)}ビュー`;
+  const cls=t=>num(t)<0?'neg':'pos';
+  // このページ側の「使っていい額」と並べる
+  const base=(TODAY>=CTX.start&&TODAY<=CTX.horizon)?TODAY:CTX.range.start;
+  const low=lowPointFrom(base);
+  const diff=num(r.total)-low.amt;
+  el.innerHTML=`<div class="mir">
+    <div class="mir-2">
+      <div class="mir-c"><div class="mir-k">🍚 食費 残り合計</div>
+        <div class="mir-v ${cls(r.food)}">${esc(r.food)}</div>
+        <div class="mir-s">現金(今月) <b>${esc(r.foodCash)}</b> ／ クレカ <b>${esc(r.foodCard)}</b></div></div>
+      <div class="mir-sep"></div>
+      <div class="mir-c"><div class="mir-k">💴 自由費 残り合計</div>
+        <div class="mir-v ${cls(r.jiyu)}">${esc(r.jiyu)}</div>
+        <div class="mir-s">現金(今月) <b>${esc(r.jiyuCash)}</b> ／ クレカ <b>${esc(r.jiyuCard)}</b></div></div>
+    </div>
+    <div class="mir-tot">💰 合計（今月の残り＋来月の使える分）<b class="${cls(r.total)}">${esc(r.total)}</b></div>
+  </div>
+  <div class="mir-cmp"><span class="k">🧪 このページの「自由に使っていい」</span><span class="v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</span></div>
+  <div class="mir-cmp"><span class="k">差（本体の合計 − このページ）</span><span class="v mono ${diff<0?'neg':''}">${diff>=0?'+':''}${yen(diff)}</span></div>`;
+}
 function renderAudit(){
   const ks=monthKeys();
   if(!ks.length){$('audit').innerHTML='<div class="empty">データがありません</div>';return;}
@@ -1170,11 +1320,11 @@ function importJson(){
   if(!t){alert('JSONを貼り付けてください');return;}
   let o;try{o=JSON.parse(t);}catch(e){alert('JSONとして読めませんでした：'+e.message);return;}
   DB=readFromObject(o);UI.cards=null;CUR=defaultCycle();SELDAY=null;
-  ITEMS=buildItems();showIO();renderAll();$('jsonBox').hidden=true;
+  ITEMS=buildItems();showIO();renderAll();bootSandbox();$('jsonBox').hidden=true;
 }
 function reimport(){
   DB=DB_LOCAL?JSON.parse(JSON.stringify(DB_LOCAL)):readFromLocalStorage();
-  GIST_STATE='';UI.cards=null;CUR=defaultCycle();SELDAY=null;ITEMS=buildItems();showIO();renderAll();
+  GIST_STATE='';UI.cards=null;CUR=defaultCycle();SELDAY=null;ITEMS=buildItems();showIO();renderAll();bootSandbox();
 }
 function renderVersion(){
   $('verBadge').textContent=VERSION;
@@ -1213,6 +1363,7 @@ CUR=defaultCycle();
 ITEMS=buildItems();
 showIO();
 renderAll();
+bootSandbox();
 // 本体と同じ Gist が設定されていれば、そちらを正として読み直す（失敗しても端末データのまま）
 if(ghCfg().token&&ghCfg().gist)loadFromGist(false);
 </script>
