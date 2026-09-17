@@ -392,8 +392,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.4.0';
+const VERSION='v1.5.0';
 const CHANGELOG=[
+ {v:'v1.5.0',d:'2026-09-17',t:[
+   '【重要】内訳が「表示中の月＋1」を機械的に「カードで今切れる分」として出しており、今日のカードが実際に乗る給料プールと違っていた。今日の支払いが実際に乗るプールだけを対象にするよう作り直した',
+   '各カードについて「今日買う → ◯/◯締め → ◯/◯引き落とし → その時点で入っている給料 → ◯月の給料まで当てにできる」という連鎖を表示',
+   '予定リストの期間を、今日の支払いが落ちきるところまで自動で延長（15日締め翌月10日払いのカードなど、2ヶ月先の引き落としも入る）',
+   '給料プールの内訳も、今日の支払いが乗るプールだけを並べるようにした']},
  {v:'v1.4.0',d:'2026-09-17',t:[
    '【重要】「今日いくら使っていいか」を支払い方法ごとに表示する枠を最上部に新設。現金は今まさに回している給料から、カードは引き落とし日を賄う給料から出るため、使える枠が手段ごとに違う',
    'これまで現金の枠を1ヶ月あとの給料プールで見ていた。給料日前は今日の現金支出が前の月の給料から出るため、正しいプールに直した',
@@ -1277,8 +1282,8 @@ function poolLedger(kym,role){
 // これからの引き落とし・給料の予定（残高には依らない純粋なスケジュール）
 function scheduleRows(fromD,toD){
   const ev=[];
-  let k=prevYM(CUR);
-  for(let i=0;i<4;i++){
+  let k=cycleOfDate(fromD);
+  for(let i=0;i<6;i++){
     const pd=payDate(k),st=stateFor(k);
     if(st&&pd>=fromD&&pd<=toD){
       const sal=Number(st.salary)||0;
@@ -1334,9 +1339,19 @@ function renderToday(){
     if(v==null){ok=false;return;}
     const isCash=(nm==='現金');
     const c=isCash?'var(--yellow)':colorOf(nm);
-    let sub=isCash
-      ? `今日払うと <b>${ymLabel(r.pool)}の給料</b>から出ます（${md(payDate(r.pool))}入金ぶん）`
-      : `今日買うと <b>${md(r.charge)} 引き落とし</b> → <b>${ymLabel(r.pool)}の給料</b>から`;
+    let sub;
+    if(isCash){
+      sub=`今日払うと即座に出ます → <b>${ymLabel(r.pool)}の給料</b>（${md(payDate(r.pool))}入金）から`;
+    }else{
+      APP_MODE=true;const w=usageWindow(r.charge,nm);APP_MODE=false;
+      // 引き落とし日までに入っている給料を並べる（＝どこまでの給料を当てにできるか）
+      const got=[];let k=prevYM(prevYM(r.pool));
+      for(let i=0;i<5;i++){const p=payDate(k);if(p<=r.charge)got.push({k,p});k=nextYM(k);}
+      const last=got.length?got[got.length-1]:null;
+      sub=`今日(${md(TODAY)})買う → <b>${w?md(w.to):'?'} 締め</b> → <b>${md(r.charge)} 引き落とし</b>`
+        +`<br>その時点で入っている給料：${got.slice(-3).map(g=>md(g.p)).join('・')}`
+        +` → <b>${ymLabel(r.pool)}の給料</b>まで当てにできる`;
+    }
     const alt=isCash?null:altPoolFor(nm,TODAY);
     if(alt&&alt.pool!==r.pool){
       sub+=`<br><span class="tiny">${alt.close}日締め：${alt.passed
@@ -1357,59 +1372,63 @@ function renderToday(){
 function renderMoney(){
   const el=$('money');if(!el)return;
   if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';renderCashView();return;}
-  const t=SBT(CUR),tN=SBT(nextYM(CUR));
-  if(!t||!tN){
+  if(SB.state!=='ok'){
     el.innerHTML=`<div class="alert"><div class="alert-t">⚠️ 本体の数字を読み出せませんでした</div><div class="alert-b">${esc(SB.err||'起動できませんでした')}</div></div>`;
     renderCashView();return;
   }
-  const NX=nextYM(CUR);
-  const a=t.foodLeft+t.jiyuLeft, b=tN.foodLeft+tN.jiyuLeft, tot=a+b;
-  const dA=payDate(CUR), dB=payDate(NX);
-  $('moneySub').textContent='本体アプリと同じ数字';
+  // 今日の支払いが実際に乗るプールだけを対象にする（表示中の月＋1 ではない）
+  const cashPool=appPoolFor('現金',TODAY).pool;
+  const cardOf={};                       // pool → [カード名]
+  let lastCharge=null;
+  cardNames().forEach(n=>{
+    const r=appPoolFor(n,TODAY);
+    (cardOf[r.pool]||(cardOf[r.pool]=[])).push({n,charge:r.charge});
+    if(!lastCharge||r.charge>lastCharge)lastCharge=r.charge;
+  });
+  const poolsUsed=[cashPool].concat(Object.keys(cardOf).map(Number)).filter((v,i,a)=>a.indexOf(v)===i).sort((x,y)=>x-y);
+  const leftOf=k=>{const t=SBT(k);return t?t.foodLeft+t.jiyuLeft:0;};
+  const cashLeft=leftOf(cashPool);
+  const cardPools=Object.keys(cardOf).map(Number).sort((x,y)=>x-y);
+  const cardLeft=cardPools.reduce((s2,k)=>s2+leftOf(k),0);
+  const tot=cashLeft+(cardPools.includes(cashPool)?0:cardLeft);
 
-  // 次の給料プールが足りないぶんは、今のプールから補填する
-  let story;
-  if(b<0){
-    story=`<div class="story">
-      <div class="srow"><span>${ymLabel(CUR)}の給料の残り</span><b class="mono pos">${yen(a)}</b></div>
-      <div class="srow"><span>${ymLabel(NX)}の給料は <b class="neg">${yen(b)}</b> 足りない → ここから補填</span><b class="mono neg">${yen(b)}</b></div>
-      <div class="srow tot"><span>🆓 だから今使っていいのは</span><b class="mono ${tot<0?'neg':'pos'}">${yen(tot)}</b></div>
-    </div>`;
-  }else{
-    story=`<div class="story">
-      <div class="srow"><span>${ymLabel(CUR)}の給料の残り（現金で今使える）</span><b class="mono ${a<0?'neg':'pos'}">${yen(a)}</b></div>
-      <div class="srow"><span>${ymLabel(NX)}の給料の残り（カードで今切れる）</span><b class="mono ${b<0?'neg':'pos'}">${yen(b)}</b></div>
-      <div class="srow tot"><span>🆓 合わせて今使っていいのは</span><b class="mono ${tot<0?'neg':'pos'}">${yen(tot)}</b></div>
-    </div>`;
-  }
+  let story=`<div class="story">
+    <div class="srow"><span>💵 現金で今使う → <b>${ymLabel(cashPool)}の給料</b>の残り</span><b class="mono ${cashLeft<0?'neg':'pos'}">${yen(cashLeft)}</b></div>`;
+  cardPools.forEach(k=>{
+    const v=leftOf(k);
+    story+=`<div class="srow"><span>💳 ${cardOf[k].map(c=>esc(c.n.replace(/カード$/,''))).join('・')} で今切る → <b>${ymLabel(k)}の給料</b>の残り</span><b class="mono ${v<0?'neg':'pos'}">${yen(v)}</b></div>`;
+  });
+  story+=`<div class="srow tot"><span>🆓 合わせて今使っていいのは</span><b class="mono ${tot<0?'neg':'pos'}">${yen(tot)}</b></div></div>`;
 
-  // 保持しておくべき額＝これから出ていく予定の合計
-  // 今日がまだこの給料の期間より前でも、今日以降に起きる予定は全部見せる
-  const to=cycleRange(NX).end;
-  const from=(TODAY<=to)?TODAY:cycleRange(CUR).start;
-  const sch=scheduleRows(from,to);
+  // 予定：今日 〜 今日の支払いが落ちきるところまで
+  const to=poolsUsed.reduce((d,k)=>{const e=cycleRange(k).end;return (!d||e>d)?e:d;},lastCharge);
+  const sch=scheduleRows(TODAY,to);
   const outSum=sch.filter(x=>x.sign<0).reduce((s2,x)=>s2+x.amt,0);
   const inSum=sch.filter(x=>x.sign>0).reduce((s2,x)=>s2+x.amt,0);
   const schRows=sch.map(x=>
     `<div class="srow2"><span class="d">${md(x.d)}</span><span class="n">${x.icon} ${esc(x.name)}</span><span class="a mono ${x.sign>0?'pos':''}">${x.sign>0?'+':'−'}${yen(x.amt)}</span></div>`).join('')
     ||'<div class="empty">この期間の予定はありません</div>';
 
+  $('moneySub').textContent='今日の支払いが乗る給料';
   el.innerHTML=`<div class="hero">
-      <div class="hero-k">🆓 いま使っていい額</div>
+      <div class="hero-k">🆓 今日使っていい額（合計）</div>
       <div class="hero-v mono ${tot<0?'neg':'pos'}">${yen(tot)}</div>
-      <div class="hero-s">${md(dB)}に入る給料と、そこまでに落ちるカード分まで差し引いた後の額です。</div>
+      <div class="hero-s">現金とカードでは引き落とし時期が違うので、使う先の給料も別です。合計は「現金の枠＋カードの枠」。</div>
     </div>
     ${story}
-    <div class="sect2">📅 ${md(from)} 〜 ${md(to)} の予定</div>
+    <div class="sect2">📅 ${md(TODAY)} 〜 ${md(to)} の予定</div>
     <div class="sched">${schRows}</div>
     <div class="schsum">
       <div><span class="k">入ってくる</span><span class="v mono pos">+${yen(inSum)}</span></div>
       <div><span class="k">🔒 出ていくので取っておく</span><span class="v mono neg">−${yen(outSum)}</span></div>
     </div>
-    <div class="sect2">💰 どの給料から出ていくか</div>
-    ${poolLedger(CUR,`💵 ${ymLabel(CUR)}の給料（${md(dA)}入金）`)}
-    ${poolLedger(NX,`💳 ${ymLabel(NX)}の給料（${md(dB)}入金）`)}
-    <div class="tiny muted" style="margin-top:4px;line-height:1.7">いま現金で払う分は上段から、いまカードで切る分は下段から引かれます。</div>`;
+    <div class="sect2">💰 その給料の中身</div>
+    ${poolsUsed.map(k=>{
+      const tags=[];
+      if(k===cashPool)tags.push('💵 現金');
+      if(cardOf[k])tags.push('💳 '+cardOf[k].map(c=>esc(c.n.replace(/カード$/,''))).join('・'));
+      return poolLedger(k,`${ymLabel(k)}の給料（${md(payDate(k))}入金）<span class="tiny muted">${tags.join(' ／ ')}</span>`);
+    }).join('')}`;
   renderCashView();
 }
 // 手元の現金ベースの試算（折りたたみの中・実験扱い）
