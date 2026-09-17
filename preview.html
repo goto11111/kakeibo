@@ -180,6 +180,16 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 .bsub{font-size:10px;color:var(--text3);padding:2px 0 2px 12px;display:flex;gap:8px;}
 .bsub .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tap{font-size:9px;color:var(--text3);margin-top:6px;}
+.chain{border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;}
+.chead{display:flex;gap:8px;padding:6px 10px;background:var(--surface2);font-size:9px;color:var(--text3);font-weight:700;}
+.crow{border-top:1px solid var(--border);cursor:pointer;}
+.ctop{display:flex;gap:8px;align-items:baseline;padding:8px 10px;}
+.cm{flex:1;font-size:12px;font-weight:700;}
+.cf{width:92px;text-align:right;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;}
+.cb{width:96px;text-align:right;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;}
+.chead .cm{font-weight:700;}
+.crow .brk{padding:0 10px 9px;}
+.crow.open .brk{display:block;}
 .story{border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;margin-bottom:11px;}
 .srow{display:flex;align-items:baseline;gap:8px;padding:8px 11px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text2);}
 .srow:last-child{border-bottom:0;}
@@ -290,7 +300,19 @@ details.cfg>summary::-webkit-details-marker{display:none;}
   </div>
 
   <div class="card">
-    <div class="card-h">💰 月ごとの内訳<span class="sub" id="moneySub"></span></div>
+    <div class="card-h">🔄 繰り越して計算した残高<span class="sub">毎月の余りを次の月へ持ち越し</span></div>
+    <div id="chain"></div>
+    <details class="nt"><summary>ⓘ 本体アプリとの考え方の違い</summary>
+      <div class="nt-body">
+        <b>本体アプリは給料月ごとに独立した財布として扱います。</b>前の月が余っても、その額を手で「繰越」に入れない限り次の月には繋がりません。毎月こまかく調整できる利点がありますが、通しで見ると分かりづらくなります。<br><br>
+        <b>ここでは毎月の余りを自動で次の月へ持ち越します。</b>各月の「純粋な収支」＝本体の残り − その月に手入力された繰越、として手入力分を打ち消してから積み上げているので、二重計上は起きません。<br><br>
+        起点は本体の繰越を初期値にしていますが、実際の口座残高＋財布の合計を入れると、そこからの本当の推移になります。入れた値はこの画面にだけ効き、本体には保存されません。
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="card-h">💰 月ごとの内訳（本体と同じ独立会計）<span class="sub" id="moneySub"></span></div>
     <div id="money"></div>
     <details class="nt"><summary>💵 手元の現金から見た場合（実験）</summary>
       <div class="nt-body" style="padding:0;background:transparent;">
@@ -392,8 +414,14 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.7.0';
+const VERSION='v2.0.0';
 const CHANGELOG=[
+ {v:'v2.0.0',d:'2026-09-17',t:[
+   '毎月の余りを次の月へ自動で持ち越す「繰り越して計算した残高」を新設。本体は給料月ごとに独立した財布として扱うため通しの残高が出なかった',
+   '月ごとに「前月から繰り越し ＋ 入る − 出る ＝ 月末に残る」を表示。タップで固定費・積立・カード引き落とし・使った分の内訳が開く',
+   '最後に「◯月まで払い終えて残るのは ¥X」を表示。途中でマイナスになる月があれば、その額と、そこを割らない上限も出す',
+   '開始残高は本体の繰越を初期値にしつつ、実際の口座残高で上書き可能',
+   '各月の収支は「本体の残り − その月に手入力された繰越」で求めており、手入力の繰越を打ち消してから積み上げるので二重計上しない']},
  {v:'v1.7.0',d:'2026-09-17',t:[
    '予定の合計を「入ってくる」「出ていくカードの引き落とし」「出ていくその他」の3つに分け、単純な差し引きを出すようにした',
    '給料ごとの残りは、その引き落としをすでに引いた後の数字である旨を明記。残りの横に「取っておく合計」を並べていたため、カードを二重に引いているように読めていた',
@@ -500,7 +528,7 @@ const TODAY=new Date(new Date().getFullYear(),new Date().getMonth(),new Date().g
 
 // ──────────────── 画面設定（sessionStorage のみ・本体と非共有） ────────────────
 const UI_KEY='cycleview_ui_v1';
-const UI_DEFAULT={payDay:25,payShift:'back',cash:null,cards:null,reserveFood:true}; // cash={d:'YYYY-MM-DD',v:金額}
+const UI_DEFAULT={payDay:25,payShift:'back',cash:null,cards:null,reserveFood:true,startBal:null,chainAll:false}; // cash={d:'YYYY-MM-DD',v:金額}
 let UI=Object.assign({},UI_DEFAULT);
 function loadUI(){try{const s=sessionStorage.getItem(UI_KEY);if(s)UI=Object.assign({},UI_DEFAULT,JSON.parse(s));}catch(e){}}
 function saveUI(){try{sessionStorage.setItem(UI_KEY,JSON.stringify(UI));}catch(e){}}
@@ -898,7 +926,7 @@ async function bootSandbox(){
   if(tk!==SB_TOKEN)return;
   // 本体の数字に依存する表示は、起動が終わってから描き直す
   renderMirror();
-  if(CTX){renderToday();renderMoney();renderAudit();}
+  if(CTX){renderToday();renderChain();renderMoney();renderAudit();}
 }
 // 指定の給料月に切り替えて、本体が描画した文字列をそのまま読み出す
 function sandboxRead(kym){
@@ -1058,12 +1086,12 @@ const colorOf=n=>{const i=cardNames().indexOf(n);return i<0?'#8a8aa8':CARD_COLOR
 function renderAll(){
   if(!monthKeys().length){
     $('cycMain').textContent='データがありません';$('cycSub').textContent='';
-    ['flowList','cal','cmp','audit','mirror','money','today'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
+    ['flowList','cal','cmp','audit','mirror','money','today','chain'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
     $('dayPanel').innerHTML='';
     return;
   }
   recompute();
-  renderHeader();renderConfig();syncCashInput();renderToday();renderMoney();renderMirror();renderFlow();
+  renderHeader();renderConfig();syncCashInput();renderToday();renderChain();renderMoney();renderMirror();renderFlow();
   $('todayLbl').textContent=md(TODAY)+'に';
   renderCalendar();renderDayPanel();renderSpark();renderAudit();renderCompare();
 }
@@ -1378,6 +1406,91 @@ function renderToday(){
   if(!ok||!rows){el.innerHTML='';return;}
   el.innerHTML=`<div class="tiny muted" style="margin-bottom:8px;line-height:1.7">同じ給料から引かれるカードは、残りを分け合います（合算ではありません）。</div>${rows}`;
 }
+// ── 繰り越して積み上げる計算 ──
+// 本体は給料月ごとに独立した財布（前月の余りは carryover を手入力しない限り繋がらない）。
+// ここでは各月の「純粋な収支」を出し、前月の残高に積み上げて連続した残高にする。
+//   本体の残り(M) = 入る(M) + 繰越(M) − 出る(M)
+//   → 収支(M) = 本体の残り(M) − 繰越(M) = 入る(M) − 出る(M)
+// 手入力の繰越を打ち消すので、二重計上せずに自前で繋げられる。
+function chainRows(fromK,count){
+  const rows=[];let bal=null,k=fromK;
+  for(let i=0;i<count;i++){
+    const t=SBT(k);if(!t)break;
+    const st=stateFor(k)||{};
+    const carry=Number(st.carryover)||0;
+    const left=t.foodLeft+t.jiyuLeft;
+    const flow=left-carry;                       // その月の純粋な収支（手入力の繰越を除く）
+    const inSum=(Number(st.salary)||0)
+      +(st.carryExtra||[]).reduce((a,c)=>a+(Number(c.amt)||0),0)
+      +refundsForYM(k).reduce((a,r)=>a+r.amt,0);
+    const outSum=inSum-flow;                     // 出ていった合計（定義から逆算＝本体と整合）
+    if(bal===null)bal=(UI.startBal!=null?Number(UI.startBal):carry);
+    const open=bal;bal=open+flow;
+    rows.push({k,open,inSum,outSum,flow,close:bal,t});
+    k=nextYM(k);
+  }
+  return rows;
+}
+function renderChain(){
+  const el=$('chain');if(!el)return;
+  if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';return;}
+  if(SB.state!=='ok'){el.innerHTML='';return;}
+  const startK=appPoolFor('現金',TODAY).pool;     // 今まさに回している給料から積み上げる
+  const ks=monthKeys();
+  const lastData=ks.length?ks[ks.length-1]:startK;
+  let span=0;{let k=startK;while(k<=lastData&&span<36){span++;k=nextYM(k);}}
+  const n=UI.chainAll?span:Math.min(span,6);
+  const rows=chainRows(startK,n);
+  if(!rows.length){el.innerHTML='<div class="empty">計算できる月がありません</div>';return;}
+  const last=rows[rows.length-1];
+  const low=rows.reduce((a,r)=>(a===null||r.close<a.close)?r:a,null);
+  const st0=stateFor(startK)||{};
+  const startSrc=(UI.startBal!=null)
+    ? `<b>手入力</b>の ${yen(Number(UI.startBal))}　<a href="javascript:void(0)" onclick="autoStart()" style="color:var(--accent)">自動に戻す</a>`
+    : `本体の「${ymLabel(startK)}の繰越」${yen(Number(st0.carryover)||0)}`;
+
+  const body=rows.map(r=>`
+    <div class="crow" onclick="this.classList.toggle('open')">
+      <div class="ctop">
+        <span class="cm">${ymLabel(r.k)}<span class="tiny muted">（${md(payDate(r.k))}入金）</span></span>
+        <span class="cf mono ${r.flow<0?'neg':'pos'}">${r.flow>=0?'+':''}${yen(r.flow)}</span>
+        <span class="cb mono ${r.close<0?'neg':''}">${yen(r.close)}</span>
+      </div>
+      <div class="brk">
+        <div class="brow"><span class="k">前月から繰り越し</span><span class="v mono">${yen(r.open)}</span></div>
+        <div class="brow"><span class="k">＋ 入る（給料・臨時・返金）</span><span class="v mono pos">+${yen(r.inSum)}</span></div>
+        <div class="brow"><span class="k">− 出る（固定費・積立・カード引き落とし・使った分）</span><span class="v mono neg">−${yen(r.outSum)}</span></div>
+        <div class="bsub"><span class="k">🏠 固定費</span><span>${yen(r.t.fixedTotal)}</span></div>
+        ${r.t.goalMonthly>0?`<div class="bsub"><span class="k">🏦 積立・返済</span><span>${yen(r.t.goalMonthly)}</span></div>`:''}
+        <div class="bsub"><span class="k">💳 カードの引き落とし${(function(){const d=poolCardDays(r.k).map(x=>md(x.d));return d.length?`（${d.join('・')}）`:'';})()}</span><span>${yen(r.t.prevCardTotal)}</span></div>
+        <div class="bsub"><span class="k">🛒 現金などで使った分</span><span>${yen(Math.max(0,r.outSum-r.t.fixedTotal-r.t.goalMonthly-r.t.prevCardTotal))}</span></div>
+        <div class="brow sum" style="border-top:1px solid var(--border);margin-top:5px;padding-top:6px"><span class="k"><b>＝ 月末に残る</b></span><span class="v mono"><b>${yen(r.close)}</b></span></div>
+      </div>
+    </div>`).join('');
+
+  el.innerHTML=`<div class="cashbar">
+      <span>💵 開始時の残高</span>
+      <input type="number" id="startIn" placeholder="0" inputmode="numeric" value="${UI.startBal!=null?Number(UI.startBal):(Number(st0.carryover)||0)}">
+      <span class="tiny muted">円</span>
+      <button class="btn pri" onclick="applyStart()">反映</button>
+    </div>
+    <div class="tiny muted" style="margin:8px 0;line-height:1.7">起点＝${startSrc}（${ymLabel(startK)}の給料が入る直前の手元）。ここから毎月の収支を積み上げます。</div>
+    <div class="chain">
+      <div class="chead"><span class="cm">給料月</span><span class="cf">その月の収支</span><span class="cb">繰越後の残高</span></div>
+      ${body}
+    </div>
+    <div class="hero" style="margin-top:11px">
+      <div class="hero-k">🆓 ${ymLabel(last.k)}まで払い終えて残るのは</div>
+      <div class="hero-v mono ${last.close<0?'neg':'pos'}">${yen(last.close)}</div>
+      <div class="hero-s">${low&&low.close<0
+        ? `<b class="neg">途中 ${ymLabel(low.k)} で ${yen(low.close)} まで落ちます。</b>そこを割らない範囲＝いま自由に使えるのは <b>${yen(Math.min(...rows.map(r=>r.close)))}</b> までです。`
+        : `どの月もマイナスになりません。一番少なくなるのは ${ymLabel(low.k)} の ${yen(low.close)} です。`}</div>
+    </div>
+    ${span>6?`<div style="text-align:center;margin-top:9px"><button class="btn" onclick="UI.chainAll=!UI.chainAll;saveUI();renderChain();">${UI.chainAll?'▲ 直近6ヶ月だけ表示':`▼ データのある ${span}ヶ月すべて表示`}</button></div>`:''}`;
+}
+function applyStart(){const v=$('startIn').value.trim();UI.startBal=(v==='')?null:Number(v);saveUI();renderChain();}
+function autoStart(){UI.startBal=null;saveUI();renderChain();}
+
 function renderMoney(){
   const el=$('money');if(!el)return;
   if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';renderCashView();return;}
