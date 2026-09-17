@@ -359,8 +359,12 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.1.0';
+const VERSION='v1.2.0';
 const CHANGELOG=[
+ {v:'v1.2.0',d:'2026-09-17',t:[
+   '【不具合修正】「今月」の定義が本体とズレていた。本体は今日のカレンダー月（2026年9月）を既定にしているのに、こちらは今日を含む給料サイクル（給料日前なので2026年8月）を見ていたため、常に1ヶ月手前の数字を表示していた。本体と同じカレンダー月に合わせた',
+   'ヘッダを「◯年◯月の給料で回す分／◯/◯入金 → ◯/◯まで」に変更し、どの給料の話かを明示',
+   '給料日前で今日がその期間に入っていない場合は、今どの給料で生活中かを表示し、そちらへ移動できるリンクを追加']},
  {v:'v1.1.0',d:'2026-09-17',t:[
    '主役の表示を、本体アプリの monthTotalsFor が返す内訳をそのまま並べ替えたものに変更。式を作り直していないので本体の「合計」と必ず一致する',
    '「元手 − 固定費 − 食費予算 − 積立 − 先月カードの引き落とし ＝ 自由に使える枠 − もう使った分 ＝ 残り」を給料プールごとにタップで開ける形にした。取っておく分が本体の定義そのままで読める',
@@ -865,8 +869,10 @@ function SBT(kym){
 // ──────────────── 状態 ────────────────
 let CUR=null,CTX=null,SELDAY=null;
 
+// 本体(index.html)の既定は「今日のカレンダー月」（currentMonth=now.getMonth()）。
+// ここを給料サイクルで決めていたため、給料日前は本体より1ヶ月手前を見ており数字が合わなかった。
 function defaultCycle(){
-  const ks=monthKeys(),c=cycleOfDate(TODAY);
+  const ks=monthKeys(),c=ymOf(TODAY.getFullYear(),TODAY.getMonth());
   if(!ks.length||ks.includes(c))return c;
   return ks.reduce((b,k)=>Math.abs(k-c)<Math.abs(b-c)?k:b,ks[0]);
 }
@@ -1007,9 +1013,18 @@ function renderAll(){
 
 function renderHeader(){
   const {start,end}=CTX.range;
-  $('cycMain').textContent=`${start.getFullYear()}/${md(start)} 〜 ${md(end)}`;
-  $('cycSub').textContent=`${ymLabel(CUR)}の給料 ${yen(Number(CTX.st.salary)||0)} で回す期間`;
+  const liveYM=cycleOfDate(TODAY);            // 今日を実際に賄っている給料
+  $('cycMain').innerHTML=`${ymLabel(CUR)}の給料 <span class="tiny muted">で回す分</span>`;
+  let sub=`${md(start)}入金 ${yen(Number(CTX.st.salary)||0)} → ${md(end)}まで`;
+  if(liveYM!==CUR){
+    sub+=` ／ <span class="warn">今日 ${md(TODAY)} は${ymLabel(liveYM)}の給料で生活中</span>`
+       +` <a href="javascript:void(0)" onclick="goCycle(${liveYM})" style="color:var(--accent)">そちらを見る</a>`;
+  }else{
+    sub+=` ／ 今日 ${md(TODAY)} はこの期間の中`;
+  }
+  $('cycSub').innerHTML=sub;
 }
+function goCycle(k){CUR=Number(k);SELDAY=null;renderAll();window.scrollTo({top:0,behavior:'smooth'});}
 
 // カード名で1ブロックにまとめ、引き落とし日ごとに行を並べる
 function cardBlocks(groups){
