@@ -277,7 +277,20 @@ details.cfg>summary::-webkit-details-marker{display:none;}
   </div>
 
   <div class="card">
-    <div class="card-h">💰 いくら取っておいて、いくら使えるか<span class="sub" id="moneySub"></span></div>
+    <div class="card-h">🆓 今日 <span id="todayLbl"></span> 使っていい額<span class="sub">支払い方法ごと</span></div>
+    <div id="today"></div>
+    <details class="nt"><summary>ⓘ なぜ手段ごとに違うのか</summary>
+      <div class="nt-body">
+        <b>払う手段によって「どの給料から出るか」が変わるからです。</b><br>
+        現金・口座振替はその場で出るので、<b>今まさに回している給料</b>から。カードは締め日を経て翌月以降に落ちるので、<b>その引き落とし日を賄う給料</b>から出ます。<br><br>
+        たとえば給料日が25日なら、9月17日に現金で払う分は<u>8月25日にもらった給料</u>から。同じ日にカードで切る分は10月27日などに落ちるので<u>10月にもらう給料</u>から出ます。だから9月中のカード利用は、9月ではなく10月の枠を使います。<br><br>
+        判定は本体アプリの <code>chargeSalaryMonth()</code> と同じ計算で行っており、金額も本体の各給料プールの残りそのものです。
+      </div>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="card-h">💰 月ごとの内訳<span class="sub" id="moneySub"></span></div>
     <div id="money"></div>
     <details class="nt"><summary>💵 手元の現金から見た場合（実験）</summary>
       <div class="nt-body" style="padding:0;background:transparent;">
@@ -379,8 +392,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.3.0';
+const VERSION='v1.4.0';
 const CHANGELOG=[
+ {v:'v1.4.0',d:'2026-09-17',t:[
+   '【重要】「今日いくら使っていいか」を支払い方法ごとに表示する枠を最上部に新設。現金は今まさに回している給料から、カードは引き落とし日を賄う給料から出るため、使える枠が手段ごとに違う',
+   'これまで現金の枠を1ヶ月あとの給料プールで見ていた。給料日前は今日の現金支出が前の月の給料から出るため、正しいプールに直した',
+   'カードごとに「今日買うと◯/◯引き落とし → ◯月の給料から」を表示。締め日をまたぐカードは、その境目で引き落とし月が変わることも明記',
+   '判定は本体の chargeSalaryMonth と同じ計算、金額は本体の各給料プールの残りそのもの']},
  {v:'v1.3.0',d:'2026-09-17',t:[
    '「なぜその額しか使えないのか」を筋道で表示。今の給料の残り → 次の給料の不足分をそこから補填 → だから今使っていいのはこれだけ、という流れにした',
    '「📅 これからの予定」を追加。いつ・いくらの引き落とし／給料／積立があるかを日付順に並べ、入ってくる合計と「取っておく合計」を出す',
@@ -866,7 +884,7 @@ async function bootSandbox(){
   if(tk!==SB_TOKEN)return;
   // 本体の数字に依存する表示は、起動が終わってから描き直す
   renderMirror();
-  if(CTX){renderMoney();renderAudit();}
+  if(CTX){renderToday();renderMoney();renderAudit();}
 }
 // 指定の給料月に切り替えて、本体が描画した文字列をそのまま読み出す
 function sandboxRead(kym){
@@ -1026,12 +1044,13 @@ const colorOf=n=>{const i=cardNames().indexOf(n);return i<0?'#8a8aa8':CARD_COLOR
 function renderAll(){
   if(!monthKeys().length){
     $('cycMain').textContent='データがありません';$('cycSub').textContent='';
-    ['flowList','cal','cmp','audit','mirror','money'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
+    ['flowList','cal','cmp','audit','mirror','money','today'].forEach(id=>$(id).innerHTML='<div class="empty">取り込めるデータが見つかりませんでした。<br>本体(index.html)と同じ場所で開くか、Gist の JSON を貼り付けてください。</div>');
     $('dayPanel').innerHTML='';
     return;
   }
   recompute();
-  renderHeader();renderConfig();syncCashInput();renderMoney();renderMirror();renderFlow();
+  renderHeader();renderConfig();syncCashInput();renderToday();renderMoney();renderMirror();renderFlow();
+  $('todayLbl').textContent=md(TODAY)+'に';
   renderCalendar();renderDayPanel();renderSpark();renderAudit();renderCompare();
 }
 
@@ -1284,6 +1303,57 @@ function scheduleRows(fromD,toD){
   ev.sort((a,b)=>a.d-b.d||b.sign-a.sign);
   return ev;
 }
+// 今日その手段で払うと、どの給料プールから出るか（本体 chargeSalaryMonth と同じ判定）
+function appPoolFor(method,d){
+  APP_MODE=true;
+  try{
+    const isC=!!cardConf()[method];
+    const cd=isC?chargeDateOf(d,method):new Date(d.getFullYear(),d.getMonth(),d.getDate());
+    return {pool:cycleOfDate(cd),charge:isC?cd:null,cy:cardConf()[method]||null};
+  }finally{APP_MODE=false;}
+}
+// 締め日をまたぐと引き落としがずれるカードの「もう一方」
+function altPoolFor(method,d){
+  const cy=cardConf()[method];
+  if(!cy||cy.close==='end')return null;
+  const c=Number(cy.close),y=d.getFullYear(),m=d.getMonth();
+  const passed=d.getDate()>c;
+  const other=new Date(y,m,passed?Math.min(c,lastDay(y,m)):Math.min(c+1,lastDay(y,m)));
+  const r=appPoolFor(method,other);
+  return {passed,close:c,charge:r.charge,pool:r.pool};
+}
+function renderToday(){
+  const el=$('today');if(!el)return;
+  if(SB.state!=='ok'){el.innerHTML='';return;}
+  const poolLeft=k=>{const t=SBT(k);return t?t.foodLeft+t.jiyuLeft:null;};
+  const methods=['現金'].concat(cardNames());
+  let rows='',ok=true;
+  methods.forEach(nm=>{
+    const r=appPoolFor(nm,TODAY);
+    const v=poolLeft(r.pool);
+    if(v==null){ok=false;return;}
+    const isCash=(nm==='現金');
+    const c=isCash?'var(--yellow)':colorOf(nm);
+    let sub=isCash
+      ? `今日払うと <b>${ymLabel(r.pool)}の給料</b>から出ます（${md(payDate(r.pool))}入金ぶん）`
+      : `今日買うと <b>${md(r.charge)} 引き落とし</b> → <b>${ymLabel(r.pool)}の給料</b>から`;
+    const alt=isCash?null:altPoolFor(nm,TODAY);
+    if(alt&&alt.pool!==r.pool){
+      sub+=`<br><span class="tiny">${alt.close}日締め：${alt.passed
+        ?`今月の${alt.close}日を過ぎたので ${ymLabel(r.pool)} 扱い（${alt.close}日までなら ${md(alt.charge)} 引落・${ymLabel(alt.pool)}の給料でした）`
+        :`あと${alt.close-TODAY.getDate()}日以内なら ${md(r.charge)} 引落。${alt.close+1}日以降だと ${md(alt.charge)} 引落・${ymLabel(alt.pool)}の給料`}</span>`;
+    }else if(alt){
+      sub+=`<br><span class="tiny">${alt.close}日締め：${alt.passed?`今月の${alt.close}日を過ぎているので ${md(r.charge)} 払い`:`${alt.close}日までに買えば ${md(r.charge)} 払い`}</span>`;
+    }
+    rows+=`<div class="arow" style="--cc:${c};cursor:default">
+      <div class="arow-l"><div class="arow-n">${isCash?'💵 現金・口座振替':'💳 '+esc(nm)}</div>
+        <div class="arow-s">${sub}</div></div>
+      <div class="arow-v mono ${v<0?'neg':'pos'}">${yen(v)}</div>
+    </div>`;
+  });
+  if(!ok||!rows){el.innerHTML='';return;}
+  el.innerHTML=`<div class="tiny muted" style="margin-bottom:8px;line-height:1.7">同じ給料から引かれるカードは、残りを分け合います（合算ではありません）。</div>${rows}`;
+}
 function renderMoney(){
   const el=$('money');if(!el)return;
   if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';renderCashView();return;}
@@ -1490,7 +1560,17 @@ function renderAudit(){
     (warn.length?`<div class="alert"><div class="alert-t">⚠️ 抜けがあるかもしれません</div><div class="alert-b">${warn.slice(0,6).map(esc).join('<br>')}</div></div>`:'')
     +`<table class="aud"><tr><th>月</th><th>繰越</th><th>給料</th><th>固定費</th><th>支出</th><th>積立</th><th>食費枠</th></tr>${rows}</table>`
     +selfChk
-    +`<div class="tiny muted" style="margin-top:8px;line-height:1.7">積立・返済の設定（${(DB.goals||[]).length}件）：${goalsTxt}${refTxt}<br>カード設定：${cardNames().map(n=>`${esc(n)}（${cardConf()[n].close==='end'?'末':cardConf()[n].close}締/${cardConf()[n].payDay}日払）`).join('・')}</div>`;
+    +(function(){
+        const app=appCards(),mine=cardConf(),bad=[];
+        Object.keys(app).forEach(n=>{
+          const a=app[n],b=mine[n];if(!b)return;
+          if(a.payDay!==b.payDay||String(a.close)!==String(b.close))
+            bad.push(`${esc(n)}：本体 ${a.close==='end'?'末':a.close}締/${a.payDay}日払 ／ この画面 ${b.close==='end'?'末':b.close}締/${b.payDay}日払`);
+        });
+        return bad.length?`<div class="alert" style="margin-top:8px"><div class="alert-t">⚠️ カードの締め／引落日が本体と違います</div>
+          <div class="alert-b">${bad.join('<br>')}<br><b>金額の判定には本体の設定を使っています。</b>実際の日付が違うなら、本体アプリの設定タブで直してください（このページで直しても本体の計算は変わりません）。</div></div>`:'';
+      })()
+    +`<div class="tiny muted" style="margin-top:8px;line-height:1.7">積立・返済の設定（${(DB.goals||[]).length}件）：${goalsTxt}${refTxt}<br>本体のカード設定：${Object.keys(appCards()).map(n=>`${esc(n)}（${appCards()[n].close==='end'?'末':appCards()[n].close}締/${appCards()[n].payDay}日払）`).join('・')}<br>この画面のカード設定：${cardNames().map(n=>`${esc(n)}（${cardConf()[n].close==='end'?'末':cardConf()[n].close}締/${cardConf()[n].payDay}日払）`).join('・')}</div>`;
 }
 function renderCompare(){
   const ks=monthKeys().filter(k=>k>=prevYM(CUR)&&k<=nextYM(CUR));
