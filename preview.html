@@ -180,6 +180,26 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 .bsub{font-size:10px;color:var(--text3);padding:2px 0 2px 12px;display:flex;gap:8px;}
 .bsub .k{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .tap{font-size:9px;color:var(--text3);margin-top:6px;}
+.story{border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;margin-bottom:11px;}
+.srow{display:flex;align-items:baseline;gap:8px;padding:8px 11px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text2);}
+.srow:last-child{border-bottom:0;}
+.srow span{flex:1;}
+.srow b{font-size:14px;white-space:nowrap;}
+.srow.tot{background:#1c2f28;color:var(--text);}
+.srow.tot span{font-weight:800;font-size:12px;}
+.srow.tot b{font-size:17px;}
+.sect2{display:flex;align-items:center;gap:7px;margin:13px 0 7px;font-size:11px;font-weight:800;color:var(--text2);}
+.sect2::after{content:'';flex:1;height:1px;background:var(--border);}
+.sched{border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;}
+.srow2{display:flex;gap:8px;align-items:baseline;padding:6px 10px;border-bottom:1px solid var(--border);font-size:11px;}
+.srow2:last-child{border-bottom:0;}
+.srow2 .d{width:40px;color:var(--text3);flex-shrink:0;font-variant-numeric:tabular-nums;}
+.srow2 .n{flex:1;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.srow2 .a{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;}
+.schsum{display:flex;gap:8px;margin-top:8px;}
+.schsum>div{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);padding:8px 10px;}
+.schsum .k{display:block;font-size:10px;color:var(--text2);}
+.schsum .v{display:block;font-size:15px;font-weight:800;margin-top:2px;}
 .ledger{margin-top:10px;border:1px solid var(--border);border-radius:var(--rs);overflow:hidden;}
 .lrow{padding:9px 11px;border-bottom:1px solid var(--border);cursor:pointer;}
 .lrow:last-child{border-bottom:0;}
@@ -359,8 +379,12 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.2.0';
+const VERSION='v1.3.0';
 const CHANGELOG=[
+ {v:'v1.3.0',d:'2026-09-17',t:[
+   '「なぜその額しか使えないのか」を筋道で表示。今の給料の残り → 次の給料の不足分をそこから補填 → だから今使っていいのはこれだけ、という流れにした',
+   '「📅 これからの予定」を追加。いつ・いくらの引き落とし／給料／積立があるかを日付順に並べ、入ってくる合計と「取っておく合計」を出す',
+   'どの給料から出ていくかを2つのプールで表示。カードの引き落としには実際に落ちる日付と、カード別の内訳を併記']},
  {v:'v1.2.0',d:'2026-09-17',t:[
    '【不具合修正】「今月」の定義が本体とズレていた。本体は今日のカレンダー月（2026年9月）を既定にしているのに、こちらは今日を含む給料サイクル（給料日前なので2026年8月）を見ていたため、常に1ヶ月手前の数字を表示していた。本体と同じカレンダー月に合わせた',
    'ヘッダを「◯年◯月の給料で回す分／◯/◯入金 → ◯/◯まで」に変更し、どの給料の話かを明示',
@@ -1187,57 +1211,135 @@ function renderSpark(){
   $('sparkX').innerHTML=`<span>💰${md(days[0].d)}</span><span>${md(days[mi].d)}</span><span>${md(days[days.length-1].d)}</span>`;
 }
 
-// 本体の monthTotalsFor が返す内訳を、そのまま「取っておく分 → 残り」の形に並べ替える。
-// 数式を作り直さないので、本体の「合計」と必ず一致する。
-function poolBlock(kym,role){
+// 本体の monthTotalsFor の内訳を「元手 − 取っておく分 ＝ 残り」に並べ替える。
+// 数式を作り直さないので本体と必ず一致する。
+//   jiyuLeft = income − fixed − foodBudget − goal − prevCardNet − jiyuUsed
+//   foodLeft = foodBudget − foodUsed
+//   → 残り = income − fixed − goal − prevCardNet − (foodUsed + jiyuUsed)   ※食費予算は相殺される
+function poolCardDays(kym){
+  const r=cycleRange(kym),g={};
+  ITEMS.forEach(it=>{
+    if(!isCard(it.pay)||it.charge<r.start||it.charge>r.end)return;
+    const k=dkey(it.charge);
+    (g[k]||(g[k]={d:it.charge,by:{}}));
+    g[k].by[it.pay]=(g[k].by[it.pay]||0)+it.amt;
+  });
+  return Object.values(g).sort((a,b)=>a.d-b.d);
+}
+function poolLedger(kym,role){
   const t=SBT(kym);if(!t)return '';
   const pd=payDate(kym);
   const left=t.foodLeft+t.jiyuLeft;
   const prevCardNet=t.prevCardTotal-t.prevCardFood;
-  // この給料から引かれるカードが、実際にいつ落ちるか
-  const r=cycleRange(kym);
-  const days=[];
-  ITEMS.forEach(it=>{if(isCard(it.pay)&&it.charge>=r.start&&it.charge<=r.end){const k=md(it.charge);if(!days.includes(k))days.push(k);}});
+  const used=t.foodUsed+t.jiyuUsed;
+  const days=poolCardDays(kym);
+  const dayTxt=days.map(x=>md(x.d)).join('・');
   const row=(k,v,minus)=>`<div class="brow"><span class="k">${k}</span><span class="v mono">${minus?'−':''}${yen(v)}</span></div>`;
+  const dayRows=days.map(x=>Object.keys(x.by).map(p=>
+    `<div class="bsub"><span class="k">${md(x.d)} ${esc(p)}</span><span>${yen(x.by[p])}</span></div>`).join('')).join('');
   return `<div class="arow" style="--cc:${left<0?'var(--red)':'var(--green)'}" onclick="this.classList.toggle('open')">
     <div class="arow-l">
       <div class="arow-n">${role}</div>
-      <div class="arow-s">💰 ${md(pd)} に入る給料で回す分・タップで内訳<br>🍚 食費 <b class="${t.foodLeft<0?'neg':'pos'}">${yen(t.foodLeft)}</b> ／ 💴 自由費 <b class="${t.jiyuLeft<0?'neg':'pos'}">${yen(t.jiyuLeft)}</b></div>
+      <div class="arow-s">💰 ${md(pd)} 入金 ${yen(t.income)} ／ 🍚食費 <b class="${t.foodLeft<0?'neg':'pos'}">${yen(t.foodLeft)}</b>・💴自由費 <b class="${t.jiyuLeft<0?'neg':'pos'}">${yen(t.jiyuLeft)}</b><br><span class="tiny">タップで内訳</span></div>
       <div class="brk">
         ${row('元手（給料＋繰越＋臨時＋返金）',t.income)}
         <div class="brow" style="border-top:1px dashed var(--border);margin-top:5px;padding-top:6px"><span class="k" style="color:var(--text3)">ここから取っておく分</span><span class="v"></span></div>
-        ${row('🏠 固定費（この給料で払う分）',t.fixedTotal,1)}
-        ${row('🍚 食費の予算',t.foodBudget,1)}
-        ${t.goalMonthly>0?row('🏦 積立・返済',t.goalMonthly,1):''}
-        ${prevCardNet!==0?row(`💳 先月までに使ったカードの引き落とし${days.length?`（${days.join('・')}）`:''}`,prevCardNet,1):''}
-        <div class="brow sum" style="border-top:1px solid var(--border);margin-top:5px;padding-top:6px"><span class="k"><b>＝ 自由に使える枠</b></span><span class="v mono"><b>${yen(t.jiyuFrame)}</b></span></div>
-        ${row('もう使った分（自由費）',t.jiyuUsed,1)}
-        ${row('もう使った分（食費）',t.foodUsed,1)}
+        ${t.fixedTotal?row('🏠 固定費（この給料で払う分）',t.fixedTotal,1):''}
+        ${t.goalMonthly>0?row(`🏦 積立・返済（${md(pd)}）`,t.goalMonthly,1):''}
+        ${prevCardNet!==0?row(`💳 カードの引き落とし${dayTxt?`（${dayTxt}）`:''}`,prevCardNet,1):''}
+        ${dayRows}
+        ${used?row('🛒 もう使った分（食費＋自由費）',used,1):''}
+        <div class="brow sum" style="border-top:1px solid var(--border);margin-top:5px;padding-top:6px"><span class="k"><b>＝ この給料の残り</b></span><span class="v mono"><b>${yen(left)}</b></span></div>
       </div>
     </div>
     <div class="arow-v mono ${left<0?'neg':'pos'}">${yen(left)}</div>
   </div>`;
+}
+// これからの引き落とし・給料の予定（残高には依らない純粋なスケジュール）
+function scheduleRows(fromD,toD){
+  const ev=[];
+  let k=prevYM(CUR);
+  for(let i=0;i<4;i++){
+    const pd=payDate(k),st=stateFor(k);
+    if(st&&pd>=fromD&&pd<=toD){
+      const sal=Number(st.salary)||0;
+      if(sal)ev.push({d:pd,icon:'💰',name:`${ymLabel(k)}の給料`,amt:sal,sign:1});
+      (st.carryExtra||[]).forEach(c=>{const a=Number(c.amt)||0;if(a)ev.push({d:pd,icon:'➕',name:c.name||'臨時収入',amt:a,sign:1});});
+      goalOutflowFor(k).forEach(g=>ev.push({d:pd,icon:'🏦',name:`${g.name}（積立・返済）`,amt:g.amt,sign:-1}));
+    }
+    k=nextYM(k);
+  }
+  const byCard={};
+  ITEMS.forEach(it=>{
+    if(it.charge<fromD||it.charge>toD)return;
+    if(isCard(it.pay)){
+      const kk=dkey(it.charge)+'|'+it.pay;
+      (byCard[kk]||(byCard[kk]={d:it.charge,pay:it.pay,amt:0,n:0}));
+      byCard[kk].amt+=it.amt;byCard[kk].n++;
+    }else{
+      ev.push({d:it.charge,icon:'💵',name:it.name,amt:it.amt,sign:-1});
+    }
+  });
+  Object.values(byCard).forEach(x=>ev.push({d:x.d,icon:'💳',name:`${x.pay} 引き落とし（${x.n}件）`,amt:x.amt,sign:-1}));
+  ev.sort((a,b)=>a.d-b.d||b.sign-a.sign);
+  return ev;
 }
 function renderMoney(){
   const el=$('money');if(!el)return;
   if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';renderCashView();return;}
   const t=SBT(CUR),tN=SBT(nextYM(CUR));
   if(!t||!tN){
-    el.innerHTML=`<div class="alert"><div class="alert-t">⚠️ 本体の数字を読み出せませんでした</div>
-      <div class="alert-b">${esc(SB.err||'起動できませんでした')}</div></div>`;
+    el.innerHTML=`<div class="alert"><div class="alert-t">⚠️ 本体の数字を読み出せませんでした</div><div class="alert-b">${esc(SB.err||'起動できませんでした')}</div></div>`;
     renderCashView();return;
   }
+  const NX=nextYM(CUR);
   const a=t.foodLeft+t.jiyuLeft, b=tN.foodLeft+tN.jiyuLeft, tot=a+b;
-  const dA=payDate(CUR), dB=payDate(nextYM(CUR));
+  const dA=payDate(CUR), dB=payDate(NX);
   $('moneySub').textContent='本体アプリと同じ数字';
+
+  // 次の給料プールが足りないぶんは、今のプールから補填する
+  let story;
+  if(b<0){
+    story=`<div class="story">
+      <div class="srow"><span>${ymLabel(CUR)}の給料の残り</span><b class="mono pos">${yen(a)}</b></div>
+      <div class="srow"><span>${ymLabel(NX)}の給料は <b class="neg">${yen(b)}</b> 足りない → ここから補填</span><b class="mono neg">${yen(b)}</b></div>
+      <div class="srow tot"><span>🆓 だから今使っていいのは</span><b class="mono ${tot<0?'neg':'pos'}">${yen(tot)}</b></div>
+    </div>`;
+  }else{
+    story=`<div class="story">
+      <div class="srow"><span>${ymLabel(CUR)}の給料の残り（現金で今使える）</span><b class="mono ${a<0?'neg':'pos'}">${yen(a)}</b></div>
+      <div class="srow"><span>${ymLabel(NX)}の給料の残り（カードで今切れる）</span><b class="mono ${b<0?'neg':'pos'}">${yen(b)}</b></div>
+      <div class="srow tot"><span>🆓 合わせて今使っていいのは</span><b class="mono ${tot<0?'neg':'pos'}">${yen(tot)}</b></div>
+    </div>`;
+  }
+
+  // 保持しておくべき額＝これから出ていく予定の合計
+  // 今日がまだこの給料の期間より前でも、今日以降に起きる予定は全部見せる
+  const to=cycleRange(NX).end;
+  const from=(TODAY<=to)?TODAY:cycleRange(CUR).start;
+  const sch=scheduleRows(from,to);
+  const outSum=sch.filter(x=>x.sign<0).reduce((s2,x)=>s2+x.amt,0);
+  const inSum=sch.filter(x=>x.sign>0).reduce((s2,x)=>s2+x.amt,0);
+  const schRows=sch.map(x=>
+    `<div class="srow2"><span class="d">${md(x.d)}</span><span class="n">${x.icon} ${esc(x.name)}</span><span class="a mono ${x.sign>0?'pos':''}">${x.sign>0?'+':'−'}${yen(x.amt)}</span></div>`).join('')
+    ||'<div class="empty">この期間の予定はありません</div>';
+
   el.innerHTML=`<div class="hero">
-      <div class="hero-k">🆓 いま使っていい額（合計）</div>
+      <div class="hero-k">🆓 いま使っていい額</div>
       <div class="hero-v mono ${tot<0?'neg':'pos'}">${yen(tot)}</div>
-      <div class="hero-s">現金で今使える <b>${yen(a)}</b> ＋ カードで今切れる <b>${yen(b)}</b>。${md(dB)}に入る給料と、そこで落ちるカード分まで織り込んだ数字です。</div>
+      <div class="hero-s">${md(dB)}に入る給料と、そこまでに落ちるカード分まで差し引いた後の額です。</div>
     </div>
-    ${poolBlock(CUR,`💵 現金で今使える分`)}
-    ${poolBlock(nextYM(CUR),`💳 カードで今切れる分`)}
-    <div class="tiny muted" style="margin-top:4px;line-height:1.7">上段＝いま入っている給料の残り。現金・口座振替で使うとここから減ります。<br>下段＝次の給料（${md(dB)}）の残り。いまカードで買うとここから引かれます。</div>`;
+    ${story}
+    <div class="sect2">📅 ${md(from)} 〜 ${md(to)} の予定</div>
+    <div class="sched">${schRows}</div>
+    <div class="schsum">
+      <div><span class="k">入ってくる</span><span class="v mono pos">+${yen(inSum)}</span></div>
+      <div><span class="k">🔒 出ていくので取っておく</span><span class="v mono neg">−${yen(outSum)}</span></div>
+    </div>
+    <div class="sect2">💰 どの給料から出ていくか</div>
+    ${poolLedger(CUR,`💵 ${ymLabel(CUR)}の給料（${md(dA)}入金）`)}
+    ${poolLedger(NX,`💳 ${ymLabel(NX)}の給料（${md(dB)}入金）`)}
+    <div class="tiny muted" style="margin-top:4px;line-height:1.7">いま現金で払う分は上段から、いまカードで切る分は下段から引かれます。</div>`;
   renderCashView();
 }
 // 手元の現金ベースの試算（折りたたみの中・実験扱い）
