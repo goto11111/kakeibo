@@ -294,7 +294,8 @@ details.cfg>summary::-webkit-details-marker{display:none;}
         <b>払う手段によって「どの給料から出るか」が変わるからです。</b><br>
         現金・口座振替はその場で出るので、<b>今まさに回している給料</b>から。カードは締め日を経て翌月以降に落ちるので、<b>その引き落とし日を賄う給料</b>から出ます。<br><br>
         たとえば給料日が25日なら、9月17日に現金で払う分は<u>8月25日にもらった給料</u>から。同じ日にカードで切る分は10月27日などに落ちるので<u>10月にもらう給料</u>から出ます。だから9月中のカード利用は、9月ではなく10月の枠を使います。<br><br>
-        判定は本体アプリの <code>chargeSalaryMonth()</code> と同じ計算で行っており、金額も本体の各給料プールの残りそのものです。
+        判定は本体アプリの <code>chargeSalaryMonth()</code> と同じ計算で行っています。<br><br>
+        <b>金額は「繰り越して計算した残高」（下のカード）を使っています。</b>その支払いが乗る給料の月から先を見て、<b>どの月も残高がマイナスにならない上限</b>を出しています。たとえば9月にカードで使った分は10月の給料から引かれるので、10月以降の残高が一番少なくなる月がその上限を決めます。
       </div>
     </details>
   </div>
@@ -414,8 +415,12 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v2.0.0';
+const VERSION='v2.1.0';
 const CHANGELOG=[
+ {v:'v2.1.0',d:'2026-09-17',t:[
+   '「今日使っていい額」を、繰り越して積み上げた残高から出すよう変更。その支払いが乗る給料の月から先を見て、どの月も残高がマイナスにならない上限を出す',
+   '上限の根拠として「これを超えると◯月の残高（¥X）がマイナスになります」を併記。すでにマイナスの場合はその旨を表示',
+   '9月にカードで使った分は10月の給料から引かれるため、10月以降で一番苦しい月が上限を決める。今月のカード利用を10月がマイナスにならない範囲に収める判断ができる']},
  {v:'v2.0.0',d:'2026-09-17',t:[
    '毎月の余りを次の月へ自動で持ち越す「繰り越して計算した残高」を新設。本体は給料月ごとに独立した財布として扱うため通しの残高が出なかった',
    '月ごとに「前月から繰り越し ＋ 入る − 出る ＝ 月末に残る」を表示。タップで固定費・積立・カード引き落とし・使った分の内訳が開く',
@@ -1372,7 +1377,9 @@ function renderToday(){
   let rows='',ok=true;
   methods.forEach(nm=>{
     const r=appPoolFor(nm,TODAY);
-    const v=poolLeft(r.pool);
+    // 繰り越して積み上げた残高で「これ以上使うと最初に破綻する月」を探す
+    const lim=limitFrom(r.pool);
+    const v=lim?lim.close:poolLeft(r.pool);
     if(v==null){ok=false;return;}
     const isCash=(nm==='現金');
     const c=isCash?'var(--yellow)':colorOf(nm);
@@ -1397,6 +1404,11 @@ function renderToday(){
     }else if(alt){
       sub+=`<br><span class="tiny">${alt.close}日締め：${alt.passed?`今月の${alt.close}日を過ぎているので ${md(r.charge)} 払い`:`${alt.close}日までに買えば ${md(r.charge)} 払い`}</span>`;
     }
+    if(lim){
+      sub+=`<br><span class="tiny ${v<0?'neg':'warn'}">${v<0
+        ? `すでに ${ymLabel(lim.k)} の残高が ${yen(lim.close)} なので、いま使う余裕はありません`
+        : `これを超えると ${ymLabel(lim.k)} の残高（${yen(lim.close)}）がマイナスになります`}</span>`;
+    }
     rows+=`<div class="arow" style="--cc:${c};cursor:default">
       <div class="arow-l"><div class="arow-n">${isCash?'💵 現金・口座振替':'💳 '+esc(nm)}</div>
         <div class="arow-s">${sub}</div></div>
@@ -1404,7 +1416,7 @@ function renderToday(){
     </div>`;
   });
   if(!ok||!rows){el.innerHTML='';return;}
-  el.innerHTML=`<div class="tiny muted" style="margin-bottom:8px;line-height:1.7">同じ給料から引かれるカードは、残りを分け合います（合算ではありません）。</div>${rows}`;
+  el.innerHTML=`<div class="tiny muted" style="margin-bottom:8px;line-height:1.7">毎月の余りを次の月へ繰り越したうえで、<b>この先どの月も残高がマイナスにならない上限</b>です。同じ給料から引かれるカードは、この枠を分け合います（合算ではありません）。</div>${rows}`;
 }
 // ── 繰り越して積み上げる計算 ──
 // 本体は給料月ごとに独立した財布（前月の余りは carryover を手入力しない限り繋がらない）。
@@ -1431,7 +1443,28 @@ function chainRows(fromK,count){
   }
   return rows;
 }
+// 繰り越しチェーンの全期間（上限額の判定に使う）
+let _chain=null;
+function chainSpan(){
+  const startK=appPoolFor('現金',TODAY).pool;
+  const ks=monthKeys(),lastData=ks.length?ks[ks.length-1]:startK;
+  let n=0,k=startK;while(k<=lastData&&n<36){n++;k=nextYM(k);}
+  return {startK,n:Math.max(n,1)};
+}
+function fullChain(){
+  if(_chain)return _chain;
+  const {startK,n}=chainSpan();
+  _chain=chainRows(startK,n);
+  return _chain;
+}
+// そのプール以降で一番残高が少なくなる月（＝これ以上使うと最初に破綻するところ）
+function limitFrom(pool){
+  const rows=fullChain().filter(r=>r.k>=pool);
+  if(!rows.length)return null;
+  return rows.reduce((a,r)=>(a===null||r.close<a.close)?r:a,null);
+}
 function renderChain(){
+  _chain=null;
   const el=$('chain');if(!el)return;
   if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';return;}
   if(SB.state!=='ok'){el.innerHTML='';return;}
@@ -1488,8 +1521,8 @@ function renderChain(){
     </div>
     ${span>6?`<div style="text-align:center;margin-top:9px"><button class="btn" onclick="UI.chainAll=!UI.chainAll;saveUI();renderChain();">${UI.chainAll?'▲ 直近6ヶ月だけ表示':`▼ データのある ${span}ヶ月すべて表示`}</button></div>`:''}`;
 }
-function applyStart(){const v=$('startIn').value.trim();UI.startBal=(v==='')?null:Number(v);saveUI();renderChain();}
-function autoStart(){UI.startBal=null;saveUI();renderChain();}
+function applyStart(){const v=$('startIn').value.trim();UI.startBal=(v==='')?null:Number(v);saveUI();_chain=null;renderChain();renderToday();}
+function autoStart(){UI.startBal=null;saveUI();_chain=null;renderChain();renderToday();}
 
 function renderMoney(){
   const el=$('money');if(!el)return;
