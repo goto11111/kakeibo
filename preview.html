@@ -258,13 +258,18 @@ details.cfg>summary::-webkit-details-marker{display:none;}
 
   <div class="card">
     <div class="card-h">💰 いくら取っておいて、いくら使えるか<span class="sub" id="moneySub"></span></div>
-    <div class="cashbar">
-      <span>💵 手元の現金</span>
-      <input type="number" id="cashIn" placeholder="0" inputmode="numeric">
-      <span class="tiny muted">円 ＝ <span id="cashDate">今日</span>時点</span>
-      <button class="btn pri" onclick="applyCash()">反映</button>
-    </div>
     <div id="money"></div>
+    <details class="nt"><summary>💵 手元の現金から見た場合（実験）</summary>
+      <div class="nt-body" style="padding:0;background:transparent;">
+        <div class="cashbar">
+          <span>💵 手元の現金</span>
+          <input type="number" id="cashIn" placeholder="0" inputmode="numeric">
+          <span class="tiny muted">円 ＝ <span id="cashDate">今日</span>時点</span>
+          <button class="btn pri" onclick="applyCash()">反映</button>
+        </div>
+        <div id="cashView"></div>
+      </div>
+    </details>
     <details class="nt"><summary>ⓘ 出し方と、本体アプリとの違い</summary>
       <div class="nt-body">
         <b>今の手元に、この先入る給料を足し、この先出ていく分（カード引き落とし・固定費・現金支出・積立）と食費の残り予算を引いています。</b>残ったのが自由に使える額です。<br><br>
@@ -354,8 +359,15 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.0.0';
+const VERSION='v1.1.0';
 const CHANGELOG=[
+ {v:'v1.1.0',d:'2026-09-17',t:[
+   '主役の表示を、本体アプリの monthTotalsFor が返す内訳をそのまま並べ替えたものに変更。式を作り直していないので本体の「合計」と必ず一致する',
+   '「元手 − 固定費 − 食費予算 − 積立 − 先月カードの引き落とし ＝ 自由に使える枠 − もう使った分 ＝ 残り」を給料プールごとにタップで開ける形にした。取っておく分が本体の定義そのままで読める',
+   '先月カードの引き落としに、実際に落ちる日付を併記',
+   '手元の現金を起点にした試算は折りたたみの中へ移動（実験扱い）。本体の値とは別物であることを明示',
+   '「給料◯回」に臨時収入・返金が混ざって回数が実態と合っていなかったのを修正し、種類ごとに分けて表示',
+   '繰越は本体が実残高として持っている値ではない旨を警告として明示']},
  {v:'v1.0.0',d:'2026-09-16',t:[
    '上部の3つのパネル（本体の数字／手元の現金／サイクルの出入り）を1つにまとめ、「今の手元 ＋ 入る給料 − 取っておく分 ＝ 自由に使っていい」の一本の流れにした',
    '「取っておく分」を日付順の内訳で表示。いつ・何に・いくら消えるかが1タップで見える（カード引き落とし／積立・返済／現金・口座振替／食費の残り予算）',
@@ -1160,29 +1172,73 @@ function renderSpark(){
   $('sparkX').innerHTML=`<span>💰${md(days[0].d)}</span><span>${md(days[mi].d)}</span><span>${md(days[days.length-1].d)}</span>`;
 }
 
+// 本体の monthTotalsFor が返す内訳を、そのまま「取っておく分 → 残り」の形に並べ替える。
+// 数式を作り直さないので、本体の「合計」と必ず一致する。
+function poolBlock(kym,role){
+  const t=SBT(kym);if(!t)return '';
+  const pd=payDate(kym);
+  const left=t.foodLeft+t.jiyuLeft;
+  const prevCardNet=t.prevCardTotal-t.prevCardFood;
+  // この給料から引かれるカードが、実際にいつ落ちるか
+  const r=cycleRange(kym);
+  const days=[];
+  ITEMS.forEach(it=>{if(isCard(it.pay)&&it.charge>=r.start&&it.charge<=r.end){const k=md(it.charge);if(!days.includes(k))days.push(k);}});
+  const row=(k,v,minus)=>`<div class="brow"><span class="k">${k}</span><span class="v mono">${minus?'−':''}${yen(v)}</span></div>`;
+  return `<div class="arow" style="--cc:${left<0?'var(--red)':'var(--green)'}" onclick="this.classList.toggle('open')">
+    <div class="arow-l">
+      <div class="arow-n">${role}</div>
+      <div class="arow-s">💰 ${md(pd)} に入る給料で回す分・タップで内訳<br>🍚 食費 <b class="${t.foodLeft<0?'neg':'pos'}">${yen(t.foodLeft)}</b> ／ 💴 自由費 <b class="${t.jiyuLeft<0?'neg':'pos'}">${yen(t.jiyuLeft)}</b></div>
+      <div class="brk">
+        ${row('元手（給料＋繰越＋臨時＋返金）',t.income)}
+        <div class="brow" style="border-top:1px dashed var(--border);margin-top:5px;padding-top:6px"><span class="k" style="color:var(--text3)">ここから取っておく分</span><span class="v"></span></div>
+        ${row('🏠 固定費（この給料で払う分）',t.fixedTotal,1)}
+        ${row('🍚 食費の予算',t.foodBudget,1)}
+        ${t.goalMonthly>0?row('🏦 積立・返済',t.goalMonthly,1):''}
+        ${prevCardNet!==0?row(`💳 先月までに使ったカードの引き落とし${days.length?`（${days.join('・')}）`:''}`,prevCardNet,1):''}
+        <div class="brow sum" style="border-top:1px solid var(--border);margin-top:5px;padding-top:6px"><span class="k"><b>＝ 自由に使える枠</b></span><span class="v mono"><b>${yen(t.jiyuFrame)}</b></span></div>
+        ${row('もう使った分（自由費）',t.jiyuUsed,1)}
+        ${row('もう使った分（食費）',t.foodUsed,1)}
+      </div>
+    </div>
+    <div class="arow-v mono ${left<0?'neg':'pos'}">${yen(left)}</div>
+  </div>`;
+}
 function renderMoney(){
   const el=$('money');if(!el)return;
+  if(SB.state==='loading'){el.innerHTML='<div class="empty">本体アプリを起動して数字を読み出しています…</div>';renderCashView();return;}
+  const t=SBT(CUR),tN=SBT(nextYM(CUR));
+  if(!t||!tN){
+    el.innerHTML=`<div class="alert"><div class="alert-t">⚠️ 本体の数字を読み出せませんでした</div>
+      <div class="alert-b">${esc(SB.err||'起動できませんでした')}</div></div>`;
+    renderCashView();return;
+  }
+  const a=t.foodLeft+t.jiyuLeft, b=tN.foodLeft+tN.jiyuLeft, tot=a+b;
+  const dA=payDate(CUR), dB=payDate(nextYM(CUR));
+  $('moneySub').textContent='本体アプリと同じ数字';
+  el.innerHTML=`<div class="hero">
+      <div class="hero-k">🆓 いま使っていい額（合計）</div>
+      <div class="hero-v mono ${tot<0?'neg':'pos'}">${yen(tot)}</div>
+      <div class="hero-s">現金で今使える <b>${yen(a)}</b> ＋ カードで今切れる <b>${yen(b)}</b>。${md(dB)}に入る給料と、そこで落ちるカード分まで織り込んだ数字です。</div>
+    </div>
+    ${poolBlock(CUR,`💵 現金で今使える分`)}
+    ${poolBlock(nextYM(CUR),`💳 カードで今切れる分`)}
+    <div class="tiny muted" style="margin-top:4px;line-height:1.7">上段＝いま入っている給料の残り。現金・口座振替で使うとここから減ります。<br>下段＝次の給料（${md(dB)}）の残り。いまカードで買うとここから引かれます。</div>`;
+  renderCashView();
+}
+// 手元の現金ベースの試算（折りたたみの中・実験扱い）
+function renderCashView(){
+  const el=$('cashView');if(!el||!CTX)return;
   const base=(TODAY>=CTX.start&&TODAY<=CTX.horizon)?TODAY:CTX.range.start;
   const hz=CTX.horizon;
-  const low=lowPointFrom(base);                 // 途中で一番きつくなる日（安全な上限はここで決まる）
-  const cash=balanceAt(base);                   // 今の手元
-  const f=flowsBetween(base,hz);                // 今日〜先読み期限 の全入出金（＝取っておく分の対象）
-  const fr=foodReserve(base,hz);                // 食費の残り予算
-  const keepTotal=f.outSum+fr.total;            // 取っておく分
-  const endBal=cash+f.inSum-keepTotal;          // 期限時点に残る見込み
-  const canUse=low.amt;                         // いま自由に使っていい（底を割らない範囲）
-  const locked=Math.max(0,cash-canUse);         // 今の手元のうち動かせない分
-  const tight=(dkey(low.day)!==dkey(hz));       // 途中に底がある
-
-  $('moneySub').textContent=`${md(hz)}までの支払いを賄う前提`;
-
-  const winYM=cycleOfDate(CTX.start);
-  const carry=Number((stateFor(winYM)||{}).carryover)||0;
-  const srcLine=cashSet()
-    ? `<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝<b>手入力</b>の ${yen(UI.cash.v)}（${md(cashAnchorDate())}時点）。<a href="javascript:void(0)" onclick="autoCash()" style="color:var(--accent)">自動に戻す</a></div>`
-    : `<div class="tiny muted" style="margin-bottom:9px;line-height:1.7">起点＝本体の「${ymLabel(winYM)}の繰越」${yen(carry)} ＋ その後の給料・支出。${carry===0?'<span class="warn">繰越が¥0なので、実際の残高を上の欄に入れてください。</span>':'実際の残高と違うなら上の欄で上書きできます。'}</div>`;
-
-  // ── 取っておく分（今日〜先読み期限の出金を日付順に）──
+  const low=lowPointFrom(base);
+  const cash=balanceAt(base);
+  const f=flowsBetween(base,hz);
+  const fr=foodReserve(base,hz);
+  const keepTotal=f.outSum+fr.total;
+  const endBal=cash+f.inSum-keepTotal;
+  // 入ってくる分は種類ごとに分ける（給料と臨時・返金を混ぜない）
+  const sal=f.sals.filter(x=>x.name==='給料'), etc=f.sals.filter(x=>x.name!=='給料');
+  const salSum=sal.reduce((s2,x)=>s2+x.amt,0), etcSum=etc.reduce((s2,x)=>s2+x.amt,0);
   const items=[];
   f.charges.forEach(x=>items.push({d:x.d,icon:'💳',name:`${x.pay} 引き落とし`,amt:x.amt}));
   f.goals.forEach(x=>items.push({d:x.d,icon:'🏦',name:`${x.name}（積立・返済）`,amt:x.amt}));
@@ -1190,47 +1246,23 @@ function renderMoney(){
   f.cashes.forEach(x=>{const k=dkey(x.d);(byDay[k]||(byDay[k]={d:x.d,n:0,amt:0}));byDay[k].n++;byDay[k].amt+=x.amt;});
   Object.values(byDay).forEach(x=>items.push({d:x.d,icon:'💵',name:`現金・口座振替${x.n>1?` ${x.n}件`:''}`,amt:x.amt}));
   items.sort((a,b)=>a.d-b.d);
-  let keepRows=items.map(x=>
-    `<div class="brow"><span class="k">${md(x.d)} ${x.icon} ${esc(x.name)}</span><span class="v mono">${yen(x.amt)}</span></div>`).join('');
-  if(fr.total>0){
-    keepRows+=`<div class="brow"><span class="k">〜${md(hz)} 🍚 食費の残り予算</span><span class="v mono">${yen(fr.total)}</span></div>`;
-    fr.items.forEach(x=>keepRows+=`<div class="bsub"><span class="k">${ymLabel(x.ym)}の給料ぶん</span><span>${yen(x.amt)}</span></div>`);
-  }
-  if(!keepRows)keepRows='<div class="brow"><span class="k">この期間に確定している支払いはありません</span><span class="v">—</span></div>';
-  const cnt=items.length+(fr.total>0?1:0);
-
-  const inRows=f.sals.map(x=>
-    `<div class="brow"><span class="k">${md(x.d)} 💰 ${esc(x.name)}</span><span class="v mono pos">+${yen(x.amt)}</span></div>`).join('')
-    ||'<div class="brow"><span class="k">この期間に入ってくる予定はありません</span><span class="v">—</span></div>';
-
-  const t=SBT(CUR),tN=SBT(nextYM(CUR));
-  const appLine=(t&&tN)
-    ? `<div class="mir-cmp"><span class="k">参考：本体アプリの「合計」（予算の残り枠なので別の数え方）</span><span class="v mono">${yen(t.foodLeft+t.jiyuLeft+tN.foodLeft+tN.jiyuLeft)}</span></div>`
-    : '';
-
-  el.innerHTML=srcLine
-   +`<div class="hero">
-      <div class="hero-k">🆓 いま自由に使っていい</div>
-      <div class="hero-v mono ${canUse<0?'neg':'pos'}">${yen(canUse)}</div>
-      <div class="hero-s">今の手元 <b>${yen(cash)}</b> のうち <b class="warn">${yen(locked)}</b> は ${md(hz)} までの支払いに要るので手をつけられません。${canUse<0?'<br><b class="neg">このままだと足りません。</b>':''}</div>
+  const rowsOf=arr=>arr.map(x=>`<div class="brow"><span class="k">${md(x.d)} ${x.icon||'💰'} ${esc(x.name)}</span><span class="v mono">${yen(x.amt)}</span></div>`).join('');
+  const winYM=cycleOfDate(CTX.start);
+  const carry=Number((stateFor(winYM)||{}).carryover)||0;
+  el.innerHTML=`<div class="tiny muted" style="margin:8px 0;line-height:1.7">
+      ${cashSet()?`起点＝<b>手入力</b>の ${yen(UI.cash.v)}。<a href="javascript:void(0)" onclick="autoCash()" style="color:var(--accent)">自動に戻す</a>`
+                 :`起点＝本体の「${ymLabel(winYM)}の繰越」${yen(carry)}。<b class="warn">繰越は本体が実残高として持っている値ではないので、ここが実態とズレていると以下は全部ズレます。</b>実際の銀行残高＋財布を上の欄に入れてください。`}
     </div>
     <div class="ledger">
       <div class="lrow"><span class="k">今の手元（${md(base)}）</span><span class="v mono">${yen(cash)}</span></div>
-      <div class="lrow" onclick="this.classList.toggle('open')">
-        <span class="k">＋ ${md(hz)}までに入る給料 <span class="tiny muted">${f.sals.length}回・タップで内訳</span></span>
-        <span class="v mono pos">+${yen(f.inSum)}</span>
-        <div class="brk">${inRows}</div>
-      </div>
-      <div class="lrow" onclick="this.classList.toggle('open')">
-        <span class="k">− 取っておく分 <span class="tiny muted">${cnt}件・タップで内訳</span></span>
-        <span class="v mono neg">−${yen(keepTotal)}</span>
-        <div class="brk">${keepRows}</div>
-      </div>
+      <div class="lrow" onclick="this.classList.toggle('open')"><span class="k">＋ ${md(hz)}までの給料 <span class="tiny muted">${sal.length}回</span></span><span class="v mono pos">+${yen(salSum)}</span><div class="brk">${rowsOf(sal)||'—'}</div></div>
+      ${etc.length?`<div class="lrow" onclick="this.classList.toggle('open')"><span class="k">＋ 臨時収入・返金 <span class="tiny muted">${etc.length}件</span></span><span class="v mono pos">+${yen(etcSum)}</span><div class="brk">${rowsOf(etc)}</div></div>`:''}
+      <div class="lrow" onclick="this.classList.toggle('open')"><span class="k">− 取っておく分 <span class="tiny muted">${items.length+(fr.total>0?1:0)}件</span></span><span class="v mono neg">−${yen(keepTotal)}</span>
+        <div class="brk">${rowsOf(items)}${fr.total>0?`<div class="brow"><span class="k">〜${md(hz)} 🍚 食費の残り予算</span><span class="v mono">${yen(fr.total)}</span></div>`:''}</div></div>
       <div class="lrow sum"><span class="k">＝ ${md(hz)} 時点に残る見込み</span><span class="v mono ${endBal<0?'neg':''}">${yen(endBal)}</span></div>
-      <div class="lrow tot"><span class="k">🆓 いま自由に使っていい</span><span class="v mono ${canUse<0?'neg':'pos'}">${yen(canUse)}</span></div>
+      <div class="lrow tot"><span class="k">🆓 いま手元から出していい額</span><span class="v mono ${low.amt<0?'neg':'pos'}">${yen(low.amt)}</span></div>
     </div>
-    ${tight?`<div class="tiny muted" style="margin-top:7px;line-height:1.7">※ 期限に残る見込みは ${yen(endBal)} ですが、途中の <b>${md(low.day)}</b> に一度 ${yen(low.raw)} まで減ります。そこで足りなくならない範囲が「いま自由に使っていい」額です。</div>`:''}`
-   +appLine;
+    <div class="tiny muted" style="margin-top:7px;line-height:1.7">※ これは本体の数字ではなく、実際の口座残高を起点にした独自の試算です。上の「いま使っていい額」とは別物として見てください。</div>`;
 }
 function autoCash(){UI.cash=null;saveUI();renderAll();}
 function applyCash(){
