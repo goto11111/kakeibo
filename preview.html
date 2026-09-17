@@ -392,8 +392,13 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.5.0';
+const VERSION='v1.6.0';
 const CHANGELOG=[
+ {v:'v1.6.0',d:'2026-09-17',t:[
+   '現金のプールとカードのプールの間にある給料（例：今日が9/17なら2026年9月の給料）が表示から消えていたのを修正。間の月も飛ばさず並べるようにした',
+   '各給料に役割を表示。「今の現金はここから」「今カードで切る分はここから」「◯/◯以降の現金と◯/◯の引き落としはここから」',
+   '今日どの手段でも触れない給料には ⏳ を付け、なぜ「今日使っていい額」に入らないのかを明記',
+   '次の給料日を過ぎると現金の枠がどれに切り替わるか、その残額も表示']},
  {v:'v1.5.0',d:'2026-09-17',t:[
    '【重要】内訳が「表示中の月＋1」を機械的に「カードで今切れる分」として出しており、今日のカードが実際に乗る給料プールと違っていた。今日の支払いが実際に乗るプールだけを対象にするよう作り直した',
    '各カードについて「今日買う → ◯/◯締め → ◯/◯引き落とし → その時点で入っている給料 → ◯月の給料まで当てにできる」という連鎖を表示',
@@ -1385,7 +1390,10 @@ function renderMoney(){
     (cardOf[r.pool]||(cardOf[r.pool]=[])).push({n,charge:r.charge});
     if(!lastCharge||r.charge>lastCharge)lastCharge=r.charge;
   });
-  const poolsUsed=[cashPool].concat(Object.keys(cardOf).map(Number)).filter((v,i,a)=>a.indexOf(v)===i).sort((x,y)=>x-y);
+  // 現金プールからカードプールまで、間の月も飛ばさず並べる（間の給料が消えて見えるため）
+  const cardKeys=Object.keys(cardOf).map(Number);
+  const loK=Math.min(cashPool,...cardKeys), hiK=Math.max(cashPool,...cardKeys);
+  const poolsUsed=[];{let k=loK;for(let i=0;i<8;i++){poolsUsed.push(k);if(k>=hiK)break;k=nextYM(k);}}
   const leftOf=k=>{const t=SBT(k);return t?t.foodLeft+t.jiyuLeft:0;};
   const cashLeft=leftOf(cashPool);
   const cardPools=Object.keys(cardOf).map(Number).sort((x,y)=>x-y);
@@ -1422,13 +1430,20 @@ function renderMoney(){
       <div><span class="k">入ってくる</span><span class="v mono pos">+${yen(inSum)}</span></div>
       <div><span class="k">🔒 出ていくので取っておく</span><span class="v mono neg">−${yen(outSum)}</span></div>
     </div>
-    <div class="sect2">💰 その給料の中身</div>
+    <div class="sect2">💰 給料ごとの状況</div>
     ${poolsUsed.map(k=>{
-      const tags=[];
-      if(k===cashPool)tags.push('💵 現金');
-      if(cardOf[k])tags.push('💳 '+cardOf[k].map(c=>esc(c.n.replace(/カード$/,''))).join('・'));
-      return poolLedger(k,`${ymLabel(k)}の給料（${md(payDate(k))}入金）<span class="tiny muted">${tags.join(' ／ ')}</span>`);
-    }).join('')}`;
+      const r=cycleRange(k);
+      let role,cls;
+      if(k===cashPool){role='💵 今の現金はここから';cls='now';}
+      else if(cardOf[k]){role='💳 今カードで切る分はここから（'+cardOf[k].map(c=>esc(c.n.replace(/カード$/,''))).join('・')+'）';cls='now';}
+      else{
+        // 今日のどの手段でも触れないプール。何に使われるのかを書く
+        const chg=poolCardDays(k).map(x=>md(x.d));
+        role='⏳ '+md(r.start)+'以降の現金'+(chg.length?`と ${chg.join('・')} の引き落とし`:'')+'はここから';cls='later';
+      }
+      return poolLedger(k,`${ymLabel(k)}の給料（${md(payDate(k))}入金・${md(r.start)}〜${md(r.end)}）<br><span class="tiny ${cls==='now'?'pos':'muted'}">${role}</span>`);
+    }).join('')}
+    ${poolsUsed.length>2?`<div class="tiny muted" style="margin-top:6px;line-height:1.7">⏳ が付いた給料は、<b>今日どの手段で払っても触れません</b>（現金はまだ入っておらず、今日切るカードは先の給料に回るため）。なので上の「今日使っていい額」には入れていません。${md(payDate(nextYM(cashPool)))}を過ぎると、現金の枠が ${ymLabel(nextYM(cashPool))} の給料（残り ${yen(leftOf(nextYM(cashPool)))}）に切り替わります。</div>`:''}`;
   renderCashView();
 }
 // 手元の現金ベースの試算（折りたたみの中・実験扱い）
