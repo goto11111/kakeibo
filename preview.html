@@ -392,8 +392,12 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v1.6.0';
+const VERSION='v1.7.0';
 const CHANGELOG=[
+ {v:'v1.7.0',d:'2026-09-17',t:[
+   '予定の合計を「入ってくる」「出ていくカードの引き落とし」「出ていくその他」の3つに分け、単純な差し引きを出すようにした',
+   '給料ごとの残りは、その引き落としをすでに引いた後の数字である旨を明記。残りの横に「取っておく合計」を並べていたため、カードを二重に引いているように読めていた',
+   '検算：本体の残り（foodLeft+jiyuLeft）と画面のレジャー計算が完全一致することを確認。二重引きは起きていない']},
  {v:'v1.6.0',d:'2026-09-17',t:[
    '現金のプールとカードのプールの間にある給料（例：今日が9/17なら2026年9月の給料）が表示から消えていたのを修正。間の月も飛ばさず並べるようにした',
    '各給料に役割を表示。「今の現金はここから」「今カードで切る分はここから」「◯/◯以降の現金と◯/◯の引き落としはここから」',
@@ -1292,9 +1296,9 @@ function scheduleRows(fromD,toD){
     const pd=payDate(k),st=stateFor(k);
     if(st&&pd>=fromD&&pd<=toD){
       const sal=Number(st.salary)||0;
-      if(sal)ev.push({d:pd,icon:'💰',name:`${ymLabel(k)}の給料`,amt:sal,sign:1});
-      (st.carryExtra||[]).forEach(c=>{const a=Number(c.amt)||0;if(a)ev.push({d:pd,icon:'➕',name:c.name||'臨時収入',amt:a,sign:1});});
-      goalOutflowFor(k).forEach(g=>ev.push({d:pd,icon:'🏦',name:`${g.name}（積立・返済）`,amt:g.amt,sign:-1}));
+      if(sal)ev.push({d:pd,icon:'💰',name:`${ymLabel(k)}の給料`,amt:sal,sign:1,kind:'in'});
+      (st.carryExtra||[]).forEach(c=>{const a=Number(c.amt)||0;if(a)ev.push({d:pd,icon:'➕',name:c.name||'臨時収入',amt:a,sign:1,kind:'in'});});
+      goalOutflowFor(k).forEach(g=>ev.push({d:pd,icon:'🏦',name:`${g.name}（積立・返済）`,amt:g.amt,sign:-1,kind:'other'}));
     }
     k=nextYM(k);
   }
@@ -1306,10 +1310,10 @@ function scheduleRows(fromD,toD){
       (byCard[kk]||(byCard[kk]={d:it.charge,pay:it.pay,amt:0,n:0}));
       byCard[kk].amt+=it.amt;byCard[kk].n++;
     }else{
-      ev.push({d:it.charge,icon:'💵',name:it.name,amt:it.amt,sign:-1});
+      ev.push({d:it.charge,icon:'💵',name:it.name,amt:it.amt,sign:-1,kind:'other'});
     }
   });
-  Object.values(byCard).forEach(x=>ev.push({d:x.d,icon:'💳',name:`${x.pay} 引き落とし（${x.n}件）`,amt:x.amt,sign:-1}));
+  Object.values(byCard).forEach(x=>ev.push({d:x.d,icon:'💳',name:`${x.pay} 引き落とし（${x.n}件）`,amt:x.amt,sign:-1,kind:'card'}));
   ev.sort((a,b)=>a.d-b.d||b.sign-a.sign);
   return ev;
 }
@@ -1411,8 +1415,9 @@ function renderMoney(){
   // 予定：今日 〜 今日の支払いが落ちきるところまで
   const to=poolsUsed.reduce((d,k)=>{const e=cycleRange(k).end;return (!d||e>d)?e:d;},lastCharge);
   const sch=scheduleRows(TODAY,to);
-  const outSum=sch.filter(x=>x.sign<0).reduce((s2,x)=>s2+x.amt,0);
-  const inSum=sch.filter(x=>x.sign>0).reduce((s2,x)=>s2+x.amt,0);
+  const sum=kk=>sch.filter(x=>x.kind===kk).reduce((s2,x)=>s2+x.amt,0);
+  const inSum=sum('in'), cardSum=sum('card'), otherSum=sum('other');
+  const net=inSum-cardSum-otherSum;
   const schRows=sch.map(x=>
     `<div class="srow2"><span class="d">${md(x.d)}</span><span class="n">${x.icon} ${esc(x.name)}</span><span class="a mono ${x.sign>0?'pos':''}">${x.sign>0?'+':'−'}${yen(x.amt)}</span></div>`).join('')
     ||'<div class="empty">この期間の予定はありません</div>';
@@ -1426,9 +1431,15 @@ function renderMoney(){
     ${story}
     <div class="sect2">📅 ${md(TODAY)} 〜 ${md(to)} の予定</div>
     <div class="sched">${schRows}</div>
-    <div class="schsum">
-      <div><span class="k">入ってくる</span><span class="v mono pos">+${yen(inSum)}</span></div>
-      <div><span class="k">🔒 出ていくので取っておく</span><span class="v mono neg">−${yen(outSum)}</span></div>
+    <div class="ledger" style="margin-top:9px">
+      <div class="lrow" style="cursor:default"><span class="k">💰 入ってくる（給料・臨時・返金）</span><span class="v mono pos">+${yen(inSum)}</span></div>
+      <div class="lrow" style="cursor:default"><span class="k">💳 出ていくカードの引き落とし</span><span class="v mono neg">−${yen(cardSum)}</span></div>
+      <div class="lrow" style="cursor:default"><span class="k">🏠 出ていくその他（固定費・積立・現金）</span><span class="v mono neg">−${yen(otherSum)}</span></div>
+      <div class="lrow tot" style="cursor:default"><span class="k">差し引き</span><span class="v mono ${net<0?'neg':'pos'}">${net>=0?'+':''}${yen(net)}</span></div>
+    </div>
+    <div class="tiny muted" style="margin-top:6px;line-height:1.7">
+      これは<b>この期間に入る金と出る金だけの差し引き</b>です。今すでに手元にある分や、この期間より先の引き落としは入っていません。<br>
+      <b>上の「給料ごとの残り」は、ここに並んでいる引き落としをすでに引いた後の数字です。</b>二重には引いていません（残り＝元手−固定費−積立−カード引き落とし−もう使った分）。
     </div>
     <div class="sect2">💰 給料ごとの状況</div>
     ${poolsUsed.map(k=>{
