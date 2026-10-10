@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.8.0';
+const APP_VERSION='v0.8.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -263,6 +263,8 @@ function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){toast(
 const accById=id=>S.accounts.find(a=>a.id===id);
 const cardById=id=>S.cards.find(c=>c.id===id);
 const catById=id=>S.cats.find(c=>c.id===id)||{icon:'❔',name:'未分類',id};
+// カードの引き落とし口座（未設定・削除済みなら最初の銀行口座。見通しから抜け落ちないように）
+const cardAcc=c=>{if(c&&accById(c.accountId))return c.accountId;const a=S.accounts.find(a=>a.type==='bank')||S.accounts[0];return a&&a.id;};
 const cardOf=m=>m&&m.startsWith('c:')?cardById(m.slice(2)):null;
 const accOf=m=>m&&m.startsWith('a:')?accById(m.slice(2)):null;
 function mName(m){const c=cardOf(m);if(c)return '💳 '+c.name;const a=accOf(m);if(a)return (a.type==='wallet'?'👛 ':'🏦 ')+a.name;return '—';}
@@ -407,7 +409,7 @@ function buildLedger(to){
     const a=accOf(e.method);if(!a)return;
     ev.push({date:e.date,acc:a.id,delta:e.type==='in'?e.amount:-e.amount,kind:e.type,e});
   });
-  groupCharges(charges(from,to)).forEach(g=>ev.push({date:g.date,acc:g.card.accountId,delta:-g.total,kind:'card',g}));
+  groupCharges(charges(from,to)).forEach(g=>ev.push({date:g.date,acc:cardAcc(g.card),delta:-g.total,kind:'card',g}));
   budgetReserves(from,to).forEach(r=>ev.push({date:r.date,acc:r.acc,delta:-r.amount,kind:'reserve',r}));
   return ev.filter(x=>{const a=accById(x.acc);return a&&x.date>=a.openingDate;})
     .sort((a,b)=>cmp(a.date,b.date)||(b.delta-a.delta));
@@ -513,7 +515,7 @@ function reservePlan(k){
   const r=budgetReserve(k);if(!(r.reserve>0))return [];
   const d0=s>t?s:t;const out=[];
   const lump=(m,amt,label,cat)=>{if(!(amt>0))return;const c=cardOf(m);
-    if(c)out.push({key:k,date:ds(wdDate(c,pd(d0),0)),amount:amt,acc:c.accountId,via:c.name,card:true,cardId:c.id,label,cat});
+    if(c)out.push({key:k,date:ds(wdDate(c,pd(d0),0)),amount:amt,acc:cardAcc(c),via:c.name,card:true,cardId:c.id,label,cat});
     else{const a=accOf(m);if(a)out.push({key:k,date:d0,amount:amt,acc:a.id,via:a.name,label,cat});}};
   r.pending.forEach(it=>lump(it.method||reserveMethod(),Number(it.amount)||0,it.name,it.cat));
   Object.keys(r.cats).forEach(c=>lump(reserveMethod(),r.cats[c].rest,catById(c).name+'（予定にない分）',c));
@@ -675,7 +677,7 @@ function renderDayPanel(day,ents,wds,plans){
   let h=`<div class="card" id="dayPanel"><div class="row"><b>${md(day)}${isHol(pd(day))?' <span class="pill r">祝</span>':''}</b><div class="sp"></div>
     <span class="muted" style="margin-right:56px">日付2回タップでも追加</span></div>`;
   if(wds&&wds.length)h+=wds.map(g=>`<div class="li tap" onclick="wdKey='${g.date.slice(0,7)}';openWd['${g.card.id}|${g.date}']=1;setTab('wd')"><div class="ic" style="background:${cardColor(g.card)};color:#fff">💳</div>
-    <div class="t"><b>${esc(g.card.name)} 引き落とし</b><small>${esc((accById(g.card.accountId)||{}).name||'口座未設定')}から・${g.items.length}件</small></div><div class="a out">-<span class="amt">${fmt(g.total)}</span>円</div></div>`).join('');
+    <div class="t"><b>${esc(g.card.name)} 引き落とし</b><small>${esc((accById(cardAcc(g.card))||{}).name||'口座未設定')}から・${g.items.length}件</small></div><div class="a out">-<span class="amt">${fmt(g.total)}</span>円</div></div>`).join('');
   if(plans&&plans.length)h+=plans.map(it=>`<div class="li tap" onclick="openInput({date:'${day}',plan:'${it.id}@${it.key}'})"><div class="ic">📌</div><div class="t"><b>${esc(it.name)}（予算の予定）</b><small>${esc(catById(it.cat).name)}・${esc(mName(it.method||reserveMethod()))}・タップで記録</small></div><div class="a muted">${fmt(it.amount)}円</div></div>`).join('');
   h+=list.length?list.map(entryRow).join(''):(wds&&wds.length||plans&&plans.length?'':'<div class="muted" style="padding:8px 0">記録はまだありません</div>');
   h+=`<button class="addbtn" onclick="openInput({date:'${day}'})">＋ この日に記録する</button></div>`;
@@ -730,7 +732,7 @@ function keyPress(k){
 function cardPreview(){
   const c=cardOf(F.method);if(!c||F.type!=='out')return '';
   const amt=Number(F.amountStr)||0;const n=Number(F.count)||1;
-  const ps=portions({date:F.date,amount:amt,count:n},c);const a=accById(c.accountId);
+  const ps=portions({date:F.date,amount:amt,count:n},c);const a=accById(cardAcc(c));
   let s=`→ ${md(ps[0].date)} に ${esc(a?a.name:'口座未設定')} から引き落とし`;
   if(n>1){const fee=ps.reduce((x,p)=>x+p.fee,0);s+=`<br>毎月 約${fmt(ps[ps.length-1].principal+ps[ps.length-1].fee)}円 × ${n}回（〜${md(ps[n-1].date)}）${fee?`・手数料 概算${fmt(fee)}円`:'・手数料なし'}`;}
   return s;
@@ -824,7 +826,7 @@ function renderWd(){
     <div class="muted">カード${gs.some(g=>g.budget)?'（📊予算込み）':''} ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
   if(!gs.length&&!direct.length&&!goalsM.length)h+=`<div class="card muted">この月の引き落とし予定はありません</div>`;
   gs.forEach(g=>{
-    const key=g.card.id+'|'+g.date;const a=accById(g.card.accountId);
+    const key=g.card.id+'|'+g.date;const a=accById(cardAcc(g.card));
     const after=a?balAt(L,a.id,g.date):null;
     const ok=after==null||after>=0;
     const items=g.items.slice().sort((p,q)=>cmp(p.e.date,q.e.date));
