@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.5.1';
+const APP_VERSION='v0.6.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -448,8 +448,14 @@ function cashPeriod(s,e){
   if(!S.start||e<S.start)return null;
   const from=s>S.start?s:S.start;const L=buildLedger(e);
   const prev=from===S.start?S.accounts.filter(a=>a.openingDate<=S.start).reduce((t,a)=>t+(Number(a.opening)||0),0):totalAt(L,ds(addDays(pd(from),-1)));
-  const r={prev,inn:0,card:0,cards:{},direct:0,goal:0,reserve:0,from,e};
+  const r={prev,inn:0,card:0,cards:{},direct:0,goal:0,reserve:0,from,e,list:[]};
   L.forEach(x=>{if(x.date<from||x.date>e)return;
+    if(x.kind!=='move'){const a=accById(x.acc);let ic,lb;
+      if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
+      else if(x.kind==='reserve'){ic='📊';lb='予算の残り（使う予定）';}
+      else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
+      else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=x.e.memo||c.name;}
+      r.list.push({date:x.date,ic,lb,acc:a?a.name:'',v:x.delta,kind:x.kind});}
     if(x.kind==='in')r.inn+=x.delta;
     else if(x.kind==='card'){r.card-=x.delta;r.cards[x.g.card.name]=(r.cards[x.g.card.name]||0)-x.delta;}
     else if(x.kind==='reserve')r.reserve-=x.delta;
@@ -491,7 +497,7 @@ function budgetOf(key){
 }
 
 // ── 画面状態 ──
-let tab='cal',curKey,sel,wdKey,fcH='1',chartKind='out',openWd={},catDrill=null,fcAcc=null,openGoal={};
+let tab='cal',curKey,sel,wdKey,fcH='1',chartKind='out',openWd={},catDrill=null,fcAcc=null,openGoal={},openPer={},perN=6;
 function goToday(){sel=todayStr();curKey=periodKeyOf(sel);const t=new Date();wdKey=`${t.getFullYear()}-${pad(t.getMonth()+1)}`;render();}
 function navMove(n){
   if(tab==='wd')wdKey=keyAdd(wdKey,n);
@@ -570,7 +576,7 @@ function renderCal(){
       <div class="bar ${f.out>b.total?'over':''}"><i style="width:${Math.min(100,f.out/b.total*100)}%"></i></div>
       <div class="muted">予算 ${Y(b.total)}・残り${daysLeft}日</div>`
     :cp?`<h3>今期末に残るお金</h3><div class="big ${cp.end<0?'out':''}">${Y(cp.end)}</div>
-      <div class="muted">いま口座・財布にある ${Y(cpNow?cpNow.end:cp.prev)}・残り${daysLeft}日</div>`
+      <div class="muted">いま口座・財布にある ${Y(cpNow?cpNow.end:cp.prev)}・残り${daysLeft}日<br><span style="color:var(--pri);font-weight:700" onclick="event.stopPropagation();setTab('fc')">期ごとの残りを見る ›</span></div>`
     :`<h3>今月の収支</h3><div class="big ${f.inn-f.out<0?'out':''}">${Y(f.inn-f.out)}</div><div class="muted">予算未設定・残り${daysLeft}日</div>`;
   const nwHtml=nw?`<h3>次の引き落とし</h3><div class="mid">${Y(nw.total)}</div>
       <div class="muted">${md(nw.date)}・${nw.list.map(x=>esc(x.card.name)).join('、')}</div>`
@@ -794,9 +800,46 @@ function renderWd(){
 }
 
 // ── 🔭 見通し ──
+// 期ごとの残り：前期の残りを引き継いで、給料と引き落とし（確定分）を足し引きしていく
+function periodChain(n){
+  if(!S.start)return null;
+  const rows=[];let k=periodKeyOf(S.start);const last=keyAdd(periodKeyOf(todayStr()),n-1);
+  let conf=null,cumRes=0;
+  for(let g=0;g<36&&k<=last;g++){
+    const [s,e]=periodRange(k);const c=cashPeriod(s,e);if(!c){k=keyAdd(k,1);continue;}
+    if(conf===null)conf=c.prev;
+    const prev=conf;conf=prev+c.inn-c.card-c.direct-c.goal;cumRes+=c.reserve;
+    rows.push({k,s,e,c,prev,end:conf,reserve:c.reserve,endB:conf-cumRes,past:e<todayStr(),now:s<=todayStr()&&todayStr()<=e});
+    k=keyAdd(k,1);
+  }
+  return rows;
+}
+function renderChain(){
+  const rows=periodChain(perN);
+  let h=`<div class="card"><h3>📅 期ごとに残るお金（前の期から引き継ぎ）</h3>`;
+  if(!rows){return h+`<div class="muted">⚙️設定の「仕切り直し」でスタート日と口座の残高を入れると、期ごとの残りがここに並びます。</div></div>`;}
+  const anyRes=rows.some(r=>r.reserve>0);
+  h+=`<div class="note" style="margin-bottom:6px">給料・カードの引き落とし・口座振替・目標など、決まっている出入りで計算しています（カードは引き落とし日）。${anyRes?'「予算込み」は予算の残り（まだ使う予定のお金）も引いた額です。':''}</div>`;
+  rows.forEach(r=>{const c=r.c;const out=c.card+c.direct+c.goal;
+    h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
+      <div class="t"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
+        <small>${rangeLabel(r.k)}・${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋${fmt(c.inn)} −${fmt(out)}</small></div>
+      <div class="a"><span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>${anyRes?`<small>予算込み <span class="${r.endB<0?'out':''}">${fmt(r.endB)}円</span></small>`:''}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>`;
+    if(openPer[r.k]){
+      h+=`<div style="padding:0 4px 8px 10px">
+        <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
+        ${c.list.filter(x=>x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
+        <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b></span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
+        ${r.reserve?`<div class="row" style="padding:3px 0;font-size:12.5px"><span class="sp muted">📊 予算の残り（この期に使う予定）</span><b>−${fmt(r.reserve)}</b></div>`:''}
+      </div>`;}
+  });
+  h+=`<button class="btn sub sm" style="margin-top:6px" onclick="perN=perN>=12?6:12;render()">${perN>=12?'6期先まで表示':'12期先まで表示'}</button></div>`;
+  return h;
+}
 function renderFc(){
   const H=horizonEnd(fcH);const f=forecast(H);
   let h=`<div class="seg" style="margin-bottom:10px">${[['0','今期の終わりまで'],['1','来期の終わりまで'],['2','再来期まで']].map(([k,l])=>`<button class="${fcH===k?'on':''}" onclick="fcH='${k}';render()">${l}</button>`).join('')}</div>`;
+  h+=renderChain();
   h+=`<div class="card" style="text-align:center"><div class="muted">${md(H)}までに使っていい額</div><div class="big ${f.free<0?'out':''}">${Y(f.free)}</div>
     <div class="muted">${f.free<f.total?`いちばん少なくなるのは ${md(f.minDate)} の ${Y(f.min)}。これを超えて使うと口座と財布の合計がマイナスになります。`:'この先の予定を全部払っても、今の残高を下回る日はありません。'}</div></div>`;
   h+=`<div class="card"><h3>🏦 口座ごと（タップで絞り込み）</h3>${S.accounts.map(a=>{const mn=f.accMin[a.id];const end=f.accEnd[a.id];
