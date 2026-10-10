@@ -415,8 +415,12 @@ details.cfg>summary::-webkit-details-marker{display:none;}
    ══════════════════════════════════════════════════════ */
 
 // ── バージョン（更新されたか一目で分かるように画面に出す） ──
-const VERSION='v2.1.0';
+const VERSION='v2.1.1';
 const CHANGELOG=[
+ {v:'v2.1.1',d:'2026-10-10',t:[
+   '締め日を後から変えたカード（例：追加直後は末締め→10日締めに変更）の支出が、登録時点の末締めのまま判定されていたのを修正。購入日が分かる支出は今のカード設定で判定し直す',
+   '締め日の入力で「１０」（全角）や「10日」を受け付けるように。以前は読めずに末締め扱いになっていた'
+ ]},
  {v:'v2.1.0',d:'2026-09-17',t:[
    '「今日使っていい額」を、繰り越して積み上げた残高から出すよう変更。その支払いが乗る給料の月から先を見て、どの月も残高がマイナスにならない上限を出す',
    '上限の根拠として「これを超えると◯月の残高（¥X）がマイナスになります」を併記。すでにマイナスの場合はその旨を表示',
@@ -822,12 +826,12 @@ function goalDeductForMonth(g,kym,st){
 }
 const poolChargeYM=(viewKym,method)=>cycleOfDate(chargeDateOf(new Date(Math.floor(viewKym/100),(viewKym%100)-1,28),method));
 function itemChargeYM(viewKym,item){
-  if(item&&item.chargeYM)return Number(item.chargeYM);
   const y=Math.floor(viewKym/100),m=(viewKym%100)-1;
-  let d=28;
   const p=item&&item.addedAt?parseISO(item.addedAt):null;
-  if(p&&ymOf(p.getFullYear(),p.getMonth())===viewKym)d=p.getDate();
-  return cycleOfDate(chargeDateOf(new Date(y,m,d),item?item.pay:''));
+  // 購入日が分かる行は今のカード設定で再判定（保存済み chargeYM は登録時点の締め日のままのことがある）
+  if(p&&ymOf(p.getFullYear(),p.getMonth())===viewKym)return cycleOfDate(chargeDateOf(new Date(y,m,p.getDate()),item.pay||''));
+  if(item&&item.chargeYM)return Number(item.chargeYM);
+  return cycleOfDate(chargeDateOf(new Date(y,m,28),item?item.pay:''));
 }
 // 本体の monthTotalsFor() 相当。本体と同じ設定（APP_MODE）で計算する。
 function appTotals(kym){
@@ -1825,8 +1829,9 @@ function applyCfg(){
   UI.reserveFood=$('cfgRf').checked;
   const cards={};
   document.querySelectorAll('.cfgClose').forEach(el=>{
-    const v=el.value.trim();
-    cards[el.dataset.n]=Object.assign({},cardConf()[el.dataset.n],{close:(v==='末'||v==='end'||v==='')?'end':Number(v)});
+    const v=el.value.trim().replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
+    const n=parseInt((v.match(/\d+/)||[''])[0],10);
+    cards[el.dataset.n]=Object.assign({},cardConf()[el.dataset.n],{close:(v.includes('末')||v==='end'||v===''||!(n>=1)||n>=31)?'end':n});
   });
   document.querySelectorAll('.cfgPay').forEach(el=>{cards[el.dataset.n].payDay=Number(el.value)||1;});
   UI.cards=cards;saveUI();renderAll();

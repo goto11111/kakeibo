@@ -2075,13 +2075,17 @@ function refundsForYM(kym){
   if(!seen.has(curYM))scanExp(state); // 未保存の現在ビューも対象
   return out;
 }
-// 支出1件の引き落とし給料月：保存済みchargeYM＞追加日（同月内なら実日）＞月末フォールバック
+// 支出1件の引き落とし給料月：追加日（同月内なら実日）で今のカード設定から再計算＞保存済みchargeYM＞月末フォールバック
+// ※chargeYM は登録時点のスナップショット。カード追加直後（既定＝末締め）に登録した予定が、
+//   後から締め日を変えても末締めのまま残っていたため、購入日が分かる行は常に現設定で判定する。
 function itemChargeYM(viewKym,item){
-  if(item&&item.chargeYM)return Number(item.chargeYM);
-  let d=28;
-  if(item&&item.addedAt){const p=parseISO(item.addedAt);if(p&&ym(p.y,p.m)===viewKym)d=p.d;}
   const y=Math.floor(viewKym/100),m=(viewKym%100)-1;
-  return chargeSalaryMonth(y,m,d,item?item.pay:'');
+  if(item&&item.addedAt){
+    const p=parseISO(item.addedAt);
+    if(p&&ym(p.y,p.m)===viewKym)return chargeSalaryMonth(y,m,p.d,item.pay||'');
+  }
+  if(item&&item.chargeYM)return Number(item.chargeYM);
+  return chargeSalaryMonth(y,m,28,item?item.pay:'');
 }
 function monthTotalsFor(kym){
   const st=stateForYM(kym)||{};
@@ -4011,8 +4015,10 @@ function setCardCycle(name,field,val){
   if(!s.cardCycles)s.cardCycles=JSON.parse(JSON.stringify(defaultCardCycles()));
   if(!s.cardCycles[name])s.cardCycles[name]={close:'end',offset:1,payDay:27};
   if(field==='close'){
-    const v=String(val).trim();
-    s.cardCycles[name].close=(v==='末'||v===''||v.toLowerCase()==='end')?'end':Math.min(31,Math.max(1,Number(v)||31));
+    // 全角数字・「日」付き（例:「１０日」「10日締め」）も受け付ける。数字が読めない時だけ末締め扱い
+    const v=String(val).trim().replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0));
+    const n=parseInt((v.match(/\d+/)||[''])[0],10);
+    s.cardCycles[name].close=(v.includes('末')||v===''||v.toLowerCase()==='end'||!(n>=1))?'end':(n>=31?'end':n);
   }else if(field==='offset'){
     s.cardCycles[name].offset=Number(val)||0;
   }else if(field==='payDay'){
