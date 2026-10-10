@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.6.1';
+const APP_VERSION='v0.6.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -452,7 +452,7 @@ function cashPeriod(s,e){
   L.forEach(x=>{if(x.date<from||x.date>e)return;
     if(x.kind!=='move'){const a=accById(x.acc);let ic,lb;
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
-      else if(x.kind==='reserve'){ic='📊';lb='予算の残り（使う予定）';}
+      else if(x.kind==='reserve'){ic='📊';lb=`予算の残り（${keyLabel(x.r.key)}分・${x.r.via}${x.r.card?'で使う予定':'から'}）`;}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
       else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=x.e.memo||c.name;}
       r.list.push({date:x.date,ic,lb,acc:a?a.name:'',v:x.delta,kind:x.kind});}
@@ -467,7 +467,8 @@ function cashPeriod(s,e){
 }
 function budgetUse(s,e){
   const byCat={};let all=0;
-  entries(s,e).forEach(x=>{if(x.type!=='out'||x.rec||x.goal)return;all+=x.amount;byCat[x.cat]=(byCat[x.cat]||0)+x.amount;});
+  // そのカテゴリの支出はすべて（固定費も）数える。目標は予算の外
+  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal)return;all+=x.amount;byCat[x.cat]=(byCat[x.cat]||0)+x.amount;});
   return {byCat,all};
 }
 function budgetReserve(key){
@@ -480,13 +481,31 @@ function budgetReserve(key){
   const planned=Math.max(Number(b.total)||0,byCatPlan+(u.all-catUsed));
   return {reserve:Math.max(0,planned-u.all),used:u.all,planned,s,e,has:true};
 }
-const reserveAcc=()=>{const a=accById(S.settings.reserveAcc)||S.accounts.find(a=>a.type==='bank')||S.accounts[0];return a&&a.id;};
-// 期末がこれから来る期の「予算の残り」を、期末日にその口座から出ていく予定として返す
+// 予算の残りをどう払う予定か（カードなら締め日・引き落とし日どおりに落ちる日へ、口座・財布なら期末に）
+function reserveMethod(){
+  const m=S.settings.reserveMethod;if(m&&(cardOf(m)||accOf(m)))return m;
+  const cnt={};S.tx.forEach(t=>{if(t.type==='out'&&cardOf(t.method))cnt[t.method]=(cnt[t.method]||0)+1;});
+  const top=Object.keys(cnt).sort((a,b)=>cnt[b]-cnt[a])[0];if(top)return top;
+  if(S.cards[0])return 'c:'+S.cards[0].id;const a=S.accounts.find(a=>a.type==='bank')||S.accounts[0];return a?'a:'+a.id:null;
+}
+// スタート日を含む期（とそれより前）は実績だけで数え、予算は引かない
+const reserveSkip=(s)=>S.start&&s<=S.start;
+// 期ごとの「予算の残り」を、実際にお金が出ていく日ごとに返す（カードは今日〜期末の毎日に均して使う想定で引き落とし日へ振り分け）
+function reservePlan(k){
+  const t=todayStr();const [s,e]=periodRange(k);if(e<t||reserveSkip(s))return [];
+  const r=budgetReserve(k);if(!(r.reserve>0))return [];
+  const m=reserveMethod();const c=cardOf(m);
+  if(!c){const a=accOf(m);return a?[{key:k,date:e,amount:r.reserve,acc:a.id,via:a.name}]:[];}
+  const d0=s>t?s:t;const days=Math.round((pd(e)-pd(d0))/864e5)+1;const per=r.reserve/days;const map={};
+  for(let i=0;i<days;i++){const w=ds(wdDate(c,addDays(pd(d0),i),0));map[w]=(map[w]||0)+per;}
+  const ws=Object.keys(map).sort();let left=r.reserve;
+  return ws.map((w,i)=>{const v=i===ws.length-1?left:Math.round(map[w]);left-=v;return {key:k,date:w,amount:v,acc:c.accountId,via:c.name,card:true};});
+}
 function budgetReserves(from,to){
   const t=todayStr();const res=[];if(to<t)return res;
-  let k=periodKeyOf(from>t?from:t);
-  for(let g=0;g<40;g++){const [s,e]=periodRange(k);if(s>to)break;
-    if(e>=t&&e>=from&&e<=to&&(!S.start||e>=S.start)){const r=budgetReserve(k);if(r.reserve>0)res.push({key:k,date:e,amount:r.reserve,acc:reserveAcc()});}
+  let k=periodKeyOf(t);
+  for(let g=0;g<40;g++){const [s]=periodRange(k);if(s>to)break;
+    reservePlan(k).forEach(x=>{if(x.date>=from&&x.date<=to&&x.amount>0)res.push(x);});
     k=keyAdd(k,1);}
   return res;
 }
@@ -863,7 +882,7 @@ function renderFc(){
     d.items.forEach(x=>{
       const a=accById(x.acc);let ic='•',name='',sub=esc(a?a.name:'');
       if(x.kind==='card'){ic='💳';name=x.g.card.name+' 引き落とし';sub+=`・${x.g.items.length}件`;}
-      else if(x.kind==='reserve'){ic='📊';name=`予算の残り（${keyLabel(x.r.key)}分・期末までに使う予定）`;}
+      else if(x.kind==='reserve'){ic='📊';name=`予算の残り（${keyLabel(x.r.key)}分・${x.r.via}${x.r.card?'で使う予定の引き落とし':'から'}）`;}
       else if(x.e&&x.e.goal){ic='🎯';name=(goalById(x.e.gid)||{}).name+(x.delta<0?(x.kind==='move'?' へ積立':' の返済'):' に入金');sub+=`・${x.e.k}回目`;}
       else if(x.kind==='move'){ic='🔁';name='振替';}
       else if(x.kind==='open'){ic='🏁';name='開始残高';}
@@ -895,12 +914,15 @@ function renderBud(){
   }else if(!br.has)h+=`<div class="muted" style="margin-top:6px">予算はまだありません。「編集」から全体とカテゴリごとの上限を決めると、使った分と残りがすぐ出ます。</div>`;
   const cb=Object.keys(b.cats||{}).filter(k=>Number(b.cats[k])>0);
   if(cb.length){
-    h+=`<div style="margin-top:8px">${cb.map(k=>{const c=catById(k);const u=f.byCat[k]||0;const v=Number(b.cats[k]);return `<div class="li"><div class="ic">${c.icon}</div><div class="t"><b>${esc(c.name)}</b>
+    h+=`<div style="margin-top:8px">${cb.map(k=>{const c=catById(k);const u=bu.byCat[k]||0;const v=Number(b.cats[k]);return `<div class="li"><div class="ic">${c.icon}</div><div class="t"><b>${esc(c.name)}</b>
       <div class="bar ${u>v?'over':''}"><i style="width:${Math.min(100,u/v*100)}%"></i></div><small>使った ${fmt(u)}円 / 予算 ${fmt(v)}円</small></div><div class="a ${v-u<0?'out':''}">残り<br>${Y(v-u)}</div></div>`;}).join('')}</div>`;
   }
-  if(br.has){const ra=accById(reserveAcc());
-    h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 この期に使う予定：<b>${fmt(br.planned)}円</b>（予算と使った分の大きいほう）<br>まだ使っていない <b>${fmt(br.reserve)}円</b> は、${md(br.e)}に${esc(ra?ra.name:'口座')}から出ていく予定として「この先使える額」「期末に残るお金」から引いています。</div>
-      <div class="fld"><label>予算の残りを引いておく口座</label><select onchange="S.settings.reserveAcc=this.value;save();render()">${S.accounts.map(a=>`<option value="${a.id}" ${a.id===reserveAcc()?'selected':''}>${esc(a.name)}</option>`).join('')}</select></div>`;}
+  if(br.has){const rp=reservePlan(curKey);const rm=reserveMethod();
+    h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 この期に使う予定：<b>${fmt(br.planned)}円</b>（カテゴリごとに予算と使った分の大きいほう）<br>まだ使っていない予算：<b>${fmt(br.reserve)}円</b><br>
+      ${reserveSkip(br.s)?'スタートの期なので、予算の残りは引かずに実績だけで数えています。':br.e<todayStr()?'終わった期なので、実績だけで数えています。':
+        rp.length?`${cardOf(rm)?esc(cardOf(rm).name)+'で使う予定として、引き落とし日に':esc((accOf(rm)||{}).name||'')+'から期末に'}引いています：${rp.map(x=>`${md(x.date)} ${fmt(x.amount)}円`).join('・')}`:''}</div>
+      <div class="fld"><label>予算で使うお金の払い方</label><select onchange="S.settings.reserveMethod=this.value;save();render()">${[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)].map(m=>`<option value="${m}" ${m===rm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
+      <div class="note">カードを選ぶと、まだ使っていない予算をこの期の残りの日数で均して使う想定で、そのカードの引き落とし日（どの給料日のあとに落ちるか）に入れます。</div></div>`;}
   h+='</div>';
   // 円グラフ
   const [s,e]=periodRange(curKey);
