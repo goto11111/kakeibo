@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.6.0';
+const APP_VERSION='v0.6.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -823,8 +823,9 @@ function renderChain(){
   rows.forEach(r=>{const c=r.c;const out=c.card+c.direct+c.goal;
     h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
       <div class="t"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
-        <small>${rangeLabel(r.k)}・${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋${fmt(c.inn)} −${fmt(out)}</small></div>
+        <small>${rangeLabel(r.k)}・${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(out)}</small></div>
       <div class="a"><span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>${anyRes?`<small>予算込み <span class="${r.endB<0?'out':''}">${fmt(r.endB)}円</span></small>`:''}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>`;
+    if(openPer[r.k]===undefined&&r.now)openPer[r.k]=true;
     if(openPer[r.k]){
       h+=`<div style="padding:0 4px 8px 10px">
         <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
@@ -975,21 +976,9 @@ function renderSummary(){
   h+=sec('📊 予算（手で記録する支出の上限）')+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):row('📊','予算はまだありません','食費・日用品などを予算で管理するならここから',null,"setTab('bud');editBudget()"));
   const ag=(S.goals||[]).filter(g=>goalStatus(g).remain>0);
   h+=sec('🎯 目標（返済・積立）')+(ag.map(g=>row(esc(g.icon||'🎯'),esc(g.name),`毎月${g.day==='end'?'末日':g.day+'日'}・${esc(mName(goalMethod(g)))}・あと${fmt(goalStatus(g).remain)}円`,`-${fmt(g.monthly)}円`,`editGoal('${g.id}')`)).join('')||'<div class="muted">なし</div>');
-  // 今期のお金の流れ（口座から実際に出入りする日で数える）
-  const cp=cashPeriod(s,e);
-  const line=(l,v,cls,sub)=>`<div class="row" style="padding:5px 2px;border-top:1px solid var(--line)"><span class="sp">${l}${sub?`<br><small class="muted">${sub}</small>`:''}</span><b class="${cls||''}">${v<0?'−':'+'}${fmt(Math.abs(v))}円</b></div>`;
-  if(cp){
-    h+=`<div class="tl-d">💡 今期（${rangeLabel(pk)}）のお金の流れ</div>
-      <div class="row" style="padding:5px 2px"><span class="sp">${cp.from===S.start?`スタート時（${md(S.start)}の口座・財布の合計）`:'前期から残ったお金'}</span><b>${fmt(cp.prev)}円</b></div>
-      ${line('入るお金（給料など）',cp.inn,'in')}
-      ${line('💳 カードの引き落とし',-cp.card,'',Object.keys(cp.cards).map(n=>`${esc(n)} ${fmt(cp.cards[n])}円`).join('・'))}
-      ${line('🏦 口座・現金から出るお金',-cp.direct,'','固定費の口座振替・現金での支出など')}
-      ${cp.goal?line('🎯 目標への支払い（口座・現金から）',-cp.goal):''}
-      ${cp.reserve?line('📊 予算の残り（期末までに使う予定）',-cp.reserve):''}
-      <div class="row" style="padding:7px 2px;border-top:2px solid var(--text)"><span class="sp"><b>期末に残るお金</b></span><b class="${cp.end<0?'out':'in'}" style="font-size:16px">${Y(cp.end)}</b></div>
-      <div class="note">カードで使った分は、使った日ではなく引き落とし日にここに入ります。カレンダーの「期末に残る」と同じ数字です。</div>`;
-  }else h+=`<div class="note">仕切り直し（スタート日と口座の残高）を入れると、今期のお金の流れがここに出ます。</div>`;
   h+='</div>';
+  // 期ごとのお金の流れ（前の期から引き継ぎ）
+  h+=renderChain();
   return h;
 }
 function renderSet(){
