@@ -254,7 +254,7 @@ details.cfg>summary::-webkit-details-marker{display:none;}
     <span class="hd-title">🧪 給料サイクル ビュー</span>
     <span class="badge-exp">試作</span>
     <span class="ver" id="verBadge" onclick="toggleChg()">—</span>
-    <a class="hd-link" href="index.html">← 本体へ</a>
+    <a class="hd-link" href="kakeibo.html">← 本体へ</a>
   </div>
   <div class="cyc-nav">
     <button onclick="moveCycle(-1)">‹</button>
@@ -900,14 +900,14 @@ async function bootSandbox(){
   const tk=++SB_TOKEN;
   SB.state='loading';SB.cache={};for(const k in _sbt)delete _sbt[k];renderMirror();
   try{
-    const res=await fetch('index.html',{cache:'no-cache'});
+    const res=await fetch('kakeibo.html',{cache:'no-cache'});
     if(tk!==SB_TOKEN)return;                     // 後から別の起動が始まっていたら捨てる
-    if(!res.ok)throw new Error('index.html を読めません（HTTP '+res.status+'）');
+    if(!res.ok)throw new Error('kakeibo.html を読めません（HTTP '+res.status+'）');
     let html=await res.text();
     if(tk!==SB_TOKEN)return;
     const seed=JSON.stringify(seedFromDB()).replace(/</g,'\\u003c');
     const shim=SHIM.replace('__SEED__',seed);
-    if(html.indexOf('<head>')<0)throw new Error('index.html の形式が想定外です');
+    if(html.indexOf('<head>')<0)throw new Error('kakeibo.html の形式が想定外です');
     html=html.replace('<head>','<head>'+shim);
     if(SB.frame)SB.frame.remove();
     const f=document.createElement('iframe');
