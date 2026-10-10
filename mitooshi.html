@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.3.0';
+const APP_VERSION='v1.3.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -651,7 +651,7 @@ function renderCal(){
     :`<h3>次の引き落とし</h3><div class="muted">予定なし</div>`;
   top+=`<div class="grid2" style="margin-bottom:10px"><div class="card tap" onclick="setTab('bud')">${leftHtml}</div>
     <div class="card tap" onclick="${nw?`wdKey='${nw.date.slice(0,7)}';`:''}setTab('wd')">${nwHtml}</div></div>`;
-  top+=`<div class="card tap" onclick="setTab('fc')"><h3>🏦 いまのお金のありか</h3><div class="chips" style="margin:0">${S.accounts.filter(a=>a.openingDate<=todayStr()).map(a=>`<span class="pill ${(fc.bal[a.id]||0)<0?'r':''}" style="font-size:13px;padding:4px 10px">${a.type==='wallet'?'👛':'🏦'}${esc(a.name)} <span class="amt">${fmt(fc.bal[a.id]||0)}</span>円${fc.accSaved[a.id]?`<span class="muted" style="font-weight:400">（🐷${fmt(fc.accSaved[a.id])}）</span>`:''}</span>`).join('')}</div><div class="muted" style="margin-top:4px">合計 ${Y(fc.total)}${fc.saved?`＝ 使えるお金 <b>${Y(fc.use)}</b> ＋ 🐷貯金 <b>${Y(fc.saved)}</b>`:''}</div></div>`;
+  top+=`<div class="card tap" onclick="setTab('fc')"><h3>🏦 いまのお金のありか</h3><div class="chips" style="margin:0">${S.accounts.filter(a=>a.openingDate<=todayStr()).map(a=>`<span class="pill ${(fc.bal[a.id]||0)-(fc.accSaved[a.id]||0)<0?'r':''}" style="font-size:13px;padding:4px 10px">${a.type==='wallet'?'👛':'🏦'}${esc(a.name)} <span class="amt">${fmt((fc.bal[a.id]||0)-(fc.accSaved[a.id]||0))}</span>円</span>`).join('')}${S.accounts.filter(a=>fc.accSaved[a.id]).map(a=>`<span class="pill w" style="font-size:13px;padding:4px 10px">🐷${esc(a.name)}の貯金 <span class="amt">${fmt(fc.accSaved[a.id])}</span>円</span>`).join('')}</div><div class="muted" style="margin-top:4px">合計 ${Y(fc.total)}${fc.saved?`＝ 使えるお金 <b>${Y(fc.use)}</b> ＋ 🐷貯金 <b>${Y(fc.saved)}</b>`:''}</div></div>`;
   top+=`<div class="card tap" onclick="setTab('fc')"><div class="row"><div><h3 style="margin:0">この先使える額</h3>
     <div class="muted">${md(horizonEnd(fcH))}まで、口座と財布の合計${fc.saved?'（🐷貯金分を除く）':''}がマイナスにならない上限</div></div><div class="sp"></div>
     <div class="mid ${fc.free<0?'out':''}">${Y(fc.free)}</div></div>
@@ -917,7 +917,8 @@ function periodChain(n,withB){
     // 口座ごとの期末残高（予算を引かないときは予算の分を戻す）
     const L=buildLedger(e);const accEnd={};
     S.accounts.filter(a=>a.openingDate<=e).forEach(a=>{let v=balAt(L,a.id,e);if(!withB)L.forEach(x=>{if(x.kind==='reserve'&&x.acc===a.id&&x.date<=e)v-=x.delta;});accEnd[a.id]=v;});
-    rows.push({k,s,e,c,prev,out,res,end:bal,accEnd,past:e<todayStr(),now:s<=todayStr()&&todayStr()<=e});
+    const pots=savingPots();const accSaved={};S.accounts.forEach(a=>{const v=savedIn(pots,e,a.id);if(v)accSaved[a.id]=v;});
+    rows.push({k,s,e,c,prev,out,res,end:bal,accEnd,accSaved,past:e<todayStr(),now:s<=todayStr()&&todayStr()<=e});
     k=keyAdd(k,1);
   }
   return rows;
@@ -932,9 +933,9 @@ function renderChain(){
   rows.forEach(r=>{const c=r.c;
     h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
       <div class="t" style="white-space:normal"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
-        <small style="white-space:normal">${rangeLabel(r.k)}<br>${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(r.out)}${r.res?` −予算 ${fmt(r.res)}`:''}</small></div>
-      <div class="a"><span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>${c.saved?`<small>うち🐷 ${fmt(c.saved)}</small>`:''}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>
-      <div class="chips" style="margin:0 0 6px 2px">${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>`<span class="pill ${r.accEnd[a.id]<0?'r':''}" style="font-weight:600">${a.type==='wallet'?'👛':'🏦'}${esc(a.name)} ${fmt(r.accEnd[a.id])}</span>`).join('')}</div>`;
+        <small style="white-space:normal">${rangeLabel(r.k)}<br>${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(r.out)}${r.res?` −予算 ${fmt(r.res)}`:''}${c.saved?` ＝ 合計 ${fmt(r.end)}`:''}</small></div>
+      <div class="a">${c.saved?`<small>使える</small><span class="${r.end-c.saved<0?'out':''}" style="font-size:15px">${Y(r.end-c.saved)}</span><small>＋🐷貯金 ${fmt(c.saved)}</small>`:`<span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>`}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>
+      <div class="chips" style="margin:0 0 6px 2px">${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0,u=r.accEnd[a.id]-sv;return `<span class="pill ${u<0?'r':''}" style="font-weight:600">${a.type==='wallet'?'👛':'🏦'}${esc(a.name)} ${fmt(u)}</span>`;}).join('')}${S.accounts.filter(a=>r.accSaved[a.id]).map(a=>`<span class="pill w" style="font-weight:600">🐷${esc(a.name)}の貯金 ${fmt(r.accSaved[a.id])}</span>`).join('')}</div>`;
     if(openPer[r.k]===undefined&&r.now)openPer[r.k]=true;
     if(openPer[r.k]){
       h+=`<div style="padding:0 4px 8px 10px">
@@ -942,7 +943,7 @@ function renderChain(){
         ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
         <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
         ${c.saved?`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp">うち 使えるお金</span><b class="${r.end-c.saved<0?'out':''}">${fmt(r.end-c.saved)}円</b></div><div class="row" style="padding:2px 0 4px 12px;font-size:12.5px"><span class="sp">うち 🐷貯金</span><b>${fmt(c.saved)}円</b></div>`:''}
-        ${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp muted">${a.type==='wallet'?'👛':'🏦'} ${esc(a.name)}</span><span class="${r.accEnd[a.id]<0?'out':''}">${fmt(r.accEnd[a.id])}円</span></div>`).join('')}
+        ${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0;return `<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp muted">${a.type==='wallet'?'👛':'🏦'} ${esc(a.name)}${sv?`<br>　使える ${fmt(r.accEnd[a.id]-sv)}円 ＋ 🐷貯金 ${fmt(sv)}円`:''}</span><span class="${r.accEnd[a.id]<0?'out':''}">${fmt(r.accEnd[a.id])}円</span></div>`;}).join('')}
       </div>`;}
   });
   h+=`<button class="btn sub sm" style="margin-top:6px" onclick="perN=perN>=12?6:12;render()">${perN>=12?'6期先まで表示':'12期先まで表示'}</button></div>`;
@@ -964,8 +965,8 @@ function renderFc(){
       <div class="note">積立の目標で「どこへ貯める」に口座を選んだ分は、その口座の中の貯金として、使っていい額から外しています。貯金を使うときは、記録で「🐷 貯金から使う」を選ぶとその分だけ貯金が減ります。</div></div>`;}
   h+=`<div class="card"><h3>🏦 口座ごと（タップで絞り込み）</h3>${S.accounts.map(a=>{const mn=f.accMin[a.id];const end=f.accEnd[a.id];
       return `<div class="li tap" onclick="fcAcc=fcAcc==='${a.id}'?null:'${a.id}';render()" style="${fcAcc===a.id?'background:var(--pri2);border-radius:10px':''}"><div class="ic">${a.type==='wallet'?'👛':'🏦'}</div>
-      <div class="t"><b>${esc(a.name)}</b><small>${f.accSaved[a.id]?`うち🐷貯金 ${fmt(f.accSaved[a.id])}円・`:''}${md(H)}には ${end!=null?fmt(end)+'円':'—'}${f.accSavedEnd[a.id]?`（🐷${fmt(f.accSavedEnd[a.id])}）`:''}${mn&&mn.v<(f.bal[a.id]||0)?`・最低 <span class="${mn.v<0?'out':''}">${fmt(mn.v)}円（${md(mn.date)}）</span>`:''}</small></div>
-      <div class="a">${a.openingDate<=todayStr()?Y(f.bal[a.id]||0):'—'}<small>いま</small></div></div>`;}).join('')}
+      <div class="t"><b>${esc(a.name)}</b><small>${f.accSaved[a.id]?`🐷貯金 ${fmt(f.accSaved[a.id])}円は別（口座には ${fmt(f.bal[a.id]||0)}円）・`:''}${md(H)}には ${end!=null?fmt(end)+'円':'—'}${f.accSavedEnd[a.id]?`（🐷${fmt(f.accSavedEnd[a.id])}）`:''}${mn&&mn.v<(f.bal[a.id]||0)?`・最低 <span class="${mn.v<0?'out':''}">${fmt(mn.v)}円（${md(mn.date)}）</span>`:''}</small></div>
+      <div class="a">${a.openingDate<=todayStr()?Y((f.bal[a.id]||0)-(f.accSaved[a.id]||0)):'—'}<small>${f.accSaved[a.id]?'いま使える':'いま'}</small></div></div>`;}).join('')}
     <div class="li"><div class="t"><b>合計</b>${f.saved?`<small>使えるお金 ${fmt(f.use)}円 ＋ 🐷貯金 ${fmt(f.saved)}円</small>`:''}</div><div class="a mid">${Y(f.total)}</div></div></div>`;
   if(f.short.length){
     h+=`<div class="card" style="border-color:var(--out)"><h3 class="out">⚠️ 引き落とし日に残高が足りない</h3>${f.short.map(s=>`<div class="li"><div class="t"><b>${md(s.date)} ${esc(s.g.card.name)}</b><small>${esc((accById(s.acc)||{}).name)}の残高が ${fmt(s.bal)}円 になります</small></div><div class="a out">${fmt(-s.bal)}円不足</div></div>`).join('')}
