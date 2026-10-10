@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.5.0';
+const APP_VERSION='v0.5.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -442,6 +442,23 @@ function startPool(upto){
   return {base,bills,inn:f.inn,out:f.out,reserve,remain:base-bills+f.inn-f.out-reserve};
 }
 // 予算：手で記録した支出（固定費・目標は除く）と、予算の「大きいほう」を使う扱いにする
+// 口座から実際にお金が出入りする日で数える（カードは引き落とし日）
+// 期末に残る = スタート時（前期から）＋ 入るお金 − カードの引き落とし − 口座・現金から出るお金 − 目標 − 予算の残り
+function cashPeriod(s,e){
+  if(!S.start||e<S.start)return null;
+  const from=s>S.start?s:S.start;const L=buildLedger(e);
+  const prev=from===S.start?S.accounts.filter(a=>a.openingDate<=S.start).reduce((t,a)=>t+(Number(a.opening)||0),0):totalAt(L,ds(addDays(pd(from),-1)));
+  const r={prev,inn:0,card:0,cards:{},direct:0,goal:0,reserve:0,from,e};
+  L.forEach(x=>{if(x.date<from||x.date>e)return;
+    if(x.kind==='in')r.inn+=x.delta;
+    else if(x.kind==='card'){r.card-=x.delta;r.cards[x.g.card.name]=(r.cards[x.g.card.name]||0)-x.delta;}
+    else if(x.kind==='reserve')r.reserve-=x.delta;
+    else if(x.kind==='out'){if(x.e&&x.e.goal)r.goal-=x.delta;else r.direct-=x.delta;}
+    // 振替（口座間の移動・積立口座への積立）は合計が変わらないので数えない
+  });
+  r.end=r.prev+r.inn-r.card-r.direct-r.goal-r.reserve;
+  return r;
+}
 function budgetUse(s,e){
   const byCat={};let all=0;
   entries(s,e).forEach(x=>{if(x.type!=='out'||x.rec||x.goal)return;all+=x.amount;byCat[x.cat]=(byCat[x.cat]||0)+x.amount;});
@@ -547,15 +564,13 @@ function renderCal(){
     top+=`<div class="banner">👋 はじめに <b>⚙️設定</b> で「口座の今の残高」と「給料（定期収入）」を登録すると、この先いくら使えるかが出ます。カードの締め日・引き落とし日は既存の家計管理の設定を読み込んで初期登録済みです。<div style="margin-top:6px" class="row"><button class="btn sm" onclick="setTab('set')">設定を開く</button><button class="btn sm sub" onclick="S.ui.setupDone=true;save();render()">あとで</button></div></div>`;
   }
   const fc=forecast(horizonEnd(fcH));const nw=nextWithdraw();
-  const poolEnd=startPool(e),poolToday=startPool(t<e?t:e);
-  const fp=poolEnd&&S.start>s?flowsRange(S.start,e):f; // スタート日が期の途中ならスタート日から数える
-  const poolPrev=poolEnd?(S.start>=s?{remain:poolEnd.base-poolEnd.bills}:startPool(ds(addDays(pd(s),-1)))):null;
+  const cp=cashPeriod(s,e),cpNow=cp&&t>=S.start?cashPeriod(S.start,t):null;
   const leftHtml=b.total>0
     ?`<h3>今月の残り（予算）</h3><div class="big ${b.total-f.out<0?'out':''}">${Y(b.total-f.out)}</div>
       <div class="bar ${f.out>b.total?'over':''}"><i style="width:${Math.min(100,f.out/b.total*100)}%"></i></div>
       <div class="muted">予算 ${Y(b.total)}・残り${daysLeft}日</div>`
-    :poolEnd?`<h3>今期末に残るお金</h3><div class="big ${poolEnd.remain<0?'out':''}">${Y(poolEnd.remain)}</div>
-      <div class="muted">今日まで ${Y(poolToday?poolToday.remain:poolEnd.base-poolEnd.bills)}・残り${daysLeft}日${poolEnd.reserve?`<br>予算の残り ${fmt(poolEnd.reserve)}円を引いた額`:''}</div>`
+    :cp?`<h3>今期末に残るお金</h3><div class="big ${cp.end<0?'out':''}">${Y(cp.end)}</div>
+      <div class="muted">いま口座・財布にある ${Y(cpNow?cpNow.end:cp.prev)}・残り${daysLeft}日</div>`
     :`<h3>今月の収支</h3><div class="big ${f.inn-f.out<0?'out':''}">${Y(f.inn-f.out)}</div><div class="muted">予算未設定・残り${daysLeft}日</div>`;
   const nwHtml=nw?`<h3>次の引き落とし</h3><div class="mid">${Y(nw.total)}</div>
       <div class="muted">${md(nw.date)}・${nw.list.map(x=>esc(x.card.name)).join('、')}</div>`
@@ -577,13 +592,12 @@ function renderCal(){
       ${w?w.map(g=>`<span class="cw" style="background:${cardColor(g.card)}">💳<span class="amt">${fmtS(g.total)}</span></span>`).join(''):''}</div>`;
   }
   cal+='</div>';
-  const sum=poolEnd?`<div class="row" style="justify-content:space-around;margin-top:10px;text-align:center">
-    <div><div class="muted">${S.start>=s?'スタート時':'前期から'}</div><b>${Y(poolPrev.remain)}</b></div>
-    <div><div class="muted">収入</div><b class="in">${Y(fp.inn)}</b></div>
-    <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(fp.out)}</b></div>
-    <div><div class="muted">期末に残る</div><b class="${poolEnd.remain<0?'out':''}">${Y(poolEnd.remain)}</b></div></div>
-    ${(()=>{const r=budgetReserve(curKey);return r.has&&r.reserve>0&&e>=todayStr()?`<div class="note" style="text-align:center">期末に残る額は、予算の残り ${fmt(r.reserve)}円（予算 ${fmt(r.planned)}円 − 使った ${fmt(r.used)}円）を使う予定として引いています</div>`:'';})()}
-    ${S.start>=s?`<div class="note" style="text-align:center">スタート時 = ${md(S.start)}の口座・財布の合計 ${fmt(poolEnd.base)}円${poolEnd.bills?` − スタート前のカード請求 ${fmt(poolEnd.bills)}円`:''}</div>`:''}`
+  const sum=cp?`<div class="row" style="justify-content:space-around;margin-top:10px;text-align:center">
+    <div><div class="muted">${cp.from===S.start?'スタート時':'前期から'}</div><b>${Y(cp.prev)}</b></div>
+    <div><div class="muted">収入</div><b class="in">+${fmt(cp.inn)}</b></div>
+    <div><div class="muted">出ていく</div><b class="out">−${fmt(cp.card+cp.direct+cp.goal+cp.reserve)}</b></div>
+    <div><div class="muted">期末に残る</div><b class="${cp.end<0?'out':''}">${Y(cp.end)}</b></div></div>
+    <div class="note" style="text-align:center">出ていく＝💳カード引き落とし ${fmt(cp.card)}円・🏦口座/現金から ${fmt(cp.direct)}円${cp.goal?`・🎯目標 ${fmt(cp.goal)}円`:''}${cp.reserve?`・📊予算の残り ${fmt(cp.reserve)}円`:''}<br>カードで使った分は、引き落とし日にここに入ります</div>`
   :`<div class="row" style="justify-content:space-around;margin-top:10px;text-align:center">
     <div><div class="muted">収入</div><b class="in">${Y(f.inn)}</b></div>
     <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(f.out)}</b></div>
@@ -918,16 +932,21 @@ function renderSummary(){
   h+=sec('📊 予算（手で記録する支出の上限）')+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):row('📊','予算はまだありません','食費・日用品などを予算で管理するならここから',null,"setTab('bud');editBudget()"));
   const ag=(S.goals||[]).filter(g=>goalStatus(g).remain>0);
   h+=sec('🎯 目標（返済・積立）')+(ag.map(g=>row(esc(g.icon||'🎯'),esc(g.name),`毎月${g.day==='end'?'末日':g.day+'日'}・${esc(mName(goalMethod(g)))}・あと${fmt(goalStatus(g).remain)}円`,`-${fmt(g.monthly)}円`,`editGoal('${g.id}')`)).join('')||'<div class="muted">なし</div>');
-  // 今期のお金の流れ
-  let X=0,F=0,G=0;entries(s,e).forEach(x=>{if(x.type==='in')X+=x.amount;else if(x.type==='out'){if(x.goal)G+=x.amount;else if(x.rec)F+=x.amount;}});
-  const br=budgetReserve(pk);const U=budgetUse(s,e).all;const P=br.has?br.planned:U;
-  const bills=S.start&&S.start>=s&&S.start<=e&&S.settings.basis!=='withdraw'?(S.startBills||[]).reduce((a,b)=>a+Number(b.amount),0):0;
-  const line=(l,v,cls)=>`<div class="row" style="padding:5px 2px;border-top:1px solid var(--line)"><span class="sp">${l}</span><b class="${cls||''}">${v<0?'−':'+'}${fmt(Math.abs(v))}円</b></div>`;
-  h+=`<div class="tl-d">💡 今期（${rangeLabel(pk)}）のお金の流れ</div>
-    ${line('入るお金（給料など）',X,'in')}${line('決まって出るお金（固定費）',-F)}${line('目標への支払い',-G)}
-    ${line(br.has?`予算（予算と使った分の大きいほう）`:'手で記録した支出',-P)}${bills?line('スタート前のカード請求',-bills):''}
-    <div class="row" style="padding:7px 2px;border-top:2px solid var(--text)"><span class="sp"><b>この期の収支の見込み</b></span><b class="${X-F-G-P-bills<0?'out':'in'}" style="font-size:16px">${X-F-G-P-bills<0?'−':'+'}${fmt(Math.abs(X-F-G-P-bills))}円</b></div>
-    <div class="note">スタート時（または前期から）のお金にこの収支を足したものが、カレンダーの「期末に残る」です。</div></div>`;
+  // 今期のお金の流れ（口座から実際に出入りする日で数える）
+  const cp=cashPeriod(s,e);
+  const line=(l,v,cls,sub)=>`<div class="row" style="padding:5px 2px;border-top:1px solid var(--line)"><span class="sp">${l}${sub?`<br><small class="muted">${sub}</small>`:''}</span><b class="${cls||''}">${v<0?'−':'+'}${fmt(Math.abs(v))}円</b></div>`;
+  if(cp){
+    h+=`<div class="tl-d">💡 今期（${rangeLabel(pk)}）のお金の流れ</div>
+      <div class="row" style="padding:5px 2px"><span class="sp">${cp.from===S.start?`スタート時（${md(S.start)}の口座・財布の合計）`:'前期から残ったお金'}</span><b>${fmt(cp.prev)}円</b></div>
+      ${line('入るお金（給料など）',cp.inn,'in')}
+      ${line('💳 カードの引き落とし',-cp.card,'',Object.keys(cp.cards).map(n=>`${esc(n)} ${fmt(cp.cards[n])}円`).join('・'))}
+      ${line('🏦 口座・現金から出るお金',-cp.direct,'','固定費の口座振替・現金での支出など')}
+      ${cp.goal?line('🎯 目標への支払い（口座・現金から）',-cp.goal):''}
+      ${cp.reserve?line('📊 予算の残り（期末までに使う予定）',-cp.reserve):''}
+      <div class="row" style="padding:7px 2px;border-top:2px solid var(--text)"><span class="sp"><b>期末に残るお金</b></span><b class="${cp.end<0?'out':'in'}" style="font-size:16px">${Y(cp.end)}</b></div>
+      <div class="note">カードで使った分は、使った日ではなく引き落とし日にここに入ります。カレンダーの「期末に残る」と同じ数字です。</div>`;
+  }else h+=`<div class="note">仕切り直し（スタート日と口座の残高）を入れると、今期のお金の流れがここに出ます。</div>`;
+  h+='</div>';
   return h;
 }
 function renderSet(){
