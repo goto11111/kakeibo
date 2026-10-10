@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.7.2';
+const APP_VERSION='v0.8.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -495,7 +495,7 @@ function budgetReserve(key){
   const totalRest=Math.max(0,(Number(b.total)||0)-(catPlanned+(u.all-catUsed)));
   const P=pending.reduce((a,i)=>a+(Number(i.amount)||0),0);
   const reserve=P+rest+totalRest;
-  return {reserve,used:u.all,planned:u.all+reserve,s,e,has:true,cats:det,pending,rest:rest+totalRest,pendingSum:P};
+  return {reserve,used:u.all,planned:u.all+reserve,s,e,has:true,cats:det,pending,rest:rest+totalRest,totalRest,pendingSum:P};
 }
 // 予算の残りをどう払う予定か（カードなら締め日・引き落とし日どおりに落ちる日へ、口座・財布なら期末に）
 function reserveMethod(){
@@ -506,24 +506,18 @@ function reserveMethod(){
 }
 // スタート日を含む期（とそれより前）は実績だけで数え、予算は引かない
 const reserveSkip=(s)=>S.start&&s<=S.start;
-// 期ごとの「予算の残り」を、実際にお金が出ていく日ごとに返す（カードは今日〜期末の毎日に均して使う想定で引き落とし日へ振り分け）
+// 予算は固定費と同じ考え方：期のはじめ（給料日）にその払い方でまとめて使ったことにして、
+// カードならその引き落とし日に一括で引く。引くのは「予算 − そのカテゴリで実際に使った額」（超えたら0）
 function reservePlan(k){
   const t=todayStr();const [s,e]=periodRange(k);if(e<t||reserveSkip(s))return [];
   const r=budgetReserve(k);if(!(r.reserve>0))return [];
-  const out=[];
-  const push=(m,d,amt,label)=>{const c=cardOf(m);
-    if(c)out.push({key:k,date:ds(wdDate(c,pd(d),0)),amount:amt,acc:c.accountId,via:c.name,card:true,label});
-    else{const a=accOf(m);if(a)out.push({key:k,date:d,amount:amt,acc:a.id,via:a.name,label});}};
-  // 日付の決まっていないお金：今日〜期末に均して使う想定（カードは締め日どおりに引き落とし日へ振り分け、口座・財布は期末）
-  const spread=(m,amt,label)=>{if(!(amt>0))return;const c=cardOf(m);
-    if(!c){push(m,e,amt,label);return;}
-    const d0=s>t?s:t;const days=Math.round((pd(e)-pd(d0))/864e5)+1;const per=amt/days;const map={};
-    for(let i=0;i<days;i++){const w=ds(wdDate(c,addDays(pd(d0),i),0));map[w]=(map[w]||0)+per;}
-    const ws=Object.keys(map).sort();let left=amt;
-    ws.forEach((w,i)=>{const v=i===ws.length-1?left:Math.round(map[w]);left-=v;out.push({key:k,date:w,amount:v,acc:c.accountId,via:c.name,card:true,label});});};
-  r.pending.forEach(it=>{const m=it.method||reserveMethod();const a=Number(it.amount)||0;
-    if(it.date)push(m,it.date<t?t:it.date,a,it.name);else spread(m,a,it.name);});
-  spread(reserveMethod(),r.rest,'予定外の予算');
+  const d0=s>t?s:t;const out=[];
+  const lump=(m,amt,label,cat)=>{if(!(amt>0))return;const c=cardOf(m);
+    if(c)out.push({key:k,date:ds(wdDate(c,pd(d0),0)),amount:amt,acc:c.accountId,via:c.name,card:true,cardId:c.id,label,cat});
+    else{const a=accOf(m);if(a)out.push({key:k,date:d0,amount:amt,acc:a.id,via:a.name,label,cat});}};
+  r.pending.forEach(it=>lump(it.method||reserveMethod(),Number(it.amount)||0,it.name,it.cat));
+  Object.keys(r.cats).forEach(c=>lump(reserveMethod(),r.cats[c].rest,catById(c).name+'（予定にない分）',c));
+  lump(reserveMethod(),r.totalRest,'予算総額の残り',null);
   return out;
 }
 function budgetReserves(from,to){
@@ -814,6 +808,11 @@ function saveOcc(rid,date,skip){
 function renderWd(){
   const [y,m]=wdKey.split('-').map(Number);const from=`${wdKey}-01`,to=`${wdKey}-${pad(lastDay(y,m-1))}`;
   const gs=groupCharges(charges(from,to));
+  // 予算の分（全部使った場合）もカードの請求に足して見せる（見通しの計算には元から入っている）
+  budgetReserves(from,to).filter(x=>x.card).forEach(x=>{let g=gs.find(g=>g.card.id===x.cardId&&g.date===x.date);
+    if(!g){g={card:cardById(x.cardId),date:x.date,total:0,fee:0,items:[]};gs.push(g);}
+    (g.budget||(g.budget=[])).push(x);g.total+=x.amount;});
+  gs.sort((a,b)=>cmp(a.date,b.date));
   const L=buildLedger(to);
   // 口座から直接出ていく分（口座払い・固定費の口座振替など）
   const monthEnts=entries(from,to);
@@ -822,7 +821,7 @@ function renderWd(){
   const cardGoals=gs.flatMap(g=>g.items).filter(p=>p.e.goal);
   const cardTotal=gs.reduce((s,g)=>s+g.total,0),dirTotal=direct.reduce((s,x)=>s+x.amount,0),goalTotal=goalsM.reduce((s,x)=>s+x.amount,0);
   let h=`<div class="card" style="text-align:center"><div class="muted">${y}年${m}月 口座から出ていく合計</div><div class="big out">${Y(cardTotal+dirTotal+goalTotal)}</div>
-    <div class="muted">カード ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
+    <div class="muted">カード${gs.some(g=>g.budget)?'（📊予算込み）':''} ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
   if(!gs.length&&!direct.length&&!goalsM.length)h+=`<div class="card muted">この月の引き落とし予定はありません</div>`;
   gs.forEach(g=>{
     const key=g.card.id+'|'+g.date;const a=accById(g.card.accountId);
@@ -830,12 +829,13 @@ function renderWd(){
     const ok=after==null||after>=0;
     const items=g.items.slice().sort((p,q)=>cmp(p.e.date,q.e.date));
     h+=`<div class="wd"><div class="hd" onclick="openWd['${key}']=!openWd['${key}'];render()"><span class="cdot" style="background:${cardColor(g.card)}"></span>
-      <div class="sp"><b>${esc(g.card.name)}</b><div class="muted">${md(g.date)} 引き落とし・${esc(a?a.name:'口座未設定')}・${g.items.length}件</div></div>
+      <div class="sp"><b>${esc(g.card.name)}</b><div class="muted">${md(g.date)} 引き落とし・${esc(a?a.name:'口座未設定')}・${g.items.length}件${g.budget?`＋📊予算 ${fmt(g.budget.reduce((s,x)=>s+x.amount,0))}円`:''}</div></div>
       <div style="text-align:right"><div class="mid">${Y(g.total)}</div>${g.fee?`<div class="muted">うち手数料 ${Y(g.fee)}</div>`:''}</div><span class="muted">${openWd[key]?'▲':'▼'}</span></div>
       ${a?`<div class="chk">${ok?'✅':'⚠️'} 引き落とし後の${esc(a.name)}残高 <b class="${ok?'':'out'}">${Y(after)}</b>${ok?'':`　<b class="out">${fmt(-after)}円 足りません</b>`}</div>`:''}
       ${openWd[key]?`<div class="bd">${items.map(p=>{const c=catById(p.e.cat);return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':c.icon}</div>
         <div class="t"><b>${esc(p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}</small></div>
-        <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')}</div>`:''}</div>`;
+        <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')}
+        ${(g.budget||[]).map(x=>`<div class="li tap" onclick="curKey='${x.key}';setTab('bud')"><div class="ic">📊</div><div class="t"><b>${esc(x.label)}</b><small>📊 ${keyLabel(x.key)}の予算・まだ使っていない分（全部使った場合）</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('')}</div>`:''}</div>`;
   });
   if(direct.length){
     h+=`<div class="card"><h3>🏦 口座から直接（口座払い・口座振替）</h3>${direct.map(x=>{const c=catById(x.cat);return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div>
@@ -882,7 +882,7 @@ function renderChain(){
   let h=`<div class="card"><h3>📅 期ごとに残るお金（前の期から引き継ぎ）</h3>`;
   if(!rows){return h+`<div class="muted">⚙️設定の「仕切り直し」でスタート日と口座の残高を入れると、期ごとの残りがここに並びます。</div></div>`;}
   h+=`<div class="seg" style="margin-bottom:6px">${[[true,'予算も引く'],[false,'確定分だけ']].map(([v,l])=>`<button class="${withB===v?'on':''}" onclick="S.ui.chainB=${v};save();render()">${l}</button>`).join('')}</div>
-    <div class="note" style="margin-bottom:6px">期末 ＝ 前期から ＋ 給料など − 引き落とし${withB?' − 予算':''}。期末がそのまま次の期の「前期から」になります。カードは引き落とし日で数えます${withB?'。予算は、まだ使っていない分をカードで使う想定で、そのカードが落ちる日の期に入ります':''}。</div>`;
+    <div class="note" style="margin-bottom:6px">期末 ＝ 前期から ＋ 給料など − 引き落とし${withB?' − 予算':''}。期末がそのまま次の期の「前期から」になります。カードは引き落とし日で数えます${withB?'。予算は固定費と同じく、期のはじめにカードで全部使ったことにして、そのカードが落ちる日の期に入ります（スタートの期は実績だけ）':''}。</div>`;
   rows.forEach(r=>{const c=r.c;
     h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
       <div class="t" style="white-space:normal"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
@@ -961,11 +961,11 @@ function renderBud(){
       <div class="bar ${u>v?'over':''}"><i style="width:${Math.min(100,u/v*100)}%"></i></div><small>使った ${fmt(u)}円 / 予算 ${fmt(v)}円</small></div><div class="a ${v-u<0?'out':''}">残り<br>${Y(v-u)}</div></div>${d.items.length?`<div style="padding:0 0 6px 42px">${d.items.map(it=>`<div class="row tap" style="font-size:12.5px;padding:2px 0" onclick="${it.done?'':`openInput({date:'${!it.date||it.date<todayStr()?todayStr():it.date}',plan:'${it.id}@${curKey}'})`}"><span>${it.done?'✅':'📌'}</span><span class="sp ${it.done?'muted':''}">${esc(it.name)}・${esc(mName(it.method||reserveMethod()))}</span><b class="${it.done?'muted':''}">${fmt(it.amount)}円</b></div>`).join('')}${d.rest>0?`<div class="row muted" style="font-size:12px"><span class="sp">予定にない残り</span><span>${fmt(d.rest)}円</span></div>`:''}</div>`:''}`;}).join('')}</div>`;
   }
   if(br.has){const rp=reservePlan(curKey);const rm=reserveMethod();
-    h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 この期に使う予定：<b>${fmt(br.planned)}円</b>（使った ${fmt(br.used)}円 ＋ 📌予定 ${fmt(br.pendingSum||0)}円 ＋ 予定にない残り ${fmt(br.rest)}円）<br>
+    h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 この期の予算：<b>${fmt(br.planned)}円</b>（使った ${fmt(br.used)}円 ＋ まだ使っていない予算 ${fmt(br.reserve)}円）<br>
       ${reserveSkip(br.s)?'スタートの期なので、予算は引かずに実績だけで数えています。':br.e<todayStr()?'終わった期なので、実績だけで数えています。':
-        rp.length?`見通しでは、口座から出ていく日に引いています：${rp.map(x=>`${md(x.date)} ${fmt(x.amount)}円（${esc(x.label)}・${esc(x.via)}）`).join('、')}`:''}</div>
-      <div class="fld"><label>予定にない残りを使うときの払い方</label><select onchange="S.settings.reserveMethod=this.value;save();render()">${[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)].map(m=>`<option value="${m}" ${m===rm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
-      <div class="note">📌予定の支出と予定にない残りは、今日から期末まで均して使う想定で、その払い方の引き落とし日（カード）か期末（口座・財布）に入ります。予定の支出は「編集」から追加できます。</div></div>`;}
+        rp.length?`固定費と同じく、${md(br.s>todayStr()?br.s:todayStr())}にまとめて使ったことにして、引き落とし日に一括で引いています：<br>${rp.map(x=>`・${esc(x.label)} ${fmt(x.amount)}円 → ${md(x.date)} ${esc(x.via)}${x.card?'の引き落とし':'から'}`).join('<br>')}`:''}</div>
+      <div class="fld"><label>📌予定にしていない予算の払い方</label><select onchange="S.settings.reserveMethod=this.value;save();render()">${[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)].map(m=>`<option value="${m}" ${m===rm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
+      <div class="note">予算は固定費と同じ扱いです。期のはじめにその払い方で予算の分を全部使ったことにして、カードならその引き落とし日に一括で引きます。実際に使って記録すると、その分だけ予算の分が減り、記録した分は記録した日のカードの引き落としに入ります。</div></div>`;}
   h+='</div>';
   // 円グラフ
   const [s,e]=periodRange(curKey);
