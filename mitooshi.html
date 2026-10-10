@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.7.0';
+const APP_VERSION='v0.7.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -473,6 +473,7 @@ function budgetUse(s,e){
 }
 // 予算の中の「予定の支出」：毎月◯日に◯円を◯で払う予定。記録で選ぶと「済」になり、見通しから外れる
 function planDate(it,key){
+  if(it.day===''||it.day==null)return null; // 日付なし（いつでも）
   const [s,e]=periodRange(key);
   for(const base of [pd(s),pd(e)]){const y=base.getFullYear(),m=base.getMonth();const L=lastDay(y,m);
     const x=ds(new Date(y,m,it.day==='end'?L:Math.min(Number(it.day)||1,L)));if(x>=s&&x<=e)return x;}
@@ -509,20 +510,19 @@ function reservePlan(k){
   const t=todayStr();const [s,e]=periodRange(k);if(e<t||reserveSkip(s))return [];
   const r=budgetReserve(k);if(!(r.reserve>0))return [];
   const out=[];
-  const place=(m,d,amt,label)=>{const c=cardOf(m);
+  const push=(m,d,amt,label)=>{const c=cardOf(m);
     if(c)out.push({key:k,date:ds(wdDate(c,pd(d),0)),amount:amt,acc:c.accountId,via:c.name,card:true,label});
     else{const a=accOf(m);if(a)out.push({key:k,date:d,amount:amt,acc:a.id,via:a.name,label});}};
-  // 予定の支出：その日（過ぎていたら今日）にその払い方で
-  r.pending.forEach(it=>place(it.method||reserveMethod(),it.date<t?t:it.date,Number(it.amount)||0,it.name));
-  // 予定にない残り：今日〜期末に均して使う想定
-  if(r.rest>0){
-    const m=reserveMethod();const c=cardOf(m);
-    if(!c)place(m,e,r.rest,'予定外の予算');
-    else{const d0=s>t?s:t;const days=Math.round((pd(e)-pd(d0))/864e5)+1;const per=r.rest/days;const map={};
-      for(let i=0;i<days;i++){const w=ds(wdDate(c,addDays(pd(d0),i),0));map[w]=(map[w]||0)+per;}
-      const ws=Object.keys(map).sort();let left=r.rest;
-      ws.forEach((w,i)=>{const v=i===ws.length-1?left:Math.round(map[w]);left-=v;out.push({key:k,date:w,amount:v,acc:c.accountId,via:c.name,card:true,label:'予定外の予算'});});}
-  }
+  // 日付の決まっていないお金：今日〜期末に均して使う想定（カードは締め日どおりに引き落とし日へ振り分け、口座・財布は期末）
+  const spread=(m,amt,label)=>{if(!(amt>0))return;const c=cardOf(m);
+    if(!c){push(m,e,amt,label);return;}
+    const d0=s>t?s:t;const days=Math.round((pd(e)-pd(d0))/864e5)+1;const per=amt/days;const map={};
+    for(let i=0;i<days;i++){const w=ds(wdDate(c,addDays(pd(d0),i),0));map[w]=(map[w]||0)+per;}
+    const ws=Object.keys(map).sort();let left=amt;
+    ws.forEach((w,i)=>{const v=i===ws.length-1?left:Math.round(map[w]);left-=v;out.push({key:k,date:w,amount:v,acc:c.accountId,via:c.name,card:true,label});});};
+  r.pending.forEach(it=>{const m=it.method||reserveMethod();const a=Number(it.amount)||0;
+    if(it.date)push(m,it.date<t?t:it.date,a,it.name);else spread(m,a,it.name);});
+  spread(reserveMethod(),r.rest,'予定外の予算');
   return out;
 }
 function budgetReserves(from,to){
@@ -605,7 +605,7 @@ function renderCal(){
   const f=flows(curKey);const b=budgetOf(curKey);
   const ents=entries(s,e);const byDay={};
   ents.forEach(x=>{if(x.type==='move')return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
-  const plansByDay={};(reserveSkip(s)?[]:planItems(curKey)).filter(it=>!it.done).forEach(it=>(plansByDay[it.date]||(plansByDay[it.date]=[])).push(it));
+  const plansByDay={};(reserveSkip(s)?[]:planItems(curKey)).filter(it=>!it.done&&it.date).forEach(it=>(plansByDay[it.date]||(plansByDay[it.date]=[])).push(it));
   const gs=groupCharges(charges(s,e));const wdByDay={};gs.forEach(g=>(wdByDay[g.date]||(wdByDay[g.date]=[])).push(g));
   // 要約
   const daysLeft=Math.max(0,Math.round((pd(e)-pd(t>s?t:s))/864e5)+1);
@@ -957,14 +957,14 @@ function renderBud(){
   const cb=Object.keys(br.cats||{});
   if(cb.length){
     h+=`<div style="margin-top:8px">${cb.map(k=>{const c=catById(k);const d=br.cats[k];const u=d.U;const v=d.B;return `<div class="li"><div class="ic">${c.icon}</div><div class="t"><b>${esc(c.name)}</b>
-      <div class="bar ${u>v?'over':''}"><i style="width:${Math.min(100,u/v*100)}%"></i></div><small>使った ${fmt(u)}円 / 予算 ${fmt(v)}円</small></div><div class="a ${v-u<0?'out':''}">残り<br>${Y(v-u)}</div></div>${d.items.length?`<div style="padding:0 0 6px 42px">${d.items.map(it=>`<div class="row tap" style="font-size:12.5px;padding:2px 0" onclick="${it.done?'':`openInput({date:'${it.date<todayStr()?todayStr():it.date}',plan:'${it.id}@${curKey}'})`}"><span>${it.done?'✅':'📌'}</span><span class="sp ${it.done?'muted':''}">${esc(it.name)}・${md(it.date)}・${esc(mName(it.method||reserveMethod()))}</span><b class="${it.done?'muted':''}">${fmt(it.amount)}円</b></div>`).join('')}${d.rest>0?`<div class="row muted" style="font-size:12px"><span class="sp">予定にない残り</span><span>${fmt(d.rest)}円</span></div>`:''}</div>`:''}`;}).join('')}</div>`;
+      <div class="bar ${u>v?'over':''}"><i style="width:${Math.min(100,u/v*100)}%"></i></div><small>使った ${fmt(u)}円 / 予算 ${fmt(v)}円</small></div><div class="a ${v-u<0?'out':''}">残り<br>${Y(v-u)}</div></div>${d.items.length?`<div style="padding:0 0 6px 42px">${d.items.map(it=>`<div class="row tap" style="font-size:12.5px;padding:2px 0" onclick="${it.done?'':`openInput({date:'${!it.date||it.date<todayStr()?todayStr():it.date}',plan:'${it.id}@${curKey}'})`}"><span>${it.done?'✅':'📌'}</span><span class="sp ${it.done?'muted':''}">${esc(it.name)}・${it.date?md(it.date):'いつでも'}・${esc(mName(it.method||reserveMethod()))}</span><b class="${it.done?'muted':''}">${fmt(it.amount)}円</b></div>`).join('')}${d.rest>0?`<div class="row muted" style="font-size:12px"><span class="sp">予定にない残り</span><span>${fmt(d.rest)}円</span></div>`:''}</div>`:''}`;}).join('')}</div>`;
   }
   if(br.has){const rp=reservePlan(curKey);const rm=reserveMethod();
     h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 この期に使う予定：<b>${fmt(br.planned)}円</b>（使った ${fmt(br.used)}円 ＋ 📌予定 ${fmt(br.pendingSum||0)}円 ＋ 予定にない残り ${fmt(br.rest)}円）<br>
       ${reserveSkip(br.s)?'スタートの期なので、予算は引かずに実績だけで数えています。':br.e<todayStr()?'終わった期なので、実績だけで数えています。':
         rp.length?`見通しでは、口座から出ていく日に引いています：${rp.map(x=>`${md(x.date)} ${fmt(x.amount)}円（${esc(x.label)}・${esc(x.via)}）`).join('、')}`:''}</div>
       <div class="fld"><label>予定にない残りを使うときの払い方</label><select onchange="S.settings.reserveMethod=this.value;save();render()">${[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)].map(m=>`<option value="${m}" ${m===rm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
-      <div class="note">📌予定の支出は、その日にその払い方で使う前提で見通しに入ります（カードなら引き落とし日）。予定にない残りは、今日から期末まで均して使う想定です。予定の支出は「編集」から追加できます。</div></div>`;}
+      <div class="note">📌予定の支出と予定にない残りは、今日から期末まで均して使う想定で、その払い方の引き落とし日（カード）か期末（口座・財布）に入ります。日付を決めた予定だけはその日に使う前提です。予定の支出は「編集」から追加できます。</div></div>`;}
   h+='</div>';
   // 円グラフ
   const [s,e]=periodRange(curKey);
@@ -1005,8 +1005,8 @@ function editBudget(){
   sheet(`予算（${keyLabel(curKey)}）`,`<div class="fld"><label>予算総額（1か月・任意）</label><input type="number" inputmode="numeric" id="bTotal" value="${b.total||''}" placeholder="例：150000"></div>
     <div class="note">そのカテゴリの支出（固定費も含む）が予算より少ないうちは予算の額を、超えたら使った額を引きます。目標は予算の外です。</div>
     <div class="fld"><label>カテゴリごとの予算（空欄＝決めない）</label>${outs.map(c=>`<div class="row" style="margin:4px 0"><span class="sp">${c.icon} ${esc(c.name)}</span><input style="width:140px" type="number" inputmode="numeric" data-cat="${c.id}" value="${(b.cats||{})[c.id]||''}"></div>`).join('')}</div>
-    <div class="fld"><label>📌 予定の支出（毎月◯日に◯円を◯で払う予定）</label><div id="biBox"></div>
-      <button class="btn sub sm" onclick="readBi();BI.push({id:uid(),cat:'car',name:'',amount:'',day:${Number(S.settings.startDay)||25},method:reserveMethod()});renderBi()">＋ 予定の支出を追加</button>
+    <div class="fld"><label>📌 予定の支出（何に・いくら・何で払うか。日付は決まっていれば）</label><div id="biBox"></div>
+      <button class="btn sub sm" onclick="readBi();BI.push({id:uid(),cat:'car',name:'',amount:'',day:'',method:reserveMethod()});renderBi()">＋ 予定の支出を追加</button>
       <div class="note">記録するときにこの予定を選ぶと「済」になります。予算額より予定の合計が多いときは、予定の合計を予算にします。</div></div>
     <div class="grid2"><button class="btn" onclick="saveBudget('fwd')">これ以降ずっと</button><button class="btn sub" onclick="saveBudget('only')">この月だけ</button></div>
     <div class="note">「これ以降ずっと」はこの月から先の予算を変えます。「この月だけ」は他の月に影響しません。</div>
@@ -1019,9 +1019,9 @@ function renderBi(){const box=document.getElementById('biBox');if(!box)return;co
     <div class="row"><select data-bi="${i}" data-f="cat" style="width:auto">${outs.map(c=>`<option value="${c.id}" ${c.id===x.cat?'selected':''}>${c.icon} ${esc(c.name)}</option>`).join('')}</select>
       <input data-bi="${i}" data-f="name" value="${esc(x.name)}" placeholder="例：ガソリン"><button class="x" onclick="readBi();BI.splice(${i},1);renderBi()">✕</button></div>
     <div class="row" style="margin-top:4px"><input data-bi="${i}" data-f="amount" type="number" inputmode="numeric" value="${x.amount}" placeholder="金額" style="width:110px">
-      <select data-bi="${i}" data-f="day" style="width:auto">${dayOpts(x.day,true)}</select>
+      <select data-bi="${i}" data-f="day" style="width:auto"><option value="" ${x.day===''||x.day==null?'selected':''}>いつでも</option>${dayOpts(x.day,true)}</select>
       <select data-bi="${i}" data-f="method">${ms.map(m=>`<option value="${m}" ${m===x.method?'selected':''}>${esc(mName(m))}</option>`).join('')}</select></div></div>`).join('')||'<div class="muted">なし</div>';}
-function readBi(){document.querySelectorAll('[data-bi]').forEach(el=>{const x=BI[Number(el.dataset.bi)];const f=el.dataset.f;x[f]=f==='day'?(el.value==='end'?'end':Number(el.value)):el.value;});}
+function readBi(){document.querySelectorAll('[data-bi]').forEach(el=>{const x=BI[Number(el.dataset.bi)];const f=el.dataset.f;x[f]=f==='day'?(el.value===''?'':el.value==='end'?'end':Number(el.value)):el.value;});}
 function saveBudget(scope){
   const b={total:Number(document.getElementById('bTotal').value)||0,cats:{}};
   document.querySelectorAll('[data-cat]').forEach(i=>{const v=Number(i.value);if(v>0)b.cats[i.dataset.cat]=v;});
