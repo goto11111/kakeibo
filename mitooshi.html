@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.0.1';
+const APP_VERSION='v1.1.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -258,7 +258,7 @@ function migrateData(){
   [['repay','💸','返済','out'],['saving','🐷','積立','out']].forEach(([id,icon,name,kind])=>{if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});});
   S.ai=Object.assign({usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},S.ai||{});
 }
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){toast('保存に失敗しました');}}
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){toast('保存に失敗しました');}if(typeof scheduleSync==='function'&&!save.quiet)scheduleSync();}
 
 const accById=id=>S.accounts.find(a=>a.id===id);
 const cardById=id=>S.cards.find(c=>c.id===id);
@@ -1085,7 +1085,7 @@ function renderSummary(){
 }
 function renderSet(){
   const st=S.settings;const t=new Date();
-  let h=renderSummary()+`<div class="card" id="setMonth"><h3>📆 月のはじまり（給料日から数える）</h3>
+  let h=renderSummary()+renderSync()+`<div class="card" id="setMonth"><h3>📆 月のはじまり（給料日から数える）</h3>
     <div class="fld"><label>開始日</label><select onchange="setS('startDay',this.value==='end'?'end':Number(this.value))">${dayOpts(st.startDay,true)}</select>
       <div class="note">29〜31日がない月は末日に寄せます。</div></div>
     <div class="fld"><label>開始日が土日祝のとき</label><select onchange="setS('shift',this.value)">${['prev','next','none'].map(k=>`<option value="${k}" ${st.shift===k?'selected':''}>${{prev:'前の平日にする（給料の前倒し）',next:'次の平日にする',none:'ずらさない'}[k]}</option>`).join('')}</select></div>
@@ -1112,7 +1112,7 @@ function renderSet(){
     <div class="fld" style="margin-top:10px"><label>クラウド（Gist）から取り込む：Gist ID</label><div class="row"><input id="lgGist" value="${esc(lsGet('gh_gist_id'))}" placeholder="家計管理の設定にある Gist ID"><button class="btn sm" onclick="importLegacyGist()">取り込む</button></div></div>
     <details style="margin-top:6px"><summary class="muted">バックアップの中身（JSON）を貼り付けて取り込む</summary><textarea id="lgPaste" rows="4" style="width:100%;margin-top:6px;font:12px monospace;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);padding:8px" placeholder='{"version":2,"kakeibo_settings":...}'></textarea><button class="btn sub sm" style="margin-top:6px" onclick="importLegacyPaste()">貼り付けた内容で取り込む</button></details>
     ${S.tx.some(t=>t.src==='legacy')||S.recurring.some(r=>r.src==='legacy')||S.goals.some(g=>g.src==='legacy')?`<button class="btn del sm" style="margin-top:8px" onclick="removeLegacy()">取り込んだ分をすべて消す</button>`:''}</div>
-  <div class="card"><h3>💾 データ</h3><div class="note" style="margin-bottom:8px">記録はこの端末（ブラウザ）の中だけに保存されます。既存の「家計管理」とは別のデータで、あちらには一切書き込みません。機種変更やブラウザのデータ削除に備えてバックアップを取ってください。</div>
+  <div class="card"><h3>💾 データ</h3><div class="note" style="margin-bottom:8px">記録はこの端末（ブラウザ）の中に保存されます（☁️クラウド同期を設定すると Gist にも保存）。既存の「家計管理」とは別のデータで、あちらには一切書き込みません。機種変更やブラウザのデータ削除に備えてバックアップを取ってください。</div>
     <div class="grid2"><button class="btn sub" onclick="exportJSON()">バックアップを保存</button><button class="btn sub" onclick="document.getElementById('fileIn').click()">バックアップから戻す</button></div>
     <button class="btn sub" style="margin-top:8px" onclick="exportCSV()">記録をCSVで書き出す</button>
     <button class="btn del" style="margin-top:8px" onclick="resetAll()">すべて消して最初から</button></div>
@@ -1641,6 +1641,75 @@ function removeLegacy(){
   S.tx=S.tx.filter(t=>t.src!=='legacy');S.recurring=S.recurring.filter(x=>x.src!=='legacy');S.goals=S.goals.filter(g=>g.src!=='legacy');save();render();
 }
 
+// ── ☁️ GitHub Gist 同期（見通し家計簿専用の Gist。家計管理の Gist には書き込まない）──
+// Token と中継URLは家計管理の設定（gh_token / gh_proxy）をそのまま使える。データ本体（S）には入れない
+const SYNC_KEY='mitooshi_sync',GIST_FILE='mitooshi_data.json';
+function syncCfg(){let c={};try{c=JSON.parse(localStorage.getItem(SYNC_KEY)||'{}')||{};}catch(e){}return Object.assign({gistId:'',token:'',proxy:'',auto:true,lastSync:'',remoteAt:'',localAt:''},c);}
+function saveSyncCfg(c){try{localStorage.setItem(SYNC_KEY,JSON.stringify(c));}catch(e){}}
+const syncToken=()=>syncCfg().token||lsGet('gh_token');
+const syncBase=()=>{const p=(syncCfg().proxy||lsGet('gh_proxy')||'').trim().replace(/\/+$/,'');return p||'https://api.github.com';};
+const syncReady=()=>!!syncToken();
+let syncTimer=null,syncBusy=false,syncMsg='';
+function syncErr(e){return e&&e.message==='Failed to fetch'?'GitHub に接続できませんでした（中継URLを確認してください）':(e&&e.message)||'不明なエラー';}
+// 自動保存：変更のたびに少し待ってからアップロード（この端末を正とする）
+function scheduleSync(){const c=syncCfg();c.localAt=new Date().toISOString();saveSyncCfg(c);if(!c.auto||!syncReady()||!c.gistId)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncUpload(true),4000);}
+async function syncUpload(silent){
+  if(syncBusy)return;const token=syncToken();if(!token){if(!silent)toast('GitHub Token を入れてください');return;}
+  const c=syncCfg();syncBusy=true;syncMsg='☁️ 保存中…';if(!silent)render();
+  try{
+    const url=c.gistId?`${syncBase()}/gists/${c.gistId}`:`${syncBase()}/gists`;
+    const res=await fetch(url,{method:c.gistId?'PATCH':'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
+      body:JSON.stringify({description:'見通し家計簿データ',public:false,files:{[GIST_FILE]:{content:JSON.stringify(Object.assign({savedAt:new Date().toISOString()},S))}}})});
+    if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
+    const j=await res.json();const n=syncCfg();n.gistId=j.id;n.remoteAt=j.updated_at;n.lastSync=new Date().toISOString();saveSyncCfg(n);
+    syncMsg=`✅ クラウドに保存しました（${new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}）`;
+  }catch(e){syncMsg='❌ 保存できませんでした：'+syncErr(e);if(!silent)toast('クラウドに保存できませんでした');}
+  finally{syncBusy=false;if(tab==='set')render();}
+}
+async function syncFetch(){
+  const c=syncCfg();const token=syncToken();if(!c.gistId)throw new Error('Gist ID がありません');
+  const res=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:token?{'Authorization':`Bearer ${token}`}:{}});
+  if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
+  const j=await res.json();const f=j.files&&j.files[GIST_FILE];if(!f)throw new Error('この Gist に見通し家計簿のデータがありません');
+  let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url)).text();
+  return {data:JSON.parse(content),updatedAt:j.updated_at};
+}
+async function syncDownload(){
+  if(!confirm('クラウドのデータでこの端末のデータを置き換えます。よろしいですか？'))return;
+  syncMsg='☁️ 読み込み中…';render();
+  try{const r=await syncFetch();if(!r.data||r.data.v!==1)throw new Error('データの形式が違います');
+    delete r.data.savedAt;S=Object.assign(freshData(),r.data);S.ui=Object.assign({},freshData().ui,r.data.ui||{});migrateData();
+    try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
+    const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;saveSyncCfg(c);
+    syncMsg='✅ クラウドから読み込みました';goToday();toast('読み込みました');
+  }catch(e){syncMsg='❌ 読み込めませんでした：'+syncErr(e);render();}
+}
+// 開いたとき：クラウドの方が新しければ（他の端末で保存されていれば）知らせる。勝手に上書きはしない
+async function syncCheckOnLoad(){
+  const c=syncCfg();if(!c.gistId||!syncReady())return;
+  try{const token=syncToken();const res=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:{'Authorization':`Bearer ${token}`}});if(!res.ok)return;
+    const j=await res.json();if(c.remoteAt&&j.updated_at>c.remoteAt&&(!c.localAt||c.localAt<=c.lastSync)){syncMsg='🔔 ほかの端末でクラウドに保存されています。「クラウドから読み込む」で最新にできます';render();toast('クラウドに新しいデータがあります（⚙️設定）');}
+  }catch(e){}
+}
+function renderSync(){
+  const c=syncCfg();const tk=syncToken();
+  return `<div class="card" id="syncCard"><h3>☁️ クラウド同期（GitHub Gist）</h3>
+    <div class="note" style="margin-bottom:8px">見通し家計簿専用の非公開 Gist に保存します（家計管理の Gist には書き込みません）。Token・中継URLは家計管理で設定したものをそのまま使います。${c.auto?'<b>変更のたびに自動でクラウドに保存</b>するので、この端末のデータが正になります。':''}</div>
+    <div class="fld"><label>GitHub Token ${c.token?'':lsGet('gh_token')?'（家計管理の設定を使用中）':''}</label><input type="password" id="syTok" value="${esc(c.token)}" placeholder="${lsGet('gh_token')?'家計管理と同じ Token を使います（変えるときだけ入力）':'ghp_… または github_pat_…'}"></div>
+    <div class="fld"><label>中継URL（任意）${c.proxy?'':lsGet('gh_proxy')?'（家計管理の設定を使用中）':''}</label><input id="syProxy" value="${esc(c.proxy)}" placeholder="${esc(lsGet('gh_proxy')||'未入力なら api.github.com に直接')}"></div>
+    <div class="fld"><label>見通し家計簿の Gist ID ${c.gistId?'':'（最初の保存で自動で作られます）'}</label><input id="syGist" value="${esc(c.gistId)}" placeholder="ほかの端末と合わせるときは、ここに同じ ID を入れる"></div>
+    <label class="row" style="font-size:13px;margin:6px 0"><input type="checkbox" id="syAuto" style="width:auto" ${c.auto?'checked':''}> 変更のたびに自動でクラウドに保存する</label>
+    <button class="btn sub sm" onclick="saveSyncForm()">同期の設定を保存</button>
+    <div class="grid2" style="margin-top:8px"><button class="btn" onclick="saveSyncForm(true);syncUpload(false)" ${tk?'':'disabled'}>この端末のデータを<br>クラウドに保存</button><button class="btn sub" onclick="saveSyncForm(true);syncDownload()">クラウドから<br>読み込む</button></div>
+    <div class="muted" style="margin-top:6px">${esc(syncMsg)||(c.lastSync?`最後の同期：${new Date(c.lastSync).toLocaleString('ja-JP')}`:'まだ同期していません')}</div></div>`;
+}
+function saveSyncForm(quiet){
+  const v=id=>(document.getElementById(id)||{}).value||'';const c=syncCfg();
+  c.token=v('syTok').trim();c.proxy=v('syProxy').trim();const g=v('syGist').trim().replace(/^.*\//,'');
+  if(g!==c.gistId){c.gistId=g;c.remoteAt='';}
+  c.auto=!!(document.getElementById('syAuto')||{}).checked;saveSyncCfg(c);if(!quiet){toast('同期の設定を保存しました');render();}
+}
+
 // ── バックアップ ──
 function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
 function exportJSON(){download(`mitooshi-backup-${todayStr()}.json`,JSON.stringify(S,null,1),'application/json');}
@@ -1660,7 +1729,7 @@ function importJSON(inp){
 }
 function resetAll(){if(!confirm('見通し家計簿のデータをすべて消します（家計管理のデータは消えません）。よろしいですか？'))return;localStorage.removeItem(KEY);load();goToday();}
 
-load();presetGoals();save();applyHide();goToday();
+load();presetGoals();save.quiet=true;save();save.quiet=false;applyHide();goToday();syncCheckOnLoad();
 </script>
 </body>
 </html>
