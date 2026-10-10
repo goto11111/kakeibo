@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.3.0';
+const APP_VERSION='v0.4.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -331,23 +331,28 @@ function entries(from,to){
       cat:r.cat,method:r.method,count:1,memo:r.name});
   }));
   (S.goals||[]).forEach(g=>goalPays(g,to).forEach(p=>{
-    if(p.skip||p.amount<=0||p.date<from)return;const mv=g.kind==='save'&&g.toAcc&&g.toAcc!==g.fromAcc;
+    if(p.skip||p.amount<=0||p.date<from)return;const m=goalMethod(g);const fa=accOf(m);const mv=g.kind==='save'&&fa&&g.toAcc&&g.toAcc!==fa.id;
     out.push({id:'g:'+g.id+':'+p.date,gid:g.id,goal:true,date:p.date,type:mv?'move':'out',amount:p.amount,cat:g.kind==='debt'?'repay':'saving',
-      method:'a:'+g.fromAcc,from:g.fromAcc,to:g.toAcc,count:1,memo:'🎯 '+g.name,k:p.k,after:p.after});
+      method:m,from:fa?fa.id:null,to:g.toAcc,count:1,memo:'🎯 '+g.name,k:p.k,after:p.after});
   }));
   return out.sort((a,b)=>cmp(a.date,b.date));
 }
 // ── 🎯 目標（返済・積立）：毎月の支払いを残りがなくなるまで並べる ──
+function goalMethod(g){return g.method||(g.fromAcc?'a:'+g.fromAcc:'a:'+((S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id));}
 function goalPays(g,upto){
   const res=[];const total=Number(g.total)||0;let done=Number(g.done)||0;
-  if(!g.start||!(Number(g.monthly)>0)||done>=total)return res;
-  const dates=recDates({every:'month',day:g.day||S.settings.startDay||15,adjust:g.adjust||'none',start:g.start,end:''},g.start,upto);
+  if(!g.start||done>=total)return res;
+  const ex=g.ex||{};const mo=Number(g.monthly)||0;const map={};
+  if(mo>0||Object.keys(ex).length)recDates({every:'month',day:g.day||S.settings.startDay||15,adjust:g.adjust||'none',start:g.start,end:''},g.start,upto).forEach(d=>map[d]={reg:true});
+  // 臨時の支払い（ボーナス払いなど）
+  (g.extra||[]).forEach(x=>{if(x.date&&x.date>=g.start&&x.date<=upto){const m=map[x.date]||(map[x.date]={});m.extra=(m.extra||0)+(Number(x.amount)||0);}});
   let k=0;
-  for(const d of dates){
-    if(done>=total)break;k++;const ex=(g.ex||{})[d];
-    if(ex&&ex.skip){res.push({date:d,amount:0,skip:true,k,after:total-done});continue;}
-    const a=Math.min(ex&&ex.amount!=null?Number(ex.amount)||0:Number(g.monthly),total-done);done+=a;
-    res.push({date:d,amount:a,k,after:total-done});
+  for(const d of Object.keys(map).sort()){
+    if(done>=total)break;const m=map[d],e=ex[d];let a=0,skip=false;
+    if(m.reg){if(e&&e.skip)skip=true;else a+=(e&&e.amount!=null)?Number(e.amount)||0:mo;}
+    a+=m.extra||0;
+    if(a<=0){if(skip){k++;res.push({date:d,amount:0,skip:true,k,after:total-done});}continue;}
+    a=Math.min(a,total-done);done+=a;k++;res.push({date:d,amount:a,k,after:total-done,extra:!!m.extra});
   }
   return res;
 }
@@ -527,7 +532,7 @@ function pickDay(k){
 function entryRow(x){
   if(x.goal){const g=goalById(x.gid)||{};
     return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">🎯</div><div class="t"><b>${esc(g.name||'目標')}（${g.kind==='debt'?'返済':'積立'}）</b>
-      <small>${esc((accById(x.from)||{}).name||'?')}${x.type==='move'?` → ${esc((accById(x.to)||{}).name||'?')}`:''}・${x.k}回目・このあと残り ${fmt(x.after)}円</small></div><div class="a">-<span class="amt">${fmt(x.amount)}</span>円</div></div>`;}
+      <small>${x.type==='move'?`${esc((accById(x.from)||{}).name||'?')} → ${esc((accById(x.to)||{}).name||'?')}`:esc(mName(x.method))}${cardOf(x.method)?` → ${md(portions(x,cardOf(x.method))[0].date)}引落`:''}・${x.k}回目・このあと残り ${fmt(x.after)}円</small></div><div class="a">-<span class="amt">${fmt(x.amount)}</span>円</div></div>`;}
   if(x.type==='move'){
     return `<div class="li tap" onclick="editTx('${x.id}')"><div class="ic">🔁</div><div class="t"><b>振替 ${esc(x.memo||'')}</b>
       <small>${esc((accById(x.from)||{}).name||'?')} → ${esc((accById(x.to)||{}).name||'?')}（収支に数えない）</small></div><div class="a amt">${fmt(x.amount)}円</div></div>`;
@@ -668,7 +673,8 @@ function renderWd(){
   // 口座から直接出ていく分（口座払い・固定費の口座振替など）
   const monthEnts=entries(from,to);
   const direct=monthEnts.filter(x=>!x.goal&&x.type==='out'&&accOf(x.method)&&accOf(x.method).type==='bank');
-  const goalsM=monthEnts.filter(x=>x.goal);
+  const goalsM=monthEnts.filter(x=>x.goal&&!cardOf(x.method));
+  const cardGoals=gs.flatMap(g=>g.items).filter(p=>p.e.goal);
   const cardTotal=gs.reduce((s,g)=>s+g.total,0),dirTotal=direct.reduce((s,x)=>s+x.amount,0),goalTotal=goalsM.reduce((s,x)=>s+x.amount,0);
   let h=`<div class="card" style="text-align:center"><div class="muted">${y}年${m}月 口座から出ていく合計</div><div class="big out">${Y(cardTotal+dirTotal+goalTotal)}</div>
     <div class="muted">カード ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
@@ -690,8 +696,10 @@ function renderWd(){
     h+=`<div class="card"><h3>🏦 口座から直接（口座払い・口座振替）</h3>${direct.map(x=>{const c=catById(x.cat);return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div>
       <div class="t"><b>${esc(x.memo||c.name)}</b><small>${md(x.date)}・${esc(mName(x.method))}${x.rec?'・固定費':''}</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`;}).join('')}</div>`;
   }
-  if(goalsM.length){
+  if(goalsM.length||cardGoals.length){
     h+=`<div class="card"><h3>🎯 目標の引き落とし（返済・積立）</h3>${goalsM.map(entryRow).join('')}
+      ${cardGoals.map(p=>{const g=goalById(p.e.gid)||{};return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">🎯</div><div class="t"><b>${esc(g.name||'目標')}（${g.kind==='debt'?'返済':'積立'}）</b>
+        <small>💳 ${esc(p.card.name)}の${md(p.date)}引き落としに含む・${p.e.k}回目・このあと残り ${fmt(p.e.after)}円</small></div><div class="a muted"><span class="amt">${fmt(p.principal+p.fee)}</span>円</div></div>`;}).join('')}
       <button class="btn sub sm" style="margin-top:6px" onclick="setTab('goal')">目標の進み具合を見る</button></div>`;
   }
   // カード別：今月使った分がいつ引かれるか
@@ -962,6 +970,32 @@ function delCat(id){
 }
 
 // ── 🎯 目標 ──
+// 目標に置き換えた固定費（例：母に返すやつ・車代）を、固定費と取り込んだ見込みから外して二重計上を防ぐ
+function dedupeGoalFixed(){
+  const names=new Set();(S.goals||[]).forEach(g=>(g.replaces||[]).forEach(n=>names.add(n)));
+  if(!names.size)return;
+  S.recurring=S.recurring.filter(r=>!names.has(r.name));
+  S.tx=S.tx.filter(t=>!(t.src==='legacy'&&names.has(String(t.memo||'').replace(/（見込み）$/,''))));
+}
+// 家計管理で使っていた目標（2026年10月時点）を最初に入れておく（一度だけ）
+function presetGoals(){
+  if(S.ui.presetGoals1)return;S.ui.presetGoals1=true;
+  const bank=(S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id;const wallet=(S.accounts.find(a=>a.type==='wallet')||{}).id||bank;
+  const paypay=S.cards.find(c=>c.name==='PayPayカード');
+  const day=S.settings.startDay||15,adj=S.settings.shift||'prev',start=S.start&&S.start>'2026-10-01'?S.start:'2026-10-01';
+  const P=[
+    {name:'母(車保証金)',icon:'👩',kind:'debt',total:500000,done:310000,monthly:10000,method:'a:'+wallet,replaces:['母に返すやつ'],ex:{'2026-10-15':{skip:true}}},
+    {name:'母(引越し費用ボーナス払い)',icon:'👩',kind:'debt',total:350000,done:0,monthly:0,method:'a:'+bank,replaces:[],ex:{}},
+    {name:'車ローン',icon:'🚗',kind:'debt',total:1013074,done:661337,monthly:14071,method:paypay?'c:'+paypay.id:'a:'+bank,replaces:['車代'],ex:{}},
+    {name:'借金返済',icon:'💸',kind:'debt',total:370000,done:370000,monthly:40000,method:'a:'+bank,replaces:[],ex:{}}
+  ];
+  P.forEach(o=>{
+    const ex=S.goals.find(g=>g.name===o.name);
+    if(ex){if(!ex.replaces||!ex.replaces.length)ex.replaces=o.replaces;if(!ex.method||ex.method==='a:'+bank)ex.method=o.method;ex.icon=o.icon;return;}
+    S.goals.push(Object.assign({id:uid(),src:'preset',day,adjust:adj,start,toAcc:'',extra:[]},o));
+  });
+  dedupeGoalFixed();
+}
 const goalById=id=>(S.goals||[]).find(g=>g.id===id);
 const ymLabel=s=>{const d=pd(s);return `${d.getFullYear()}年${d.getMonth()+1}月`;};
 function renderGoals(){
@@ -969,33 +1003,39 @@ function renderGoals(){
   let h='';
   if(gs.length){
     const sts=gs.map(goalStatus);
-    const monthly=gs.reduce((s,g,i)=>s+(sts[i].remain>0?Number(g.monthly)||0:0),0),remain=sts.reduce((s,x)=>s+x.remain,0);
+    const monthly=gs.reduce((s,g,i)=>s+(sts[i].remain>0?Number(g.monthly)||0:0),0),remain=sts.reduce((s,x)=>s+Math.max(0,x.remain),0);
     h+=`<div class="grid2" style="margin-bottom:10px"><div class="card"><h3>毎月の目標への支払い</h3><div class="mid">${Y(monthly)}</div></div>
       <div class="card"><h3>目標の残り合計</h3><div class="mid">${Y(remain)}</div></div></div>`;
   }
-  gs.forEach(g=>{
-    const st=goalStatus(g);const pct=st.total?Math.round(st.progress/st.total*100):0;const fa=accById(g.fromAcc),ta=accById(g.toAcc);
+  const card=g=>{
+    const st=goalStatus(g);const pct=st.total?Math.round(st.progress/st.total*100):0;const gm=goalMethod(g),ta=accById(g.toAcc);
     const done=st.remain<=0;
-    h+=`<div class="card"><div class="row"><div class="ic" style="font-size:20px">${esc(g.icon||'🎯')}</div><div class="sp"><b style="font-size:15px">${esc(g.name)}</b>
+    return `<div class="card"><div class="row"><div class="ic" style="font-size:20px">${esc(g.icon||'🎯')}</div><div class="sp"><b style="font-size:15px">${esc(g.name)}</b>
         <div><span class="pill ${g.kind==='debt'?'w':''}">${g.kind==='debt'?'返済':'積立'}</span>${done?' <span class="pill">🎉 達成</span>':''}</div></div>
         <button class="btn sm sub" onclick="editGoal('${g.id}')">編集</button></div>
       <div class="row" style="margin-top:8px;align-items:flex-end"><div><div class="muted">あと</div><div class="big">${Y(st.remain)}</div></div><div class="sp"></div>
         <div style="text-align:right"><div class="muted">${g.kind==='debt'?'返済済み':'たまった額'}</div><b>${Y(st.progress)}</b><div class="muted">目標 ${Y(st.total)}</div></div></div>
       <div class="bar"><i style="width:${pct}%"></i></div><div class="muted">${pct}% 達成</div>
       <div class="li" style="margin-top:6px"><div class="ic">📅</div><div class="t"><b>毎月 ${Y(g.monthly)}</b>
-        <small>${g.day==='end'?'末日':g.day+'日'}${g.adjust&&g.adjust!=='none'?`（土日祝は${g.adjust==='prev'?'前':'後'}）`:''}・${esc(fa?fa.name:'口座未設定')}から${ta&&g.kind==='save'?` ${esc(ta.name)}へ`:''}</small></div></div>
-      ${st.next?`<div class="li"><div class="ic">⏭️</div><div class="t"><b>次回 ${md(st.next.date)}　${Y(st.next.amount)}</b><small>あと${st.future.length}回${st.finish?`・${ymLabel(st.finish)}に完了予定`:''}</small></div></div>`:done?'':'<div class="muted">毎月の額か開始日が未設定です</div>'}
+        <small>${g.day==='end'?'末日':g.day+'日'}${g.adjust&&g.adjust!=='none'?`（土日祝は${g.adjust==='prev'?'前':'後'}）`:''}・${esc(mName(gm))}${cardOf(gm)?'で払う':'から'}${ta&&g.kind==='save'&&!cardOf(gm)?` ${esc(ta.name)}へ`:''}</small></div></div>
+      ${(g.extra||[]).length?`<div class="li"><div class="ic">🎁</div><div class="t"><b>臨時の支払い</b><small>${g.extra.map(x=>`${md(x.date)} ${fmt(x.amount)}円`).join('、')}</small></div></div>`:''}
+      ${st.next?`<div class="li"><div class="ic">⏭️</div><div class="t"><b>次回 ${md(st.next.date)}　${Y(st.next.amount)}</b><small>あと${st.future.length}回${st.finish?`・${ymLabel(st.finish)}に完了予定`:'・この予定では払い終わりません'}</small></div></div>`:done?'':`<div class="muted" style="margin-top:6px">${Number(g.monthly)>0?'開始日が未設定です':'毎月の支払いはありません。ボーナスなどで払う日と額は「編集」→「臨時の支払い」で入れると、ここに並びます。'}</div>`}
       ${st.future.length?`<button class="btn sub sm" style="margin-top:6px" onclick="openGoal['${g.id}']=!openGoal['${g.id}'];render()">${openGoal[g.id]?'予定表を閉じる':'この先の予定表を見る'}</button>`:''}
       ${openGoal[g.id]?`<div style="margin-top:6px">${st.all.filter(p=>p.date>todayStr()).slice(0,36).map(p=>`<div class="li tap" onclick="openGoalOcc('${g.id}','${p.date}')"><div class="t"><b>${md(p.date)}${p.skip?'（スキップ）':''}</b><small>${p.k}回目・このあと残り ${fmt(p.after)}円</small></div><div class="a">${p.skip?'—':Y(p.amount)}</div></div>`).join('')}</div>`:''}
     </div>`;
-  });
+  };
+  const active=gs.filter(g=>goalStatus(g).remain>0),achieved=gs.filter(g=>goalStatus(g).remain<=0);
+  active.forEach(g=>h+=card(g));
+  if(achieved.length)h+=`<details class="card"><summary class="muted">🎉 達成済みの目標（${achieved.length}）</summary><div style="margin-top:8px">${achieved.map(card).join('')}</div></details>`;
   if(!gs.length)h+=`<div class="card muted">目標はまだありません。借金の返済や貯金の目標を登録すると、あといくら・毎月いくら・いつ終わるかが見えます。家計管理の目標は ⚙️設定 の「既存の家計管理から取り込む」でも持ってこられます。</div>`;
   h+=`<button class="addbtn" onclick="editGoal()">＋ 目標を追加</button>`;
   return h;
 }
 function editGoal(id){
   const bank=(S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id;
-  const g=id?goalById(id):{name:'',icon:'🎯',kind:'debt',total:0,done:0,monthly:0,day:S.settings.startDay||15,adjust:S.settings.shift||'none',start:todayStr(),fromAcc:bank,toAcc:''};
+  const g=id?goalById(id):{name:'',icon:'🎯',kind:'debt',total:0,done:0,monthly:0,day:S.settings.startDay||15,adjust:S.settings.shift||'none',start:todayStr(),method:'a:'+bank,toAcc:''};
+  GX=(g.extra||[]).map(x=>Object.assign({},x));const gm=goalMethod(g);
+  const recNames=[...new Set(S.recurring.filter(r=>r.type==='out').map(r=>r.name))];
   const st=id?goalStatus(g):null;
   const accOpts=(v,none)=>(none?`<option value="">${none}</option>`:'')+S.accounts.map(a=>`<option value="${a.id}" ${a.id===v?'selected':''}>${esc(a.name)}</option>`).join('');
   sheet(id?'目標を編集':'目標を追加',`<div class="row"><div class="fld" style="width:70px"><label>絵文字</label><input id="gIcon" value="${esc(g.icon||'🎯')}"></div><div class="fld sp"><label>名前</label><input id="gName" value="${esc(g.name)}" placeholder="例：借金返済、旅行の積立"></div></div>
@@ -1006,20 +1046,29 @@ function editGoal(id){
       <div class="fld sp"><label>毎月の日</label><select id="gDay">${dayOpts(g.day,true)}</select></div></div>
     <div class="row"><div class="fld sp"><label>土日祝のとき</label><select id="gAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${g.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div>
       <div class="fld sp"><label>開始日（この日以降の支払いを並べる）</label><input id="gStart" type="date" value="${g.start||todayStr()}"></div></div>
-    <div class="fld"><label>どの口座から</label><select id="gFrom">${accOpts(g.fromAcc)}</select></div>
+    <div class="fld"><label>払い方</label><select id="gMethod">${[...S.accounts.map(a=>'a:'+a.id),...S.cards.map(c=>'c:'+c.id)].map(m=>`<option value="${m}" ${m===gm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
+      <div class="note">カードを選ぶと、そのカードの引き落とし（締め日・引き落とし日どおり）に入ります。</div></div>
     <div class="fld" id="gToRow" style="display:${g.kind==='save'?'block':'none'}"><label>どこへ貯める（口座を選ぶと振替扱いで、支出に数えません）</label><select id="gTo">${accOpts(g.toAcc,'口座の外（積立預金・投資など）')}</select></div>
+    <div class="fld"><label>🎁 臨時の支払い（ボーナス払いなど）</label><div id="gxBox"></div><button class="btn sub sm" onclick="readGx();GX.push({id:uid(),date:todayStr(),amount:''});renderGx()">＋ 追加</button></div>
+    <div class="fld"><label>同じ中身の固定費（二重に数えないよう、この目標に置き換える）</label><select id="gRepl"><option value="">なし</option>${recNames.map(n=>`<option ${(g.replaces||[]).includes(n)?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
     ${st?`<div class="note">いまの残り ${fmt(st.remain)}円（開始日以降に支払った分を引いた額）</div>`:''}
     <button class="btn" style="margin-top:8px" onclick="saveGoal('${id||''}')">保存</button>${id?`<button class="btn del" style="margin-top:8px" onclick="delGoal('${id}')">削除</button>`:''}`);
+  renderGx();
 }
+let GX=[];
+function renderGx(){const b=document.getElementById('gxBox');if(!b)return;
+  b.innerHTML=GX.map((x,i)=>`<div class="row" style="margin:4px 0"><input type="date" data-gxd="${i}" value="${x.date}" style="width:auto"><input type="number" inputmode="numeric" data-gxa="${i}" value="${x.amount}" placeholder="金額"><button class="x" onclick="readGx();GX.splice(${i},1);renderGx()">✕</button></div>`).join('')||'<div class="muted">なし</div>';}
+function readGx(){document.querySelectorAll('[data-gxd]').forEach(i=>GX[Number(i.dataset.gxd)].date=i.value);document.querySelectorAll('[data-gxa]').forEach(i=>GX[Number(i.dataset.gxa)].amount=i.value);}
 function saveGoal(id){
   const v=x=>document.getElementById(x).value;
   const total=Number(v('gTotal'))||0;const remain=v('gRemain')===''?total:Number(v('gRemain'))||0;
   const o={icon:v('gIcon').trim()||'🎯',name:v('gName').trim(),kind:v('gKind'),total,done:Math.max(0,total-remain),monthly:Number(v('gMonthly'))||0,
-    day:v('gDay')==='end'?'end':Number(v('gDay')),adjust:v('gAdj'),start:v('gStart')||todayStr(),fromAcc:v('gFrom'),toAcc:v('gKind')==='save'?v('gTo'):''};
+    day:v('gDay')==='end'?'end':Number(v('gDay')),adjust:v('gAdj'),start:v('gStart')||todayStr(),method:v('gMethod'),toAcc:v('gKind')==='save'?v('gTo'):''};
+  readGx();o.extra=GX.filter(x=>x.date&&Number(x.amount)>0).map(x=>({id:x.id||uid(),date:x.date,amount:Number(x.amount)}));o.replaces=v('gRepl')?[v('gRepl')]:[];
   if(!o.name||total<=0){toast('名前と総額を入れてください');return;}
   if(remain>total){toast('残りが総額より大きくなっています');return;}
-  if(id)Object.assign(goalById(id),o);else S.goals.push(Object.assign({id:uid(),ex:{}},o));
-  save();closeSheet();render();
+  if(id){const g=goalById(id);delete g.fromAcc;Object.assign(g,o);}else S.goals.push(Object.assign({id:uid(),ex:{}},o));
+  dedupeGoalFixed();save();closeSheet();render();
 }
 function delGoal(id){if(!confirm('この目標を削除しますか？（この先の支払い予定も消えます）'))return;S.goals=S.goals.filter(g=>g.id!==id);save();closeSheet();render();}
 function openGoalOcc(gid,date){
@@ -1293,15 +1342,20 @@ function convertLegacy(data){
   // 目標：今日（スタート日があればその日）より前の積立は「済んだ額」、以降は目標の支払いとして続ける
   const cut=S.start&&S.start>todayStr()?S.start:todayStr();
   const gl=goals.map(g=>{
-    const total=Number(g.total)||Number(g.startRemaining)||0;const startRem=Number(g.startRemaining!=null?g.startRemaining:g.total)||0;
-    const hist=(savedByGoal[g.id]||[]).sort((a,b)=>cmp(a.date,b.date));
+    const total=Number(g.total)||Number(g.startRemaining)||0;
+    const saved0=g.saved0!=null?Number(g.saved0)||0:(g.startRemaining!=null?Math.max(0,total-Number(g.startRemaining)):0);
+    const sm=Number(g.startMonth)||0;
+    const hist=(savedByGoal[g.id]||[]).filter(h=>!sm||Number(h.date.slice(0,4))*100+Number(h.date.slice(5,7))>=sm-1).sort((a,b)=>cmp(a.date,b.date));
     const before=hist.filter(h=>h.date<cut).reduce((s,h)=>s+h.v,0);
     const futureH=hist.filter(h=>h.date>=cut);
-    const gStart=futureH.length?futureH[0].date:legacyPayDate(nx.getFullYear(),nx.getMonth(),lastSt);
+    // 支払いの開始は「今日以降で最初の給料日」（家計管理で積立額が空欄の月は毎月の額がそのまま入る扱い）
+    const pdays=months.map(k=>{const [,y,mm]=k.match(/^kakeibo_(\d{4})_(\d{2})$/);return {kym:Number(y)*100+Number(mm),d:legacyPayDate(Number(y),Number(mm)-1,data[k])};});
+    const firstP=pdays.find(x=>x.d>=cut&&(!sm||x.kym>=sm));
+    const gStart=firstP?firstP.d:legacyPayDate(nx.getFullYear(),nx.getMonth(),lastSt);
     const ex={};futureH.forEach(h=>{if(h.v!==Number(g.monthly))ex[h.date]=h.v?{amount:h.v}:{skip:true};});
-    const debt=/返済|借金|ローン|奨学/.test(g.name||'');
-    return {id:uid(),src:'legacy',lid:g.id,name:g.name||'目標',icon:debt?'💸':'🐷',kind:debt?'debt':'save',total,done:Math.max(0,total-(startRem-before)),
-      monthly:Number(g.monthly)||0,day:pdBase,adjust:pdAdj,start:gStart,fromAcc:bank,toAcc:'',ex};
+    const debt=g.type?g.type!=='saving':/返済|借金|ローン|奨学/.test(g.name||'');
+    return {id:uid(),src:'legacy',lid:g.id,name:g.name||'目標',icon:debt?'💸':'🐷',kind:debt?'debt':'save',total,done:Math.min(total,saved0+before),
+      monthly:Number(g.monthly)||0,day:pdBase,adjust:pdAdj,start:gStart,method:'a:'+bank,toAcc:'',ex};
   });
   return {tx,rec,months,pdBase,pdAdj,goals:gl};
 }
@@ -1316,8 +1370,10 @@ function applyLegacy(data,label){
   S.tx.push(...r.tx);S.recurring.push(...r.rec);
   // 目標は家計管理の同じ目標を置き換え（自分で足した目標はそのまま）
   const oldG=S.goals.filter(g=>g.src==='legacy');
-  r.goals.forEach(ng=>{const og=oldG.find(o=>o.lid===ng.lid);if(og){ng.fromAcc=og.fromAcc;ng.toAcc=og.toAcc;ng.icon=og.icon;ng.kind=og.kind;}});
-  S.goals=S.goals.filter(g=>g.src!=='legacy').concat(r.goals);
+  r.goals.forEach(ng=>{const og=oldG.find(o=>o.lid===ng.lid)||S.goals.find(o=>o.src==='preset'&&o.name===ng.name);
+    if(og){ng.method=goalMethod(og);ng.toAcc=og.toAcc;ng.icon=og.icon;ng.kind=og.kind;ng.replaces=og.replaces;ng.extra=og.extra;}});
+  S.goals=S.goals.filter(g=>g.src!=='legacy'&&!(g.src==='preset'&&r.goals.some(n=>n.name===g.name))).concat(r.goals);
+  dedupeGoalFixed();
   // AI提案のクレジット記録を引き継ぐ（初回のみ）
   if(data.kakeibo_ai_usd&&!S.ai.usd.fromLegacy){const u=data.kakeibo_ai_usd;S.ai.usd={spent:Number(u.spent)||0,uses:u.uses||[],deposits:u.deposits||[],fromLegacy:true};}
   S.settings.startDay=r.pdBase;S.settings.shift=r.pdAdj;S.settings.nameBy='start';
@@ -1368,7 +1424,7 @@ function importJSON(inp){
 }
 function resetAll(){if(!confirm('見通し家計簿のデータをすべて消します（家計管理のデータは消えません）。よろしいですか？'))return;localStorage.removeItem(KEY);load();goToday();}
 
-load();applyHide();goToday();
+load();presetGoals();save();applyHide();goToday();
 </script>
 </body>
 </html>
