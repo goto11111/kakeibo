@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.6.2';
+const APP_VERSION='v0.6.3';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -820,37 +820,40 @@ function renderWd(){
 
 // ── 🔭 見通し ──
 // 期ごとの残り：前期の残りを引き継いで、給料と引き落とし（確定分）を足し引きしていく
-function periodChain(n){
+// 期ごとの残り：1本の計算で、期末をそのまま次の期の「前期から」に引き継ぐ
+// 期末 = 前期から ＋ 給料など − 引き落とし（カード・口座振替・現金・目標） − 予算（この期に落ちる分。予算込みのとき）
+function periodChain(n,withB){
   if(!S.start)return null;
   const rows=[];let k=periodKeyOf(S.start);const last=keyAdd(periodKeyOf(todayStr()),n-1);
-  let conf=null,cumRes=0;
+  let bal=null;
   for(let g=0;g<36&&k<=last;g++){
     const [s,e]=periodRange(k);const c=cashPeriod(s,e);if(!c){k=keyAdd(k,1);continue;}
-    if(conf===null)conf=c.prev;
-    const prev=conf;conf=prev+c.inn-c.card-c.direct-c.goal;cumRes+=c.reserve;
-    rows.push({k,s,e,c,prev,end:conf,reserve:c.reserve,endB:conf-cumRes,past:e<todayStr(),now:s<=todayStr()&&todayStr()<=e});
+    if(bal===null)bal=c.prev;
+    const prev=bal,out=c.card+c.direct+c.goal,res=withB?c.reserve:0;
+    bal=prev+c.inn-out-res;
+    rows.push({k,s,e,c,prev,out,res,end:bal,past:e<todayStr(),now:s<=todayStr()&&todayStr()<=e});
     k=keyAdd(k,1);
   }
   return rows;
 }
 function renderChain(){
-  const rows=periodChain(perN);
+  const withB=S.ui.chainB!==false;
+  const rows=periodChain(perN,withB);
   let h=`<div class="card"><h3>📅 期ごとに残るお金（前の期から引き継ぎ）</h3>`;
   if(!rows){return h+`<div class="muted">⚙️設定の「仕切り直し」でスタート日と口座の残高を入れると、期ごとの残りがここに並びます。</div></div>`;}
-  const anyRes=rows.some(r=>r.reserve>0);
-  h+=`<div class="note" style="margin-bottom:6px">給料・カードの引き落とし・口座振替・目標など、決まっている出入りで計算しています（カードは引き落とし日）。${anyRes?'「予算込み」は予算の残り（まだ使う予定のお金）も引いた額です。':''}</div>`;
-  rows.forEach(r=>{const c=r.c;const out=c.card+c.direct+c.goal;
+  h+=`<div class="seg" style="margin-bottom:6px">${[[true,'予算も引く'],[false,'確定分だけ']].map(([v,l])=>`<button class="${withB===v?'on':''}" onclick="S.ui.chainB=${v};save();render()">${l}</button>`).join('')}</div>
+    <div class="note" style="margin-bottom:6px">期末 ＝ 前期から ＋ 給料など − 引き落とし${withB?' − 予算':''}。期末がそのまま次の期の「前期から」になります。カードは引き落とし日で数えます${withB?'。予算は、まだ使っていない分をカードで使う想定で、そのカードが落ちる日の期に入ります':''}。</div>`;
+  rows.forEach(r=>{const c=r.c;
     h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
-      <div class="t"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
-        <small>${rangeLabel(r.k)}・${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(out)}</small></div>
-      <div class="a"><span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>${anyRes?`<small>予算込み <span class="${r.endB<0?'out':''}">${fmt(r.endB)}円</span></small>`:''}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>`;
+      <div class="t" style="white-space:normal"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
+        <small style="white-space:normal">${rangeLabel(r.k)}<br>${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(r.out)}${r.res?` −予算 ${fmt(r.res)}`:''}</small></div>
+      <div class="a"><span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span></div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>`;
     if(openPer[r.k]===undefined&&r.now)openPer[r.k]=true;
     if(openPer[r.k]){
       h+=`<div style="padding:0 4px 8px 10px">
         <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
-        ${c.list.filter(x=>x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
-        <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b></span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
-        ${r.reserve?`<div class="row" style="padding:3px 0;font-size:12.5px"><span class="sp muted">📊 予算の残り（この期に使う予定）</span><b>−${fmt(r.reserve)}</b></div>`:''}
+        ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
+        <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
       </div>`;}
   });
   h+=`<button class="btn sub sm" style="margin-top:6px" onclick="perN=perN>=12?6:12;render()">${perN>=12?'6期先まで表示':'12期先まで表示'}</button></div>`;
