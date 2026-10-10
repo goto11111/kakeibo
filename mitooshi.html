@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.9.1';
+const APP_VERSION='v1.0.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1230,25 +1230,8 @@ function dedupeGoalFixed(){
   S.recurring=S.recurring.filter(r=>!names.has(r.name));
   S.tx=S.tx.filter(t=>!(t.src==='legacy'&&names.has(String(t.memo||'').replace(/（見込み）$/,''))));
 }
-// 家計管理で使っていた目標（2026年10月時点）を最初に入れておく（一度だけ）
-function presetGoals(){
-  if(S.ui.presetGoals1)return;S.ui.presetGoals1=true;
-  const bank=(S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id;const wallet=(S.accounts.find(a=>a.type==='wallet')||{}).id||bank;
-  const paypay=S.cards.find(c=>c.name==='PayPayカード');
-  const day=S.settings.startDay||15,adj=S.settings.shift||'prev',start=S.start&&S.start>'2026-10-01'?S.start:'2026-10-01';
-  const P=[
-    {name:'母(車保証金)',icon:'👩',kind:'debt',total:500000,done:310000,monthly:10000,method:'a:'+wallet,replaces:['母に返すやつ'],ex:{'2026-10-15':{skip:true}}},
-    {name:'母(引越し費用ボーナス払い)',icon:'👩',kind:'debt',total:350000,done:0,monthly:0,method:'a:'+bank,replaces:[],ex:{}},
-    {name:'車ローン',icon:'🚗',kind:'debt',total:1013074,done:661337,monthly:14071,method:paypay?'c:'+paypay.id:'a:'+bank,replaces:['車代'],ex:{}},
-    {name:'借金返済',icon:'💸',kind:'debt',total:370000,done:370000,monthly:40000,method:'a:'+bank,replaces:[],ex:{}}
-  ];
-  P.forEach(o=>{
-    const ex=S.goals.find(g=>g.name===o.name);
-    if(ex){if(!ex.replaces||!ex.replaces.length)ex.replaces=o.replaces;if(!ex.method||ex.method==='a:'+bank)ex.method=o.method;ex.icon=o.icon;return;}
-    S.goals.push(Object.assign({id:uid(),src:'preset',day,adjust:adj,start,toAcc:'',extra:[]},o));
-  });
-  dedupeGoalFixed();
-}
+// （v0.4.0 で入れていた目標の初期データは、公開リポジトリに個人のお金の情報を残さないため削除。登録済みの端末のデータはそのまま）
+function presetGoals(){}
 const goalById=id=>(S.goals||[]).find(g=>g.id===id);
 const ymLabel=s=>{const d=pd(s);return `${d.getFullYear()}年${d.getMonth()+1}月`;};
 function renderGoals(){
