@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.2.0';
+const APP_VERSION='v0.3.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -203,7 +203,8 @@ function defaultCats(){return [
   {id:'social',icon:'🍺',name:'交際費',kind:'out'},{id:'hobby',icon:'🎮',name:'趣味・娯楽',kind:'out'},
   {id:'cloth',icon:'👕',name:'衣服・美容',kind:'out'},{id:'medical',icon:'💊',name:'医療',kind:'out'},
   {id:'tel',icon:'📱',name:'通信・サブスク',kind:'out'},{id:'house',icon:'🏠',name:'住居・光熱',kind:'out'},
-  {id:'tobacco',icon:'🚬',name:'たばこ',kind:'out'},{id:'other',icon:'📦',name:'その他',kind:'out'},
+  {id:'tobacco',icon:'🚬',name:'たばこ',kind:'out'},{id:'repay',icon:'💸',name:'返済',kind:'out'},
+  {id:'saving',icon:'🐷',name:'積立',kind:'out'},{id:'other',icon:'📦',name:'その他',kind:'out'},
   {id:'salary',icon:'💴',name:'給料',kind:'in'},{id:'bonus',icon:'🎁',name:'臨時収入',kind:'in'},
   {id:'refund',icon:'↩️',name:'返金',kind:'in'},{id:'otherin',icon:'📥',name:'その他収入',kind:'in'}
 ];}
@@ -228,12 +229,17 @@ function freshData(){
     cards:legacyCardCycles().map((x,i)=>cardFromLegacy(x,i,'bank')),
     cats:defaultCats(),
     budgets:{plans:[],only:{}},
-    tx:[],recurring:[],
+    tx:[],recurring:[],goals:[],startBills:[],start:null,
+    ai:{usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},
     ui:{lastMethod:null,lastCat:'food',hide:false,setupDone:false}};
 }
 function load(){
-  try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);if(d&&d.v===1){S=Object.assign(freshData(),d);S.ui=Object.assign({},freshData().ui,d.ui||{});return;}}}catch(e){}
+  try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);if(d&&d.v===1){S=Object.assign(freshData(),d);S.ui=Object.assign({},freshData().ui,d.ui||{});migrateData();return;}}}catch(e){}
   S=freshData();save();
+}
+function migrateData(){
+  [['repay','💸','返済','out'],['saving','🐷','積立','out']].forEach(([id,icon,name,kind])=>{if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});});
+  S.ai=Object.assign({usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},S.ai||{});
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){toast('保存に失敗しました');}}
 
@@ -324,7 +330,32 @@ function entries(from,to){
     out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date:d,type:r.type,amount:(ex&&ex.amount!=null)?ex.amount:r.amount,
       cat:r.cat,method:r.method,count:1,memo:r.name});
   }));
+  (S.goals||[]).forEach(g=>goalPays(g,to).forEach(p=>{
+    if(p.skip||p.amount<=0||p.date<from)return;const mv=g.kind==='save'&&g.toAcc&&g.toAcc!==g.fromAcc;
+    out.push({id:'g:'+g.id+':'+p.date,gid:g.id,goal:true,date:p.date,type:mv?'move':'out',amount:p.amount,cat:g.kind==='debt'?'repay':'saving',
+      method:'a:'+g.fromAcc,from:g.fromAcc,to:g.toAcc,count:1,memo:'🎯 '+g.name,k:p.k,after:p.after});
+  }));
   return out.sort((a,b)=>cmp(a.date,b.date));
+}
+// ── 🎯 目標（返済・積立）：毎月の支払いを残りがなくなるまで並べる ──
+function goalPays(g,upto){
+  const res=[];const total=Number(g.total)||0;let done=Number(g.done)||0;
+  if(!g.start||!(Number(g.monthly)>0)||done>=total)return res;
+  const dates=recDates({every:'month',day:g.day||S.settings.startDay||15,adjust:g.adjust||'none',start:g.start,end:''},g.start,upto);
+  let k=0;
+  for(const d of dates){
+    if(done>=total)break;k++;const ex=(g.ex||{})[d];
+    if(ex&&ex.skip){res.push({date:d,amount:0,skip:true,k,after:total-done});continue;}
+    const a=Math.min(ex&&ex.amount!=null?Number(ex.amount)||0:Number(g.monthly),total-done);done+=a;
+    res.push({date:d,amount:a,k,after:total-done});
+  }
+  return res;
+}
+function goalStatus(g){
+  const t=todayStr();const all=goalPays(g,'2099-12-31');const total=Number(g.total)||0;
+  const paid=all.filter(p=>p.date<=t).reduce((s,p)=>s+p.amount,0);const progress=Math.min(total,(Number(g.done)||0)+paid);
+  const future=all.filter(p=>p.date>t&&p.amount>0);const last=all.filter(p=>p.amount>0).slice(-1)[0];
+  return {total,progress,remain:total-progress,future,next:future[0],finish:(last&&last.after<=0)?last.date:null,all,count:all.filter(p=>p.amount>0).length};
 }
 // 引き落とし日が from〜to に入るカード払いの各回
 function charges(from,to){
@@ -332,6 +363,9 @@ function charges(from,to){
   const res=[];
   entries(pf,to).forEach(e=>{if(e.type!=='out')return;const c=cardOf(e.method);if(!c)return;
     portions(e,c).forEach(p=>{if(p.date>=from&&p.date<=to)res.push(p);});});
+  // 仕切り直し：スタート前に使った分の請求（手入力）
+  (S.startBills||[]).forEach(b=>{const c=cardById(b.cardId);if(!c||!(Number(b.amount)>0)||b.date<from||b.date>to)return;
+    res.push({date:b.date,principal:Number(b.amount),fee:0,k:0,n:1,card:c,e:{id:b.id,bill:true,date:S.start||b.date,type:'out',amount:Number(b.amount),cat:'other',memo:'スタート前の利用分（手入力）',method:'c:'+c.id}});});
   return res.sort((a,b)=>cmp(a.date,b.date));
 }
 function groupCharges(list){
@@ -381,7 +415,7 @@ function budgetOf(key){
 }
 
 // ── 画面状態 ──
-let tab='cal',curKey,sel,wdKey,fcH='1',chartKind='out',openWd={},catDrill=null;
+let tab='cal',curKey,sel,wdKey,fcH='1',chartKind='out',openWd={},catDrill=null,fcAcc=null,openGoal={};
 function goToday(){sel=todayStr();curKey=periodKeyOf(sel);const t=new Date();wdKey=`${t.getFullYear()}-${pad(t.getMonth()+1)}`;render();}
 function navMove(n){
   if(tab==='wd')wdKey=keyAdd(wdKey,n);
@@ -393,19 +427,20 @@ function toggleHide(){S.ui.hide=!S.ui.hide;save();applyHide();}
 function applyHide(){document.body.classList.toggle('hide',!!S.ui.hide);document.getElementById('hideBtn').textContent=S.ui.hide?'🙈':'👁';}
 function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');clearTimeout(toast.h);toast.h=setTimeout(()=>t.classList.remove('on'),1800);}
 
-const TABS=[['cal','📅','カレンダー'],['wd','💳','引き落とし'],['fc','🔭','見通し'],['bud','📊','予算・グラフ'],['set','⚙️','設定']];
+const TABS=[['cal','📅','カレンダー'],['wd','💳','引き落とし'],['fc','🔭','見通し'],['goal','🎯','目標'],['bud','📊','予算'],['set','⚙️','設定']];
 function render(){
   document.getElementById('tabs').innerHTML=TABS.map(([k,i,l])=>`<button class="${tab===k?'on':''}" onclick="setTab('${k}')"><span>${i}</span>${l}</button>`).join('');
   const nl=document.getElementById('navLabel'),ns=document.getElementById('navSub');
   const navBtns=document.querySelectorAll('header .arrow');
-  const showNav=tab!=='set'&&tab!=='fc';navBtns.forEach(b=>b.style.visibility=showNav?'visible':'hidden');
+  const showNav=tab!=='set'&&tab!=='fc'&&tab!=='goal';navBtns.forEach(b=>b.style.visibility=showNav?'visible':'hidden');
   if(tab==='wd'){nl.textContent=keyLabel(wdKey);ns.textContent='引き落とし予定';}
-  else if(tab==='fc'){nl.textContent='この先の見通し';ns.textContent='';}
+  else if(tab==='fc'){nl.textContent='この先の見通し';ns.textContent='口座ごと・AI提案';}
+  else if(tab==='goal'){nl.textContent='目標';ns.textContent='返済・積立の進み具合';}
   else if(tab==='set'){nl.textContent='設定';ns.textContent=APP_VERSION;}
   else{nl.textContent=keyLabel(curKey);ns.textContent=rangeLabel(curKey);}
   document.getElementById('fab').style.display=(tab==='cal')?'block':'none';
   const m=document.getElementById('main');
-  m.innerHTML=tab==='cal'?renderCal():tab==='wd'?renderWd():tab==='fc'?renderFc():tab==='bud'?renderBud():renderSet();
+  m.innerHTML=tab==='cal'?renderCal():tab==='wd'?renderWd():tab==='fc'?renderFc():tab==='goal'?renderGoals():tab==='bud'?renderBud():renderSet();
 }
 
 // ── 見通しの要約（ホームの上に出す）──
@@ -427,7 +462,10 @@ function forecast(horizon){
     if(x.kind==='card'&&runAcc[x.acc]<0&&!short[x.acc+'|'+x.date])short[x.acc+'|'+x.date]={acc:x.acc,date:x.date,bal:runAcc[x.acc],g:x.g};
   });
   days.forEach(d=>{if(d.total<min){min=d.total;minDate=d.date;}});
-  return {total,bal,min,minDate,days,short:Object.values(short),free:Math.min(total,min)};
+  // 口座ごとの最低残高
+  const accMin={};const ra=Object.assign({},bal);Object.keys(ra).forEach(k=>accMin[k]={v:ra[k],date:t});
+  future.forEach(x=>{ra[x.acc]=(ra[x.acc]||0)+x.delta;if(!accMin[x.acc]||ra[x.acc]<accMin[x.acc].v)accMin[x.acc]={v:ra[x.acc],date:x.date};});
+  return {total,bal,min,minDate,days,short:Object.values(short),free:Math.min(total,min),accEnd:ra,accMin};
 }
 function horizonEnd(h){const k=keyAdd(periodKeyOf(todayStr()),Number(h)||0);return periodRange(k)[1];}
 function nextWithdraw(){
@@ -487,6 +525,9 @@ function pickDay(k){
   const p=document.getElementById('dayPanel');if(p)p.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 function entryRow(x){
+  if(x.goal){const g=goalById(x.gid)||{};
+    return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">🎯</div><div class="t"><b>${esc(g.name||'目標')}（${g.kind==='debt'?'返済':'積立'}）</b>
+      <small>${esc((accById(x.from)||{}).name||'?')}${x.type==='move'?` → ${esc((accById(x.to)||{}).name||'?')}`:''}・${x.k}回目・このあと残り ${fmt(x.after)}円</small></div><div class="a">-<span class="amt">${fmt(x.amount)}</span>円</div></div>`;}
   if(x.type==='move'){
     return `<div class="li tap" onclick="editTx('${x.id}')"><div class="ic">🔁</div><div class="t"><b>振替 ${esc(x.memo||'')}</b>
       <small>${esc((accById(x.from)||{}).name||'?')} → ${esc((accById(x.to)||{}).name||'?')}（収支に数えない）</small></div><div class="a amt">${fmt(x.amount)}円</div></div>`;
@@ -495,8 +536,7 @@ function entryRow(x){
   let sub=mName(x.method);
   if(card&&x.type==='out'){const ps=portions(x,card);sub+=` → ${md(ps[0].date)}引落${ps.length>1?`（${ps.length}回払い）`:''}`;}
   if(x.rec)sub='🔁 固定費・'+sub;
-  const click=x.rec?`openRecOcc('${x.rid}','${x.date}')`:`editTx('${x.id}')`;
-  return `<div class="li tap" onclick="${click}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
+  return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
 function renderDayPanel(day,ents,wds){
@@ -510,6 +550,13 @@ function renderDayPanel(day,ents,wds){
   return h;
 }
 
+// 記録の種類ごとに開く画面
+function clickFor(e){
+  if(e.bill)return `openRestart()`;
+  if(e.goal)return `openGoalOcc('${e.gid}','${e.date}')`;
+  if(e.rec)return `openRecOcc('${e.rid}','${e.date}')`;
+  return `editTx('${e.id}')`;
+}
 // ── 入力シート ──
 let F=null;
 function defaultMethod(type){
@@ -619,11 +666,13 @@ function renderWd(){
   const gs=groupCharges(charges(from,to));
   const L=buildLedger(to);
   // 口座から直接出ていく分（口座払い・固定費の口座振替など）
-  const direct=entries(from,to).filter(x=>x.type==='out'&&accOf(x.method)&&accOf(x.method).type==='bank');
-  const cardTotal=gs.reduce((s,g)=>s+g.total,0),dirTotal=direct.reduce((s,x)=>s+x.amount,0);
-  let h=`<div class="card" style="text-align:center"><div class="muted">${y}年${m}月 口座から出ていく合計</div><div class="big out">${Y(cardTotal+dirTotal)}</div>
-    <div class="muted">カード ${Y(cardTotal)} ／ 口座払い・振替 ${Y(dirTotal)}</div></div>`;
-  if(!gs.length&&!direct.length)h+=`<div class="card muted">この月の引き落とし予定はありません</div>`;
+  const monthEnts=entries(from,to);
+  const direct=monthEnts.filter(x=>!x.goal&&x.type==='out'&&accOf(x.method)&&accOf(x.method).type==='bank');
+  const goalsM=monthEnts.filter(x=>x.goal);
+  const cardTotal=gs.reduce((s,g)=>s+g.total,0),dirTotal=direct.reduce((s,x)=>s+x.amount,0),goalTotal=goalsM.reduce((s,x)=>s+x.amount,0);
+  let h=`<div class="card" style="text-align:center"><div class="muted">${y}年${m}月 口座から出ていく合計</div><div class="big out">${Y(cardTotal+dirTotal+goalTotal)}</div>
+    <div class="muted">カード ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
+  if(!gs.length&&!direct.length&&!goalsM.length)h+=`<div class="card muted">この月の引き落とし予定はありません</div>`;
   gs.forEach(g=>{
     const key=g.card.id+'|'+g.date;const a=accById(g.card.accountId);
     const after=a?balAt(L,a.id,g.date):null;
@@ -633,13 +682,17 @@ function renderWd(){
       <div class="sp"><b>${esc(g.card.name)}</b><div class="muted">${md(g.date)} 引き落とし・${esc(a?a.name:'口座未設定')}・${g.items.length}件</div></div>
       <div style="text-align:right"><div class="mid">${Y(g.total)}</div>${g.fee?`<div class="muted">うち手数料 ${Y(g.fee)}</div>`:''}</div><span class="muted">${openWd[key]?'▲':'▼'}</span></div>
       ${a?`<div class="chk">${ok?'✅':'⚠️'} 引き落とし後の${esc(a.name)}残高 <b class="${ok?'':'out'}">${Y(after)}</b>${ok?'':`　<b class="out">${fmt(-after)}円 足りません</b>`}</div>`:''}
-      ${openWd[key]?`<div class="bd">${items.map(p=>{const c=catById(p.e.cat);return `<div class="li tap" onclick="${p.e.rec?`openRecOcc('${p.e.rid}','${p.e.date}')`:`editTx('${p.e.id}')`}"><div class="ic">${c.icon}</div>
-        <div class="t"><b>${esc(p.e.memo||c.name)}</b><small>${md(p.e.date)}に利用・${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}</small></div>
+      ${openWd[key]?`<div class="bd">${items.map(p=>{const c=catById(p.e.cat);return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':c.icon}</div>
+        <div class="t"><b>${esc(p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}</small></div>
         <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')}</div>`:''}</div>`;
   });
   if(direct.length){
-    h+=`<div class="card"><h3>🏦 口座から直接（口座払い・口座振替）</h3>${direct.map(x=>{const c=catById(x.cat);return `<div class="li tap" onclick="${x.rec?`openRecOcc('${x.rid}','${x.date}')`:`editTx('${x.id}')`}"><div class="ic">${c.icon}</div>
+    h+=`<div class="card"><h3>🏦 口座から直接（口座払い・口座振替）</h3>${direct.map(x=>{const c=catById(x.cat);return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div>
       <div class="t"><b>${esc(x.memo||c.name)}</b><small>${md(x.date)}・${esc(mName(x.method))}${x.rec?'・固定費':''}</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`;}).join('')}</div>`;
+  }
+  if(goalsM.length){
+    h+=`<div class="card"><h3>🎯 目標の引き落とし（返済・積立）</h3>${goalsM.map(entryRow).join('')}
+      <button class="btn sub sm" style="margin-top:6px" onclick="setTab('goal')">目標の進み具合を見る</button></div>`;
   }
   // カード別：今月使った分がいつ引かれるか
   const t=todayStr();const pk=periodKeyOf(t);const [ps,pe]=periodRange(pk);
@@ -658,19 +711,27 @@ function renderFc(){
   let h=`<div class="seg" style="margin-bottom:10px">${[['0','今期の終わりまで'],['1','来期の終わりまで'],['2','再来期まで']].map(([k,l])=>`<button class="${fcH===k?'on':''}" onclick="fcH='${k}';render()">${l}</button>`).join('')}</div>`;
   h+=`<div class="card" style="text-align:center"><div class="muted">${md(H)}までに使っていい額</div><div class="big ${f.free<0?'out':''}">${Y(f.free)}</div>
     <div class="muted">${f.free<f.total?`いちばん少なくなるのは ${md(f.minDate)} の ${Y(f.min)}。これを超えて使うと口座と財布の合計がマイナスになります。`:'この先の予定を全部払っても、今の残高を下回る日はありません。'}</div></div>`;
-  h+=`<div class="card"><h3>今の残高</h3>${S.accounts.map(a=>`<div class="li"><div class="ic">${a.type==='wallet'?'👛':'🏦'}</div><div class="t"><b>${esc(a.name)}</b><small>${a.openingDate>todayStr()?`${md(a.openingDate)}から`:`開始 ${md(a.openingDate)}`}</small></div><div class="a">${a.openingDate<=todayStr()?Y(f.bal[a.id]||0):'—'}</div></div>`).join('')}
+  h+=`<div class="card"><h3>🏦 口座ごと（タップで絞り込み）</h3>${S.accounts.map(a=>{const mn=f.accMin[a.id];const end=f.accEnd[a.id];
+      return `<div class="li tap" onclick="fcAcc=fcAcc==='${a.id}'?null:'${a.id}';render()" style="${fcAcc===a.id?'background:var(--pri2);border-radius:10px':''}"><div class="ic">${a.type==='wallet'?'👛':'🏦'}</div>
+      <div class="t"><b>${esc(a.name)}</b><small>${md(H)}には ${end!=null?fmt(end)+'円':'—'}${mn&&mn.v<(f.bal[a.id]||0)?`・最低 <span class="${mn.v<0?'out':''}">${fmt(mn.v)}円（${md(mn.date)}）</span>`:''}</small></div>
+      <div class="a">${a.openingDate<=todayStr()?Y(f.bal[a.id]||0):'—'}<small>いま</small></div></div>`;}).join('')}
     <div class="li"><div class="t"><b>合計</b></div><div class="a mid">${Y(f.total)}</div></div></div>`;
   if(f.short.length){
     h+=`<div class="card" style="border-color:var(--out)"><h3 class="out">⚠️ 引き落とし日に残高が足りない</h3>${f.short.map(s=>`<div class="li"><div class="t"><b>${md(s.date)} ${esc(s.g.card.name)}</b><small>${esc((accById(s.acc)||{}).name)}の残高が ${fmt(s.bal)}円 になります</small></div><div class="a out">${fmt(-s.bal)}円不足</div></div>`).join('')}
       <div class="note">それまでに財布や他の口座から「振替」で移すか、使う額を抑えると防げます。</div></div>`;
   }
-  h+=`<div class="card"><h3>これから出入りするお金</h3>`;
-  if(!f.days.length)h+='<div class="muted">予定はありません。⚙️設定から給料や固定費を登録すると、ここに並びます。</div>';
-  f.days.forEach(d=>{
-    h+=`<div class="tl-d">${md(d.date)}${isHol(pd(d.date))?' 祝':''}<span class="${d.total<0?'out':''}">残高計 ${Y(d.total)}</span></div>`;
+  const fa=fcAcc&&accById(fcAcc);
+  h+=`<div class="card"><h3>これから出入りするお金${fa?`（${esc(fa.name)}だけ）`:''}</h3>`;
+  if(fa)h+=`<button class="btn sub sm" style="margin-bottom:4px" onclick="fcAcc=null;render()">すべての口座を表示</button>`;
+  const days=fa?f.days.map(d=>Object.assign({},d,{items:d.items.filter(x=>x.acc===fcAcc)})).filter(d=>d.items.length):f.days;
+  if(!days.length)h+='<div class="muted">予定はありません。⚙️設定から給料や固定費を登録すると、ここに並びます。</div>';
+  days.forEach(d=>{
+    const bv=fa?d.acc[fcAcc]:d.total;
+    h+=`<div class="tl-d">${md(d.date)}${isHol(pd(d.date))?' 祝':''}<span class="${bv<0?'out':''}">${fa?esc(fa.name):'残高計'} ${Y(bv)}</span></div>`;
     d.items.forEach(x=>{
       const a=accById(x.acc);let ic='•',name='',sub=esc(a?a.name:'');
       if(x.kind==='card'){ic='💳';name=x.g.card.name+' 引き落とし';sub+=`・${x.g.items.length}件`;}
+      else if(x.e&&x.e.goal){ic='🎯';name=(goalById(x.e.gid)||{}).name+(x.delta<0?(x.kind==='move'?' へ積立':' の返済'):' に入金');sub+=`・${x.e.k}回目`;}
       else if(x.kind==='move'){ic='🔁';name='振替';}
       else if(x.kind==='open'){ic='🏁';name='開始残高';}
       else{const c=catById(x.e.cat);ic=c.icon;name=x.e.memo||c.name;if(x.e.rec)sub+='・固定';}
@@ -679,6 +740,7 @@ function renderFc(){
     });
   });
   h+='</div>';
+  h+=renderAiCard();
   return h;
 }
 
@@ -733,7 +795,7 @@ function drillList(cat,s,e){
   let list;
   if(chartKind==='out')list=flows(curKey).items.filter(x=>x.cat===cat).map(x=>({date:x.date,amount:x.amount,e:x.e,p:x.p}));
   else list=entries(s,e).filter(x=>x.type==='in'&&x.cat===cat).map(x=>({date:x.date,amount:x.amount,e:x}));
-  return `<div style="padding-left:20px">${list.sort((a,b)=>cmp(b.date,a.date)).map(x=>`<div class="li tap" onclick="${x.e.rec?`openRecOcc('${x.e.rid}','${x.e.date}')`:`editTx('${x.e.id}')`}"><div class="t"><b>${esc(x.e.memo||catById(cat).name)}</b>
+  return `<div style="padding-left:20px">${list.sort((a,b)=>cmp(b.date,a.date)).map(x=>`<div class="li tap" onclick="${clickFor(x.e)}"><div class="t"><b>${esc(x.e.memo||catById(cat).name)}</b>
     <small>${md(x.date)}${x.p?`（${md(x.e.date)}に利用）`:''}・${esc(mName(x.e.method))}</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('')}</div>`;
 }
 function editBudget(){
@@ -780,12 +842,16 @@ function renderSet(){
     <button class="addbtn" onclick="editRec()">＋ 固定費・定期収入を追加</button></div>
   <div class="card"><h3>🏷️ カテゴリ</h3><div class="chips">${S.cats.map(c=>`<button class="chip" onclick="editCat('${c.id}')">${c.icon} ${esc(c.name)}${c.kind==='in'?'（収入）':''}</button>`).join('')}</div>
     <button class="addbtn" onclick="editCat()">＋ カテゴリを追加</button></div>
+  <div class="card"><h3>🔄 仕切り直し（スタート日から始める）</h3>
+    <div class="note" style="margin-bottom:8px">スタート日を決めて、その日の朝の口座ごとの残高と、スタート前に使ったカードの請求額を手で入れて始め直します。スタート日より前の記録は消せます。</div>
+    ${S.start?`<div class="muted" style="margin-bottom:6px">いまのスタート日：<b>${md(S.start)}</b>${(S.startBills||[]).length?`・スタート前の請求 ${S.startBills.length}件`:''}</div>`:''}
+    <button class="btn" onclick="openRestart()">${S.start?'スタート時の設定を見直す':'仕切り直しを始める'}</button></div>
   <div class="card"><h3>📥 既存の家計管理から取り込む</h3>
-    <div class="note" style="margin-bottom:8px">家計管理（index.html）の月データ・固定費・給料・積立・カード設定を読み取って、この家計簿の記録に変換します。家計管理側のデータは読むだけで、書き換えません。もう一度取り込むと、前回取り込んだ分は入れ替わります（ここで手入力した記録はそのまま）。</div>
+    <div class="note" style="margin-bottom:8px">家計管理（index.html）の月データ・固定費・給料・目標・カード設定・AIのクレジット記録を読み取って、この家計簿の記録に変換します。家計管理側のデータは読むだけで、書き換えません。もう一度取り込むと、前回取り込んだ分は入れ替わります（ここで手入力した記録はそのまま）。</div>
     ${legacyLocalAvailable()?`<button class="btn" onclick="importLegacyLocal()">この端末の家計管理データから取り込む</button>`:`<div class="muted">この端末（このアドレス）には家計管理のデータが見つかりません。GitHub Pages の家計管理と同じ場所で開くと、ボタン一つで取り込めます。</div>`}
     <div class="fld" style="margin-top:10px"><label>クラウド（Gist）から取り込む：Gist ID</label><div class="row"><input id="lgGist" value="${esc(lsGet('gh_gist_id'))}" placeholder="家計管理の設定にある Gist ID"><button class="btn sm" onclick="importLegacyGist()">取り込む</button></div></div>
     <details style="margin-top:6px"><summary class="muted">バックアップの中身（JSON）を貼り付けて取り込む</summary><textarea id="lgPaste" rows="4" style="width:100%;margin-top:6px;font:12px monospace;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);padding:8px" placeholder='{"version":2,"kakeibo_settings":...}'></textarea><button class="btn sub sm" style="margin-top:6px" onclick="importLegacyPaste()">貼り付けた内容で取り込む</button></details>
-    ${S.tx.some(t=>t.src==='legacy')||S.recurring.some(r=>r.src==='legacy')?`<button class="btn del sm" style="margin-top:8px" onclick="removeLegacy()">取り込んだ分をすべて消す</button>`:''}</div>
+    ${S.tx.some(t=>t.src==='legacy')||S.recurring.some(r=>r.src==='legacy')||S.goals.some(g=>g.src==='legacy')?`<button class="btn del sm" style="margin-top:8px" onclick="removeLegacy()">取り込んだ分をすべて消す</button>`:''}</div>
   <div class="card"><h3>💾 データ</h3><div class="note" style="margin-bottom:8px">記録はこの端末（ブラウザ）の中だけに保存されます。既存の「家計管理」とは別のデータで、あちらには一切書き込みません。機種変更やブラウザのデータ削除に備えてバックアップを取ってください。</div>
     <div class="grid2"><button class="btn sub" onclick="exportJSON()">バックアップを保存</button><button class="btn sub" onclick="document.getElementById('fileIn').click()">バックアップから戻す</button></div>
     <button class="btn sub" style="margin-top:8px" onclick="exportCSV()">記録をCSVで書き出す</button>
@@ -895,6 +961,258 @@ function delCat(id){
   if(!confirm('削除しますか？'))return;S.cats=S.cats.filter(c=>c.id!==id);save();closeSheet();render();
 }
 
+// ── 🎯 目標 ──
+const goalById=id=>(S.goals||[]).find(g=>g.id===id);
+const ymLabel=s=>{const d=pd(s);return `${d.getFullYear()}年${d.getMonth()+1}月`;};
+function renderGoals(){
+  const gs=S.goals||[];
+  let h='';
+  if(gs.length){
+    const sts=gs.map(goalStatus);
+    const monthly=gs.reduce((s,g,i)=>s+(sts[i].remain>0?Number(g.monthly)||0:0),0),remain=sts.reduce((s,x)=>s+x.remain,0);
+    h+=`<div class="grid2" style="margin-bottom:10px"><div class="card"><h3>毎月の目標への支払い</h3><div class="mid">${Y(monthly)}</div></div>
+      <div class="card"><h3>目標の残り合計</h3><div class="mid">${Y(remain)}</div></div></div>`;
+  }
+  gs.forEach(g=>{
+    const st=goalStatus(g);const pct=st.total?Math.round(st.progress/st.total*100):0;const fa=accById(g.fromAcc),ta=accById(g.toAcc);
+    const done=st.remain<=0;
+    h+=`<div class="card"><div class="row"><div class="ic" style="font-size:20px">${esc(g.icon||'🎯')}</div><div class="sp"><b style="font-size:15px">${esc(g.name)}</b>
+        <div><span class="pill ${g.kind==='debt'?'w':''}">${g.kind==='debt'?'返済':'積立'}</span>${done?' <span class="pill">🎉 達成</span>':''}</div></div>
+        <button class="btn sm sub" onclick="editGoal('${g.id}')">編集</button></div>
+      <div class="row" style="margin-top:8px;align-items:flex-end"><div><div class="muted">あと</div><div class="big">${Y(st.remain)}</div></div><div class="sp"></div>
+        <div style="text-align:right"><div class="muted">${g.kind==='debt'?'返済済み':'たまった額'}</div><b>${Y(st.progress)}</b><div class="muted">目標 ${Y(st.total)}</div></div></div>
+      <div class="bar"><i style="width:${pct}%"></i></div><div class="muted">${pct}% 達成</div>
+      <div class="li" style="margin-top:6px"><div class="ic">📅</div><div class="t"><b>毎月 ${Y(g.monthly)}</b>
+        <small>${g.day==='end'?'末日':g.day+'日'}${g.adjust&&g.adjust!=='none'?`（土日祝は${g.adjust==='prev'?'前':'後'}）`:''}・${esc(fa?fa.name:'口座未設定')}から${ta&&g.kind==='save'?` ${esc(ta.name)}へ`:''}</small></div></div>
+      ${st.next?`<div class="li"><div class="ic">⏭️</div><div class="t"><b>次回 ${md(st.next.date)}　${Y(st.next.amount)}</b><small>あと${st.future.length}回${st.finish?`・${ymLabel(st.finish)}に完了予定`:''}</small></div></div>`:done?'':'<div class="muted">毎月の額か開始日が未設定です</div>'}
+      ${st.future.length?`<button class="btn sub sm" style="margin-top:6px" onclick="openGoal['${g.id}']=!openGoal['${g.id}'];render()">${openGoal[g.id]?'予定表を閉じる':'この先の予定表を見る'}</button>`:''}
+      ${openGoal[g.id]?`<div style="margin-top:6px">${st.all.filter(p=>p.date>todayStr()).slice(0,36).map(p=>`<div class="li tap" onclick="openGoalOcc('${g.id}','${p.date}')"><div class="t"><b>${md(p.date)}${p.skip?'（スキップ）':''}</b><small>${p.k}回目・このあと残り ${fmt(p.after)}円</small></div><div class="a">${p.skip?'—':Y(p.amount)}</div></div>`).join('')}</div>`:''}
+    </div>`;
+  });
+  if(!gs.length)h+=`<div class="card muted">目標はまだありません。借金の返済や貯金の目標を登録すると、あといくら・毎月いくら・いつ終わるかが見えます。家計管理の目標は ⚙️設定 の「既存の家計管理から取り込む」でも持ってこられます。</div>`;
+  h+=`<button class="addbtn" onclick="editGoal()">＋ 目標を追加</button>`;
+  return h;
+}
+function editGoal(id){
+  const bank=(S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id;
+  const g=id?goalById(id):{name:'',icon:'🎯',kind:'debt',total:0,done:0,monthly:0,day:S.settings.startDay||15,adjust:S.settings.shift||'none',start:todayStr(),fromAcc:bank,toAcc:''};
+  const st=id?goalStatus(g):null;
+  const accOpts=(v,none)=>(none?`<option value="">${none}</option>`:'')+S.accounts.map(a=>`<option value="${a.id}" ${a.id===v?'selected':''}>${esc(a.name)}</option>`).join('');
+  sheet(id?'目標を編集':'目標を追加',`<div class="row"><div class="fld" style="width:70px"><label>絵文字</label><input id="gIcon" value="${esc(g.icon||'🎯')}"></div><div class="fld sp"><label>名前</label><input id="gName" value="${esc(g.name)}" placeholder="例：借金返済、旅行の積立"></div></div>
+    <div class="fld"><label>種類</label><select id="gKind" onchange="document.getElementById('gToRow').style.display=this.value==='save'?'block':'none'"><option value="debt" ${g.kind==='debt'?'selected':''}>返済（口座から出ていく）</option><option value="save" ${g.kind==='save'?'selected':''}>積立（貯める）</option></select></div>
+    <div class="row"><div class="fld sp"><label>目標の総額</label><input id="gTotal" type="number" inputmode="numeric" value="${g.total||''}"></div>
+      <div class="fld sp"><label>開始日の時点で残っている額</label><input id="gRemain" type="number" inputmode="numeric" value="${(Number(g.total)||0)-(Number(g.done)||0)||''}"></div></div>
+    <div class="row"><div class="fld sp"><label>毎月の額</label><input id="gMonthly" type="number" inputmode="numeric" value="${g.monthly||''}"></div>
+      <div class="fld sp"><label>毎月の日</label><select id="gDay">${dayOpts(g.day,true)}</select></div></div>
+    <div class="row"><div class="fld sp"><label>土日祝のとき</label><select id="gAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${g.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div>
+      <div class="fld sp"><label>開始日（この日以降の支払いを並べる）</label><input id="gStart" type="date" value="${g.start||todayStr()}"></div></div>
+    <div class="fld"><label>どの口座から</label><select id="gFrom">${accOpts(g.fromAcc)}</select></div>
+    <div class="fld" id="gToRow" style="display:${g.kind==='save'?'block':'none'}"><label>どこへ貯める（口座を選ぶと振替扱いで、支出に数えません）</label><select id="gTo">${accOpts(g.toAcc,'口座の外（積立預金・投資など）')}</select></div>
+    ${st?`<div class="note">いまの残り ${fmt(st.remain)}円（開始日以降に支払った分を引いた額）</div>`:''}
+    <button class="btn" style="margin-top:8px" onclick="saveGoal('${id||''}')">保存</button>${id?`<button class="btn del" style="margin-top:8px" onclick="delGoal('${id}')">削除</button>`:''}`);
+}
+function saveGoal(id){
+  const v=x=>document.getElementById(x).value;
+  const total=Number(v('gTotal'))||0;const remain=v('gRemain')===''?total:Number(v('gRemain'))||0;
+  const o={icon:v('gIcon').trim()||'🎯',name:v('gName').trim(),kind:v('gKind'),total,done:Math.max(0,total-remain),monthly:Number(v('gMonthly'))||0,
+    day:v('gDay')==='end'?'end':Number(v('gDay')),adjust:v('gAdj'),start:v('gStart')||todayStr(),fromAcc:v('gFrom'),toAcc:v('gKind')==='save'?v('gTo'):''};
+  if(!o.name||total<=0){toast('名前と総額を入れてください');return;}
+  if(remain>total){toast('残りが総額より大きくなっています');return;}
+  if(id)Object.assign(goalById(id),o);else S.goals.push(Object.assign({id:uid(),ex:{}},o));
+  save();closeSheet();render();
+}
+function delGoal(id){if(!confirm('この目標を削除しますか？（この先の支払い予定も消えます）'))return;S.goals=S.goals.filter(g=>g.id!==id);save();closeSheet();render();}
+function openGoalOcc(gid,date){
+  const g=goalById(gid);if(!g)return;const ex=(g.ex||{})[date]||{};
+  sheet(`🎯 ${esc(g.name)}（${md(date)}）`,`<div class="fld"><label>この回の金額</label><input type="number" inputmode="numeric" id="goAmt" value="${ex.amount!=null?ex.amount:g.monthly}"></div>
+    <div class="note">この回だけに反映されます。多めに払うと完了が早まり、スキップすると1か月後ろにずれます。</div>
+    <div class="grid2" style="margin-top:10px"><button class="btn" onclick="saveGoalOcc('${gid}','${date}',false)">この回だけ変更</button><button class="btn sub" onclick="saveGoalOcc('${gid}','${date}',true)">この回はスキップ</button></div>
+    ${ex.amount!=null||ex.skip?`<button class="btn sub" style="margin-top:8px" onclick="saveGoalOcc('${gid}','${date}',null)">いつもの額に戻す</button>`:''}
+    <button class="btn sub" style="margin-top:8px" onclick="editGoal('${gid}')">目標の設定を開く</button>`);
+}
+function saveGoalOcc(gid,date,skip){
+  const g=goalById(gid);g.ex=g.ex||{};
+  if(skip===null)delete g.ex[date];else if(skip)g.ex[date]={skip:true};else{const v=Number(document.getElementById('goAmt').value);g.ex[date]={amount:v>=0?v:g.monthly};}
+  save();closeSheet();render();
+}
+
+// ── 🔄 仕切り直し ──
+let RS=null;
+function restartBillRows(start){
+  // スタート日より前（約2か月）の利用分が、スタート日以降に引き落とされる日をカードごとに洗い出す
+  const rows=[];const s=pd(start);
+  S.cards.forEach(c=>{const seen=new Set();
+    for(let i=1;i<=75;i++){const d=ds(wdDate(c,addDays(s,-i),0));if(d>=start&&!seen.has(d)){seen.add(d);}}
+    [...seen].sort().forEach(d=>{const ex=(S.startBills||[]).find(b=>b.cardId===c.id&&b.date===d);rows.push({id:ex?ex.id:uid(),cardId:c.id,date:d,amount:ex?ex.amount:''});});
+  });
+  // 既存の手入力で日付が外れたものも残す
+  (S.startBills||[]).forEach(b=>{if(!rows.some(r=>r.id===b.id))rows.push(Object.assign({},b));});
+  return rows.sort((a,b)=>cmp(a.date,b.date));
+}
+function openRestart(start){
+  const t=new Date();
+  if(!start)start=S.start||`${t.getFullYear()}-${pad(t.getMonth()+1)}-01`;
+  const prev=RS;
+  RS={start,bal:{},bills:restartBillRows(start),goals:{},del:prev?prev.del:true};
+  S.accounts.forEach(a=>{RS.bal[a.id]=prev&&prev.bal[a.id]!=null?prev.bal[a.id]:(a.openingDate===start?a.opening:'');});
+  (S.goals||[]).forEach(g=>{const st=goalStatus(g);RS.goals[g.id]=prev&&prev.goals[g.id]!=null?prev.goals[g.id]:st.remain;});
+  if(prev)RS.bills.forEach(b=>{const o=prev.bills.find(x=>x.cardId===b.cardId&&x.date===b.date);if(o&&o.amount!=='')b.amount=o.amount;});
+  renderRestart();
+}
+function renderRestart(){
+  const before=S.tx.filter(x=>x.date<RS.start).length;
+  sheet('🔄 仕切り直し',`<div class="fld"><label>スタート日</label><input type="date" value="${RS.start}" onchange="readRestart();openRestart(this.value)"></div>
+    <div class="card"><h3>① スタート日の朝の残高（口座ごと）</h3>${S.accounts.map(a=>`<div class="row" style="margin:5px 0"><span class="sp">${a.type==='wallet'?'👛':'🏦'} ${esc(a.name)}</span><input type="number" inputmode="numeric" style="width:140px" data-rsbal="${a.id}" value="${RS.bal[a.id]}" placeholder="0"></div>`).join('')}
+      <button class="btn sub sm" onclick="readRestart();closeSheet();editAcc()">＋ 口座を追加</button>
+      <div class="note">通帳やアプリで、スタート日の朝（その日の出入りの前）の残高を入れてください。</div></div>
+    <div class="card"><h3>② スタート前に使ったカードの請求額</h3>${RS.bills.length?RS.bills.map((b,i)=>{const c=cardById(b.cardId);return `<div class="row" style="margin:5px 0"><span class="cdot" style="width:6px;height:28px;border-radius:3px;flex:none;background:${c?cardColor(c):'#999'}"></span>
+        <span class="sp" style="font-size:12.5px"><b>${esc(c?c.name:'?')}</b><br><span class="muted">${md(b.date)} 引き落とし</span></span><input type="number" inputmode="numeric" style="width:140px" data-rsbill="${i}" value="${b.amount}" placeholder="0"></div>`;}).join(''):'<div class="muted">カードが登録されていません</div>'}
+      <div class="note">${md(RS.start)}より前に使った分の請求額（カード会社のアプリの確定・未確定の利用額）を、引き落とし日ごとに入れてください。${md(RS.start)}以降に使った分は、記録すれば自動で足されます。</div></div>
+    ${(S.goals||[]).length?`<div class="card"><h3>③ 目標の残り（スタート日の時点）</h3>${S.goals.map(g=>`<div class="row" style="margin:5px 0"><span class="sp">${esc(g.icon||'🎯')} ${esc(g.name)}</span><input type="number" inputmode="numeric" style="width:140px" data-rsgoal="${g.id}" value="${RS.goals[g.id]}"></div>`).join('')}
+      <div class="note">支払いはスタート日以降の分から並べ直します。</div></div>`:''}
+    <label class="row" style="margin:8px 0;font-size:13px"><input type="checkbox" id="rsDel" style="width:auto" ${RS.del?'checked':''}> スタート日より前の記録を消す（${before}件）</label>
+    <button class="btn" onclick="applyRestart()">この内容で仕切り直す</button>`);
+}
+function readRestart(){
+  if(!RS)return;
+  document.querySelectorAll('[data-rsbal]').forEach(i=>RS.bal[i.dataset.rsbal]=i.value);
+  document.querySelectorAll('[data-rsbill]').forEach(i=>RS.bills[Number(i.dataset.rsbill)].amount=i.value);
+  document.querySelectorAll('[data-rsgoal]').forEach(i=>RS.goals[i.dataset.rsgoal]=i.value);
+  const d=document.getElementById('rsDel');if(d)RS.del=d.checked;
+}
+function applyRestart(){
+  readRestart();const st=RS.start;if(!st){toast('スタート日を入れてください');return;}
+  const nDel=RS.del?S.tx.filter(x=>x.date<st).length:0;
+  if(!confirm(`${md(st)} から仕切り直します。${nDel?`\nスタート日より前の記録 ${nDel}件を消します（元に戻せません）。`:''}\nよろしいですか？`))return;
+  S.start=st;
+  S.accounts.forEach(a=>{a.openingDate=st;a.opening=Number(RS.bal[a.id])||0;});
+  S.startBills=RS.bills.filter(b=>Number(b.amount)>0).map(b=>({id:b.id,cardId:b.cardId,date:b.date,amount:Number(b.amount)}));
+  if(RS.del){S.tx=S.tx.filter(x=>x.date>=st);S.recurring.forEach(r=>{if(r.start<st)r.start=st;});}
+  (S.goals||[]).forEach(g=>{const rem=Number(RS.goals[g.id]);if(!isNaN(rem)&&RS.goals[g.id]!==''){g.done=Math.max(0,(Number(g.total)||0)-rem);if(!g.start||g.start<st)g.start=st;Object.keys(g.ex||{}).forEach(d=>{if(d<st)delete g.ex[d];});}});
+  S.ui.setupDone=true;RS=null;save();closeSheet();goToday();toast('仕切り直しました');
+}
+
+// ── 🤖 AI提案（家計管理と同じ中継サーバー・モデル）──
+const AI_PROXY='https://kakeibo-proxy.maro986p.workers.dev/';
+const AI_MODEL='claude-sonnet-4-6';
+const AI_PRICE_IN=3,AI_PRICE_OUT=15; // $ / 100万トークン（Sonnet 4.6）
+const NOVEL_EXPERIENCES=[
+  {emoji:'🏺',name:'陶芸の体験教室',amount:3000,desc:'郡山周辺の工房で湯呑みづくり。土をこねる無心の時間と、後日焼き上がりが届くお楽しみつき',min:2500,moods:['hobby','indoor']},
+  {emoji:'♨️',name:'日帰り温泉・サウナ巡り',amount:1200,desc:'須賀川〜郡山の銭湯/サ活開拓。露天で外気浴して"ととのう"、脳のリセットボタン',min:800,moods:['indoor','solo']},
+  {emoji:'🔭',name:'夜の天体観測ドライブ',amount:500,desc:'光の少ない高原まで走って、車を停めて星空を見上げる。コンビニ飯持参で0円に近い非日常',min:0,moods:['special','solo']},
+  {emoji:'☕',name:'純喫茶モーニング開拓',amount:900,desc:'朝イチで知らない喫茶店へ。レトロな椅子で分厚いトーストと珈琲、SNS断ちの静かな朝活',min:600,moods:['solo','food','indoor']},
+  {emoji:'🚃',name:'各駅停車の隣町ぶらり旅',amount:1500,desc:'目的地を決めず白河や二本松まで。降りた駅で当てずっぽうに入った定食屋が大当たり、を狙う',min:1000,moods:['special','food']},
+  {emoji:'📷',name:'フィルムカメラ散歩',amount:2000,desc:'使い捨てカメラ片手に街歩き。撮るために歩くと、毎日通る道の影や看板が急に面白く見えてくる',min:1500,moods:['solo','active','hobby']},
+  {emoji:'🧗',name:'ボルダリング初挑戦',amount:2500,desc:'近くのジムで体験。課題をどう登るか考える"立体パズル"、指先と頭をフル回転させる新鮮な達成感',min:2000,moods:['active','hobby']},
+  {emoji:'🍛',name:'スパイスからカレー作り',amount:1800,desc:'業スーでクミン・コリアンダー等を調達して本格カレー。レシピ通り組み立てる理系的な楽しさ',min:1200,moods:['indoor','food','hobby']},
+  {emoji:'🪴',name:'観葉植物を一鉢迎える',amount:1500,desc:'部屋に緑を一つ。水やりの対象ができると休日の質感が変わる、長く付き合える小さな相棒',min:1000,moods:['indoor','hobby']},
+  {emoji:'🎹',name:'レコード/中古CD屋巡り',amount:1000,desc:'サブスクに無い盤との出会い。ジャケ買いした1枚を家のスピーカーでじっくり、が乙',min:500,moods:['solo','hobby']},
+  {emoji:'🛤️',name:'廃線跡・旧街道さんぽ',amount:300,desc:'地図で見つけた廃線跡を歩く。レールの無い土手に歴史と地形のレイヤーを感じる無料の冒険',min:0,moods:['active','solo','special']},
+  {emoji:'📚',name:'図書館で未知ジャンル開拓',amount:0,desc:'普段絶対に開かない棚から3冊。0円で世界が広がる、コスパ最強の知的な寄り道',min:0,moods:['indoor','solo']},
+  {emoji:'🎯',name:'詰将棋カフェ/ボードゲーム会',amount:1500,desc:'一人参加OKの会も多い。対戦ゲーム好きなら、アナログの読み合いと初対面の人との一局もハマる',min:1000,moods:['hobby','indoor']},
+  {emoji:'🥟',name:'餃子の街・宇都宮遠征',amount:4000,desc:'少し足を伸ばして食べ歩き。新幹線使わず下道ドライブでコスト圧縮、3〜4軒はしごが醍醐味',min:3500,moods:['food','special']},
+  {emoji:'🌅',name:'早朝の卸売市場・場内食堂',amount:1500,desc:'郡山中央卸売市場の場内食堂で海鮮丼。競りの活気と朝5時の街の空気で、一日の解像度が上がる',min:1000,moods:['food','special','active']},
+  {emoji:'🚲',name:'ロードバイク試乗・レンタル',amount:2000,desc:'いつもの道を自転車で。車では気づかない坂や川沿いの風、行動範囲が一気に広がる感覚を味わう',min:1500,moods:['active','hobby']},
+  {emoji:'🍶',name:'地酒の酒蔵見学・利き酒',amount:2000,desc:'須賀川/郡山近郊の酒蔵へ。仕込みの香りの中で利き酒、銘柄ごとの違いがわかると晩酌が変わる',min:1500,moods:['special','food']},
+  {emoji:'🦖',name:'博物館・科学館をハシゴ',amount:1000,desc:'ふくしま森の科学体験館(ムシテックワールド)など。大人が本気で展示を読むと意外な学びの宝庫',min:500,moods:['indoor','special']},
+  {emoji:'🎣',name:'管理釣り場でルアー入門',amount:3000,desc:'初心者OKの管理釣り場でニジマス狙い。一投ごとの集中とアタリの瞬間、静かな熱中ができる',min:2500,moods:['active','solo','hobby']},
+  {emoji:'🖌️',name:'御朱印集め・寺社さんぽ',amount:800,desc:'御朱印帳片手に近隣の神社仏閣へ。歩きながら町の歴史をたどる、コレクション欲も満たされる趣味',min:300,moods:['solo','active','hobby']},
+  {emoji:'🌶️',name:'スーパー銭湯で漫画＆食事の籠城',amount:2500,desc:'広い館内で風呂→漫画→食事→また風呂のループ。半日まるごと"何もしない贅沢"に身を委ねる',min:2000,moods:['indoor','food']},
+  {emoji:'🥾',name:'低山ハイキング初挑戦',amount:1000,desc:'安積山や近郊の里山へ。1〜2時間で登れる低山でも、頂上のお握りと景色は格別。膝に優しい入門',min:500,moods:['active','special']},
+  {emoji:'🎨',name:'美術館の企画展をふらり',amount:1500,desc:'CCGA(現代グラフィックアートセンター)など。予習なしで観て、一番好きな一枚だけ見つける遊び',min:800,moods:['solo','indoor','special']},
+  {emoji:'🍞',name:'隣町のパン屋・ベーカリー巡り',amount:1200,desc:'評判の個人ベーカリーを2〜3軒。買ったパンを公園で食べ比べ、お気に入りの一個を探す小さな旅',min:800,moods:['food','active']},
+  {emoji:'🧩',name:'ジグソー/プラモに没頭する夜',amount:2000,desc:'手を動かして頭を空っぽに。完成までの過程そのものを楽しむ、画面を見ない時間のリハビリ',min:1000,moods:['indoor','solo','hobby']},
+  {emoji:'🌿',name:'道の駅・直売所で旬の食材ハント',amount:1500,desc:'近隣の道の駅で見たことない野菜や手作り総菜を調達。家で図鑑片手に調理する週末プロジェクト',min:800,moods:['food','active','hobby']},
+];
+const MOOD_MAP={'まったりインドア':'indoor','外でアクティブに':'active','一人で静かに':'solo','非日常を味わいたい':'special','美味しいものが食べたい':'food','新しい趣味を始めたい':'hobby'};
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+let aiResult=null;
+function aiBudget(){
+  const f=S.ai.form;const pk=periodKeyOf(todayStr());const [,pe]=periodRange(pk);
+  const dL=Math.max(1,Math.round((pd(pe)-pd(todayStr()))/864e5)+1);
+  let budget,label;
+  if(f.basis==='budget'){const b=budgetOf(pk);budget=b.total>0?b.total-flows(pk).out:0;label='今月の予算の残り';}
+  else if(f.basis==='custom'){budget=Number(f.custom)||0;label='自分で決めた額';}
+  else{budget=forecast(horizonEnd('0')).free;label=`${md(pe)}までに使っていい額（口座と財布の合計がマイナスにならない上限）`;}
+  return {budget:Math.round(budget),label,dL,pdv:Math.round(budget/dL)};
+}
+function renderAiCard(){
+  const f=S.ai.form;const b=aiBudget();const u=S.ai.usd;const dep=(u.deposits||[]).reduce((s,d)=>s+(Number(d.usd)||0),0);const bal=dep-(Number(u.spent)||0);
+  const moods=['','まったりインドア','外でアクティブに','一人で静かに','非日常を味わいたい','美味しいものが食べたい','新しい趣味を始めたい'];
+  let h=`<div class="card" id="aiCard"><h3>🤖 AI おまかせ提案（使える額で休日プラン）</h3>
+    <div class="fld"><label>予算の考え方</label><select onchange="S.ai.form.basis=this.value;save();render()">
+      ${[['free','この先使える額で考える'],['budget','今月の予算の残りで考える'],['custom','自分で金額を決める']].map(([k,l])=>`<option value="${k}" ${f.basis===k?'selected':''}>${l}</option>`).join('')}</select></div>
+    ${f.basis==='custom'?`<div class="fld"><label>使う予定の額</label><input type="number" inputmode="numeric" value="${f.custom||''}" onchange="S.ai.form.custom=this.value;save();render()"></div>`:''}
+    <div class="prev">AIが使う予算：${Y(b.budget)}（残り${b.dL}日）</div>
+    <div class="row"><div class="fld sp"><label>📍 場所（任意）</label><input id="aiLoc" value="${esc(f.loc)}" placeholder="例: 須賀川・郡山" oninput="S.ai.form.loc=this.value;save()"></div>
+      <div class="fld sp"><label>😊 今の気分</label><select onchange="S.ai.form.mood=this.value;save()">${moods.map(m=>`<option value="${m}" ${f.mood===m?'selected':''}>${m||'おまかせ'}</option>`).join('')}</select></div></div>
+    <div class="fld"><label>✍️ 細かい指示（任意・入れるとこちら優先）</label><input value="${esc(f.free)}" placeholder="例: 友達と2人で6時間くらい" oninput="S.ai.form.free=this.value;save()"></div>
+    <button class="btn" onclick="generateAI()">✨ 今週末のプランを提案してもらう</button>`;
+  if(aiResult){
+    h+=`<div style="margin-top:10px">${aiResult.loading?'<div class="muted">考えています…</div>':`<div class="muted" style="margin-bottom:4px">${aiResult.mode==='ai'?'🤖 AI':'📦 オフライン'}の提案</div>`+
+      aiResult.plans.map(p=>`<div class="li"><div class="ic">${esc(p.emoji||'✨')}</div><div class="t" style="white-space:normal"><b>${esc(p.name)}</b><small style="white-space:normal">${esc(p.desc)}</small></div><div class="a" style="color:var(--warn)">${fmt(Number(p.amount)||0)}円</div></div>`).join('')+
+      `<div class="prev" style="font-weight:400;margin-top:8px">${esc(aiResult.advice||'')}</div><button class="btn sub sm" onclick="generateAI()">🔄 別の提案を見る</button>`}</div>`;
+  }
+  h+=`<details style="margin-top:10px"><summary class="muted">💰 APIクレジット残高 $${bal.toFixed(2)}（使用 $${(Number(u.spent)||0).toFixed(4)}）</summary>
+    <div style="margin-top:6px">${(u.deposits||[]).slice().sort((a,c)=>cmp(c.date,a.date)).slice(0,5).map(d=>`<div class="li"><div class="t"><b>${esc(d.date)}</b></div><div class="a in">+$${(Number(d.usd)||0).toFixed(2)}</div></div>`).join('')||'<div class="muted">入金記録なし</div>'}
+    <button class="btn sub sm" style="margin-top:6px" onclick="addAiDeposit()">＋ 入金を記録</button></div></details></div>`;
+  return h;
+}
+function addAiDeposit(){
+  const a=prompt('入金額（ドル）　例: 5');if(a==null)return;const usd=Number(String(a).trim());if(!(usd>0)){toast('正の数を入れてください');return;}
+  S.ai.usd.deposits=S.ai.usd.deposits||[];S.ai.usd.deposits.push({id:'d'+Date.now(),date:todayStr(),usd});save();render();
+}
+function buildAiPrompt({budget,basisLabel,dL,pd,txt,loc,moodFree,moodPreset}){
+  const THEME_AXES=['五感を刺激する体験','地元の知らない場所の開拓','一人で没頭できる新しい趣味の入口','体を動かすアクティブ系','静かに心を整える系','学び・知的好奇心系','安く済む小さな冒険','季節を感じる外遊び','ものづくり・クラフト系','食の新規開拓'];
+  const seed=THEME_AXES[Math.floor(Math.random()*THEME_AXES.length)];
+  const locLine=loc?`【希望エリア】${loc}（この近辺で行ける場所を優先。難しければ近隣でも可）`:`【エリア】福島県・須賀川/郡山周辺を基本に`;
+  const moodLine=moodFree?`【細かい指示】「${moodFree}」→ 人数・時間・やりたいこと等の条件は最優先で必ず満たすこと`:(moodPreset?`【今の気分】「${moodPreset}」→ この気分に合うトーンの提案を多めに`:`【気分】特に指定なし。バランスよく`);
+  const prompt=`あなたは「日常に新しい刺激を与える体験キュレーター」です。家計管理アプリ内にいますが、節約の話より"いつもと違う休日"の具体提案がメイン。
+${locLine}
+${moodLine}
+【使える予算】${basisLabel}＝${budget.toLocaleString()}円（残り${dL}日）
+【★予算の考え方（重要）★】この${budget.toLocaleString()}円は「残り期間トータルで自由に使える額」。1日あたり${pd.toLocaleString()}円はあくまで目安で上限ではない。「1日${pd.toLocaleString()}円しか使えない」ではなく「残り${dL}日のうちの"ある休日"に、この予算の範囲でどう使うと満たされるか」で考える。1回の休日にまとめて使ってOK。
+【★予算上限★】各プランの amount は ${Math.max(budget,0).toLocaleString()}円 以下。超える提案は出さない。0/マイナスなら0〜数百円の案のみ。
+【入力チェック（最優先）】もし【希望エリア】が実在しない地名や場所と無関係な語（例:「パソコン」）なら、その場所は使えないと判断し advice 冒頭で「"${loc}"って場所が見つからなかったから、エリア指定なしで考えるね」と添えて福島・須賀川/郡山周辺として提案。もし【今の気分】または【細かい指示】が意味不明な語（例:「マウス」）なら無視して"おまかせ"扱い（こじつけない）。
+【最近の支出】\n${txt||'なし'}
+【提案の方向性】自宅でのゲームや動画視聴など"いつもの過ごし方"だけで完結しない、新鮮で具体的な休日の体験を中心に。特定の人物像や個人の趣味を決めつけず、誰でも気軽に試せる切り口で提案する
+【今回フォーカスしてほしいテーマ軸】「${seed}」を中心に据えつつ、他の方向性も1〜2個混ぜる
+【提案の作り方（重要）】
+- ありきたりな案は外し、まだやったことのなさそうな"風変わりで日常を彩る"体験を。毎回同じにならないよう新鮮な切り口で
+- ★具体的であること★：「どこで・何をして・何を見て/感じて、どんな新しい発見があるか」まで描く
+  - 良い例：「鈍行ぶらり旅：水郡線で常陸大子まで行って、駅前の шамisen…ではなく地元の手打ちそばを食べ、袋田の滝の裏側を歩いて『水のカーテンを内側から見る』非日常を味わう」
+  - 良い例：「朝の郡山中央卸売市場で場内食堂の海鮮丼。普段見ない競りの活気と、朝5時の街の空気で一日の解像度が上がる」
+- 地名・店の種類・行動・得られる感覚をセットで。抽象的な「〜を楽しむ」で終わらせない
+- 予算は自由費残りと1日あたりを意識し現実的に。0円〜数千円中心、1つくらい少し贅沢でもOK
+- 「お、ちょっとやってみるか」と思える一押しの一言を desc の最後に
+今週末向けに4プラン。JSON形式のみ返答（前後の説明文・マークダウン無し）:
+{"plans":[{"emoji":"🚃","name":"プラン名（端的に）","amount":2000,"desc":"場所・行動・発見まで具体的に1〜2文"}],"advice":"友達口調で背中を押す一言"}`;
+  return prompt;
+}
+async function generateAI(){
+  const f=S.ai.form;const b=aiBudget();const loc=(f.loc||'').trim(),moodFree=(f.free||'').trim(),moodPreset=f.mood||'';
+  const pk=periodKeyOf(todayStr());const [ps,pe]=periodRange(pk);
+  const txt=entries(ps,pe).filter(x=>x.type==='out').slice(-30).map(x=>`・${x.memo||catById(x.cat).name}(${catById(x.cat).name}): ${x.amount}円${x.rec?' 固定費':''}`).join('\n');
+  aiResult={loading:true};render();
+  const local=()=>{const moodKey=MOOD_MAP[moodFree||moodPreset]||'';let pool=NOVEL_EXPERIENCES.filter(p=>p.min<=Math.max(b.budget,0));if(pool.length<4)pool=NOVEL_EXPERIENCES.slice();
+    if(moodKey){const m=pool.filter(p=>p.moods&&p.moods.includes(moodKey)),r=pool.filter(p=>!(p.moods&&p.moods.includes(moodKey)));pool=shuffle(m).concat(shuffle(r));}else shuffle(pool);
+    let advice=b.budget<0?'使える額がマイナスだから、0円の星空観測や廃線さんぽ・図書館あたりで"お金をかけない冒険"を。':b.budget<5000?'残りはタイトめ。でも温泉や純喫茶モーニングなら数百円で非日常。':b.pdv>=4000?'余裕あるね。陶芸かボルダリングみたいな"体を動かす初体験"に振ってみては。':'ペースは良好。リストから1個"やったことないやつ"を選ぶのが今週のミッション。';
+    if(loc)advice=`「${loc}」周辺だとこの辺りかな。`+advice;
+    aiResult={mode:'local',plans:pool.slice(0,4),advice};render();};
+  try{
+    const prompt=buildAiPrompt({budget:b.budget,basisLabel:b.label,dL:b.dL,pd:b.pdv,txt,loc,moodFree,moodPreset});
+    const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:AI_MODEL,max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    const data=await res.json();
+    if(data.usage){const u=data.usage;const inTok=(Number(u.input_tokens)||0)+(Number(u.cache_read_input_tokens)||0)+(Number(u.cache_creation_input_tokens)||0);
+      const usd=inTok/1e6*AI_PRICE_IN+(Number(u.output_tokens)||0)/1e6*AI_PRICE_OUT;S.ai.usd.spent=(Number(S.ai.usd.spent)||0)+usd;(S.ai.usd.uses=S.ai.usd.uses||[]).push({id:'u'+Date.now(),ts:new Date().toISOString(),usd});save();}
+    if(!res.ok||!Array.isArray(data.content))throw new Error('api');
+    const parsed=JSON.parse(data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim());
+    const cap=b.budget>0?b.budget:1000;const plans=(parsed.plans||[]).filter(p=>(Number(p.amount)||0)<=cap);
+    if(plans.length<2){local();return;}
+    aiResult={mode:'ai',plans,advice:parsed.advice||''};render();
+  }catch(e){local();}
+}
+
 // ── 既存「家計管理」(index.html) からの取り込み（読み取りのみ）──
 function lsGet(k){try{return localStorage.getItem(k)||'';}catch(e){return '';}}
 function legacyLocalAvailable(){try{for(let i=0;i<localStorage.length;i++)if(/^kakeibo_\d{4}_\d{2}$/.test(localStorage.key(i)||''))return true;}catch(e){}return false;}
@@ -957,8 +1275,7 @@ function convertLegacy(data){
       add(String(base).slice(0,10),'out',total-used,cat,m,nm+(e.confirmed?'':'（見込み）'));
       if(e.refundDate)add(String(e.refundDate).slice(0,10),'in',e.refundAmt!=null?e.refundAmt:total,'refund','a:'+bank,nm+' 返金');
     });
-    Object.entries(st.goalSavings||{}).forEach(([gid,v])=>{const g=goals.find(x=>x.id===gid)||{name:'積立'};
-      savedByGoal[gid]=(savedByGoal[gid]||0)+(Number(v)||0);add(pday,'out',v,goalCat(g),'a:'+bank,g.name);});
+    Object.entries(st.goalSavings||{}).forEach(([gid,v])=>{(savedByGoal[gid]||(savedByGoal[gid]=[])).push({date:pday,v:Number(v)||0});});
   });
   // 最後の月より先は「固定費・定期収入」として続ける
   const last=months[months.length-1].match(/^kakeibo_(\d{4})_(\d{2})$/);const lastSt=data[months[months.length-1]];
@@ -973,22 +1290,36 @@ function convertLegacy(data){
     if(pm>=1&&pm<=12)addRec({name:f.name,type:'out',amount:amt,cat:legacyFixedCat(f.name),method:method(f.pay),every:'year',month:pm,day:Number(f.payDay)||1,start:st2});
     else addRec({name:f.name,type:'out',amount:amt,cat:legacyFixedCat(f.name),method:method(f.pay),every:'month',day:pdBase,adjust:pdAdj,start:st2});
   });
-  goals.forEach(g=>{const mo=Number(g.monthly)||0;if(mo<=0)return;
-    const remain=(Number(g.startRemaining!=null?g.startRemaining:g.total)||0)-(savedByGoal[g.id]||0);if(remain<=0)return;
-    const n=Math.ceil(remain/mo);const end=ds(new Date(nx.getFullYear(),nx.getMonth()+n-1,28));
-    addRec({name:g.name,type:'out',amount:mo,cat:goalCat(g),method:'a:'+bank,every:'month',day:pdBase,adjust:pdAdj,end});
+  // 目標：今日（スタート日があればその日）より前の積立は「済んだ額」、以降は目標の支払いとして続ける
+  const cut=S.start&&S.start>todayStr()?S.start:todayStr();
+  const gl=goals.map(g=>{
+    const total=Number(g.total)||Number(g.startRemaining)||0;const startRem=Number(g.startRemaining!=null?g.startRemaining:g.total)||0;
+    const hist=(savedByGoal[g.id]||[]).sort((a,b)=>cmp(a.date,b.date));
+    const before=hist.filter(h=>h.date<cut).reduce((s,h)=>s+h.v,0);
+    const futureH=hist.filter(h=>h.date>=cut);
+    const gStart=futureH.length?futureH[0].date:legacyPayDate(nx.getFullYear(),nx.getMonth(),lastSt);
+    const ex={};futureH.forEach(h=>{if(h.v!==Number(g.monthly))ex[h.date]=h.v?{amount:h.v}:{skip:true};});
+    const debt=/返済|借金|ローン|奨学/.test(g.name||'');
+    return {id:uid(),src:'legacy',lid:g.id,name:g.name||'目標',icon:debt?'💸':'🐷',kind:debt?'debt':'save',total,done:Math.max(0,total-(startRem-before)),
+      monthly:Number(g.monthly)||0,day:pdBase,adjust:pdAdj,start:gStart,fromAcc:bank,toAcc:'',ex};
   });
-  return {tx,rec,months,pdBase,pdAdj};
+  return {tx,rec,months,pdBase,pdAdj,goals:gl};
 }
 function applyLegacy(data,label){
   let r;const backup=JSON.stringify(S);
   try{
     S.tx=S.tx.filter(t=>t.src!=='legacy');S.recurring=S.recurring.filter(x=>x.src!=='legacy');
-    r=convertLegacy(data);
+    r=convertLegacy(data);if(S.start)r.tx=r.tx.filter(t=>t.date>=S.start);
   }catch(e){S=JSON.parse(backup);toast(e.message||'取り込めませんでした');return;}
   const ml=m=>m.replace(/^kakeibo_(\d{4})_(\d{2})$/,(_,y,mm)=>`${y}年${Number(mm)}月`);
-  if(!confirm(`${label}\n\n${ml(r.months[0])}〜${ml(r.months[r.months.length-1])}（${r.months.length}か月分）\n記録 ${r.tx.length}件、固定費・定期収入 ${r.rec.length}件を取り込みます。\n\n月のはじまりも家計管理に合わせて「${r.pdBase}日・土日は${r.pdAdj==='prev'?'前':'後'}の平日」にします。よろしいですか？`)){S=JSON.parse(backup);return;}
+  if(!confirm(`${label}\n\n${ml(r.months[0])}〜${ml(r.months[r.months.length-1])}（${r.months.length}か月分）\n記録 ${r.tx.length}件、固定費・定期収入 ${r.rec.length}件、目標 ${r.goals.length}件を取り込みます。${S.start?`\n（スタート日 ${md(S.start)} より前の記録は取り込みません）`:''}\n\n月のはじまりも家計管理に合わせて「${r.pdBase}日・土日は${r.pdAdj==='prev'?'前':'後'}の平日」にします。よろしいですか？`)){S=JSON.parse(backup);return;}
   S.tx.push(...r.tx);S.recurring.push(...r.rec);
+  // 目標は家計管理の同じ目標を置き換え（自分で足した目標はそのまま）
+  const oldG=S.goals.filter(g=>g.src==='legacy');
+  r.goals.forEach(ng=>{const og=oldG.find(o=>o.lid===ng.lid);if(og){ng.fromAcc=og.fromAcc;ng.toAcc=og.toAcc;ng.icon=og.icon;ng.kind=og.kind;}});
+  S.goals=S.goals.filter(g=>g.src!=='legacy').concat(r.goals);
+  // AI提案のクレジット記録を引き継ぐ（初回のみ）
+  if(data.kakeibo_ai_usd&&!S.ai.usd.fromLegacy){const u=data.kakeibo_ai_usd;S.ai.usd={spent:Number(u.spent)||0,uses:u.uses||[],deposits:u.deposits||[],fromLegacy:true};}
   S.settings.startDay=r.pdBase;S.settings.shift=r.pdAdj;S.settings.nameBy='start';
   S.ui.setupDone=true;S.ui.importedAt=todayStr();save();goToday();
   toast('取り込みました');
@@ -1014,8 +1345,8 @@ async function importLegacyGist(){
   }catch(e){toast(e.message||'読み込めませんでした');}
 }
 function removeLegacy(){
-  if(!confirm('家計管理から取り込んだ記録と固定費をすべて消します（手入力した分は残ります）。よろしいですか？'))return;
-  S.tx=S.tx.filter(t=>t.src!=='legacy');S.recurring=S.recurring.filter(x=>x.src!=='legacy');save();render();
+  if(!confirm('家計管理から取り込んだ記録・固定費・目標をすべて消します（手入力した分は残ります）。よろしいですか？'))return;
+  S.tx=S.tx.filter(t=>t.src!=='legacy');S.recurring=S.recurring.filter(x=>x.src!=='legacy');S.goals=S.goals.filter(g=>g.src!=='legacy');save();render();
 }
 
 // ── バックアップ ──
