@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.2.0';
+const APP_VERSION='v1.3.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -385,13 +385,18 @@ function goalStatus(g){
   return {total,progress,remain:total-progress,future,next:future[0],finish:(last&&last.after<=0)?last.date:null,all,count:all.filter(p=>p.amount>0).length};
 }
 // ── 🐷 貯金分：積立の目標で「口座に貯める」を選んだ分は、その口座の中の貯金として使えるお金と分ける ──
-// たまった額 ＝ 開始時点ですでに貯まっていた額 ＋ その日までの積立（総額まで）
-function savingPots(){return (S.goals||[]).filter(g=>g.kind==='save'&&g.toAcc&&accById(g.toAcc)&&accOf(goalMethod(g))).map(g=>({g,acc:g.toAcc,done:Number(g.done)||0,total:Number(g.total)||0,pays:goalPays(g,'2099-12-31').filter(p=>p.amount>0)}));}
-function savedIn(pots,date,accId){
-  return pots.reduce((s,p)=>{if(accId&&p.acc!==accId)return s;
-    const a=accById(p.acc);if(!a||date<a.openingDate)return s;
-    return s+Math.min(p.total,p.done+p.pays.reduce((t,x)=>t+(x.date<=date?x.amount:0),0));},0);
+// 貯金 ＝ 開始時点ですでに貯まっていた額 ＋ その日までの積立（総額まで） − 「貯金から使う」で記録した支出
+// 「使えるお金に戻す」をした日からは貯金分ではなくなる
+function savingPots(){return (S.goals||[]).filter(g=>g.kind==='save'&&g.toAcc&&accById(g.toAcc)&&accOf(goalMethod(g))).map(g=>({g,acc:g.toAcc,done:Number(g.done)||0,total:Number(g.total)||0,release:g.release||null,
+  pays:goalPays(g,'2099-12-31').filter(p=>p.amount>0),uses:S.tx.filter(t=>t.pot===g.id&&t.type==='out')}));}
+const potById=id=>savingPots().find(p=>p.g.id===id);
+function potSaved(p,date){return Math.min(p.total,p.done+p.pays.reduce((t,x)=>t+(x.date<=date?x.amount:0),0));}
+function potUsed(p,date){return p.uses.reduce((t,x)=>t+(x.date<=date?Number(x.amount)||0:0),0);}
+function potBal(p,date){
+  const a=accById(p.acc);if(!a||date<a.openingDate||(p.release&&date>=p.release))return 0;
+  return Math.max(0,potSaved(p,date)-potUsed(p,date));
 }
+function savedIn(pots,date,accId){return pots.reduce((s,p)=>accId&&p.acc!==accId?s:s+potBal(p,date),0);}
 // 引き落とし日が from〜to に入るカード払いの各回
 function charges(from,to){
   const f=pd(from);const pf=ds(new Date(f.getFullYear(),f.getMonth()-30,1));
@@ -483,8 +488,8 @@ function cashPeriod(s,e){
 }
 function budgetUse(s,e){
   const byCat={};let all=0;
-  // そのカテゴリの支出はすべて（固定費も）数える。目標は予算の外
-  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal)return;all+=x.amount;byCat[x.cat]=(byCat[x.cat]||0)+x.amount;});
+  // そのカテゴリの支出はすべて（固定費も）数える。目標と🐷貯金から使った分は予算の外
+  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal||(x.pot&&goalById(x.pot)))return;all+=x.amount;byCat[x.cat]=(byCat[x.cat]||0)+x.amount;});
   return {byCat,all};
 }
 // 予算の内訳（項目）：項目ごとに金額と払い方を決め、記録で選んだ分を「使った」として積み上げる
@@ -691,6 +696,7 @@ function entryRow(x){
   let sub=mName(x.method);
   if(card&&x.type==='out'){const ps=portions(x,card);sub+=` → ${md(ps[0].date)}引落${ps.length>1?`（${ps.length}回払い）`:''}`;}
   if(x.rec)sub='🔁 固定費・'+sub;
+  if(x.pot){const g=goalById(x.pot);sub='🐷 '+(g?g.name:'貯金')+'から・'+sub;}
   if(x.plan){const [pid,pk]=x.plan.split('@');const it=(budgetOf(pk).items||[]).find(i=>i.id===pid);sub='📌 '+(it?it.name:'予算')+'・'+sub;}
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
@@ -778,7 +784,12 @@ function renderInput(){
       if(br.has){const its=planItems(bk);
         h+=`<div class="fld" style="margin:8px 0 0"><label>📊 予算から使う（タップで選ぶ）</label><div class="chips" style="margin:2px 0">
           ${its.map(it=>`<button class="chip ${F.plan===it.id+'@'+bk?'on':''}" onclick="pickPlan('${it.id}@${bk}')">📌 ${esc(it.name)} 残り${fmt((Number(it.amount)||0)-it.used)}</button>`).join('')}
-          ${Object.keys(br.cats).map(k=>{const c=catById(k),d=br.cats[k];return `<button class="chip ${!F.plan&&F.cat===k?'on':''}" onclick="F.plan=null;setF('cat','${k}')">${c.icon} ${esc(c.name)} 残り${fmt(d.B-d.U)}</button>`;}).join('')}</div></div>`;}}
+          ${Object.keys(br.cats).map(k=>{const c=catById(k),d=br.cats[k];return `<button class="chip ${!F.plan&&!F.pot&&F.cat===k?'on':''}" onclick="F.plan=null;F.pot=null;setF('cat','${k}')">${c.icon} ${esc(c.name)} 残り${fmt(d.B-d.U)}</button>`;}).join('')}</div></div>`;}
+      // 🐷 貯金から使う（その日の貯金の残り。編集中の記録の分は戻して表示）
+      const pots=savingPots().filter(p=>p.g.id===F.pot||potBal(p,F.date)>0||(F.id&&p.uses.some(u=>u.id===F.id)));
+      if(pots.length)h+=`<div class="fld" style="margin:8px 0 0"><label>🐷 貯金から使う（予算の外・その口座の貯金が減ります）</label><div class="chips" style="margin:2px 0">
+        ${pots.map(p=>{const own=p.uses.filter(u=>u.id===F.id&&u.date<=F.date).reduce((a,u)=>a+(Number(u.amount)||0),0);
+          return `<button class="chip ${F.pot===p.g.id?'on':''}" onclick="pickPot('${p.g.id}')">${esc(p.g.icon||'🐷')} ${esc(p.g.name)} 残り${fmt(potBal(p,F.date)+own)}</button>`;}).join('')}</div></div>`;}
     h+=`<div class="chips">${cats.map(c=>`<button class="chip ${F.cat===c.id?'on':''}" onclick="setF('cat','${c.id}')">${c.icon} ${esc(c.name)}</button>`).join('')}</div>
       <div class="chips">${methods.map(m=>`<button class="chip ${F.method===m?'on':''}" onclick="setF('method','${m}')">${esc(mName(m))}</button>`).join('')}</div>`;
     if(cardOf(F.method)&&F.type==='out'){
@@ -792,10 +803,17 @@ function renderInput(){
   ${F.id?`<button class="btn del" style="margin-top:10px" onclick="delTx()">この記録を削除</button>`:''}`;
   document.getElementById('sheetIn').innerHTML=h;
 }
+function pickPot(id){
+  if(F.pot===id){F.pot=null;renderInput();return;}
+  const p=potById(id);if(!p)return;F.pot=id;F.plan=null;
+  // 払い方は貯金のある口座にしておく（カードで払ったなら選び直せる）
+  if(!F.id&&!cardOf(F.method))F.method='a:'+p.acc;
+  if(!F.memo)F.memo=p.g.name;renderInput();
+}
 function pickPlan(pk){
   if(F.plan===pk){F.plan=null;renderInput();return;}
   const [id,key]=pk.split('@');const it=(budgetOf(key).items||[]).find(x=>x.id===id);if(!it)return;
-  F.plan=pk;F.cat=it.cat;if(!F.memo)F.memo=it.name;
+  F.plan=pk;F.pot=null;F.cat=it.cat;if(!F.memo)F.memo=it.name;
   if(it.method&&(cardOf(it.method)||accOf(it.method)))F.method=it.method;F.count=1;renderInput();
 }
 function saveTx(){
@@ -806,7 +824,7 @@ function saveTx(){
   if(F.src)t.src=F.src;
   if(F.type==='move'){if(!F.from||!F.to||F.from===F.to){toast('別々の口座を選んでください');return;}t.from=F.from;t.to=F.to;}
   else{if(!F.method){toast('支払い方法を選んでください');return;}t.cat=F.cat;t.method=F.method;t.count=cardOf(F.method)&&F.type==='out'?Number(F.count)||1:1;
-    if(F.type==='out'){S.ui.lastMethod=F.method;S.ui.lastCat=F.cat;if(F.plan)t.plan=F.plan;}}
+    if(F.type==='out'){S.ui.lastMethod=F.method;S.ui.lastCat=F.cat;if(F.plan)t.plan=F.plan;else if(F.pot)t.pot=F.pot;}}
   const i=S.tx.findIndex(x=>x.id===t.id);if(i>=0)S.tx[i]=t;else S.tx.push(t);
   save();closeSheet();sel=t.date;curKey=periodKeyOf(t.date);render();toast('保存しました');
 }
@@ -942,8 +960,8 @@ function renderFc(){
         <div><div class="muted">口座・財布の合計</div><b>${Y(f.total)}</b></div>
         <div><div class="muted">使えるお金</div><b class="${f.use<0?'out':''}">${Y(f.use)}</b></div>
         <div><div class="muted">🐷貯金</div><b>${Y(f.saved)}</b></div></div>
-      ${pots.map(p=>{const now=savedIn([p],todayStr()),end=savedIn([p],H);return `<div class="li tap" onclick="setTab('goal')"><div class="ic">${esc(p.g.icon||'🐷')}</div><div class="t"><b>${esc(p.g.name)}</b><small>🏦${esc((accById(p.acc)||{}).name||'')}の中・${md(H)}には ${fmt(end)}円</small></div><div class="a">${Y(now)}<small>いま</small></div></div>`;}).join('')}
-      <div class="note">積立の目標で「どこへ貯める」に口座を選んだ分は、その口座の中の貯金として、使っていい額から外しています。</div></div>`;}
+      ${pots.filter(p=>!p.release||p.release>todayStr()).map(p=>{const t=todayStr(),now=potBal(p,t),end=potBal(p,H),used=potUsed(p,t);return `<div class="li tap" onclick="setTab('goal')"><div class="ic">${esc(p.g.icon||'🐷')}</div><div class="t"><b>${esc(p.g.name)}</b><small>🏦${esc((accById(p.acc)||{}).name||'')}の中${used?`・使った ${fmt(used)}円`:''}・${md(H)}には ${fmt(end)}円</small></div><div class="a">${Y(now)}<small>いま</small></div></div>`;}).join('')}
+      <div class="note">積立の目標で「どこへ貯める」に口座を選んだ分は、その口座の中の貯金として、使っていい額から外しています。貯金を使うときは、記録で「🐷 貯金から使う」を選ぶとその分だけ貯金が減ります。</div></div>`;}
   h+=`<div class="card"><h3>🏦 口座ごと（タップで絞り込み）</h3>${S.accounts.map(a=>{const mn=f.accMin[a.id];const end=f.accEnd[a.id];
       return `<div class="li tap" onclick="fcAcc=fcAcc==='${a.id}'?null:'${a.id}';render()" style="${fcAcc===a.id?'background:var(--pri2);border-radius:10px':''}"><div class="ic">${a.type==='wallet'?'👛':'🏦'}</div>
       <div class="t"><b>${esc(a.name)}</b><small>${f.accSaved[a.id]?`うち🐷貯金 ${fmt(f.accSaved[a.id])}円・`:''}${md(H)}には ${end!=null?fmt(end)+'円':'—'}${f.accSavedEnd[a.id]?`（🐷${fmt(f.accSavedEnd[a.id])}）`:''}${mn&&mn.v<(f.bal[a.id]||0)?`・最低 <span class="${mn.v<0?'out':''}">${fmt(mn.v)}円（${md(mn.date)}）</span>`:''}</small></div>
@@ -1279,6 +1297,7 @@ function renderGoals(){
       <div class="bar"><i style="width:${pct}%"></i></div><div class="muted">${pct}% 達成</div>
       <div class="li" style="margin-top:6px"><div class="ic">📅</div><div class="t"><b>毎月 ${Y(g.monthly)}</b>
         <small>${g.day==='end'?'末日':g.day+'日'}${g.adjust&&g.adjust!=='none'?`（土日祝は${g.adjust==='prev'?'前':'後'}）`:''}・${esc(mName(gm))}${cardOf(gm)?'で払う':'から'}${ta&&g.kind==='save'&&!cardOf(gm)?(accOf(gm)&&accOf(gm).id===ta.id?'（口座の中で取り分け）':` ${esc(ta.name)}へ`):''}</small></div></div>
+      ${potCard(g)}
       ${(g.extra||[]).length?`<div class="li"><div class="ic">🎁</div><div class="t"><b>臨時の支払い</b><small>${g.extra.map(x=>`${md(x.date)} ${fmt(x.amount)}円`).join('、')}</small></div></div>`:''}
       ${st.next?`<div class="li"><div class="ic">⏭️</div><div class="t"><b>次回 ${md(st.next.date)}　${Y(st.next.amount)}</b><small>あと${st.future.length}回${st.finish?`・${ymLabel(st.finish)}に完了予定`:'・この予定では払い終わりません'}</small></div></div>`:done?'':`<div class="muted" style="margin-top:6px">${Number(g.monthly)>0?'開始日が未設定です':'毎月の支払いはありません。ボーナスなどで払う日と額は「編集」→「臨時の支払い」で入れると、ここに並びます。'}</div>`}
       ${st.future.length?`<button class="btn sub sm" style="margin-top:6px" onclick="openGoal['${g.id}']=!openGoal['${g.id}'];render()">${openGoal[g.id]?'予定表を閉じる':'この先の予定表を見る'}</button>`:''}
@@ -1292,6 +1311,21 @@ function renderGoals(){
   h+=`<button class="addbtn" onclick="editGoal()">＋ 目標を追加</button>`;
   return h;
 }
+// 目標カードの🐷貯金欄：口座の中にいまいくら残っているか・使った額・使えるお金に戻す
+function potCard(g){
+  const p=potById(g.id);if(!p)return '';const t=todayStr();const used=potUsed(p,t);const a=accById(p.acc)||{};
+  if(p.release&&p.release<=t)return `<div class="li"><div class="ic">🐷</div><div class="t" style="white-space:normal"><b>貯金の取り分けは終了</b><small style="white-space:normal">${md(p.release)}に残り（${fmt(Math.max(0,potSaved(p,p.release)-potUsed(p,p.release)))}円）を使えるお金に戻しました</small></div><button class="btn sm sub" onclick="unreleasePot('${g.id}')">元に戻す</button></div>`;
+  const bal=potBal(p,t);
+  return `<div class="li"><div class="ic">🐷</div><div class="t" style="white-space:normal"><b>${esc(a.name||'')}の中の貯金 ${Y(bal)}</b><small style="white-space:normal">${used?`たまった ${fmt(potSaved(p,t))}円 − 使った ${fmt(used)}円・`:''}使うときは記録で「🐷 貯金から使う」を選ぶ</small></div>
+    ${bal>0?`<button class="btn sm sub" onclick="releasePot('${g.id}')">使えるお金に戻す</button>`:''}</div>`;
+}
+function releasePot(id){
+  const g=goalById(id);const p=potById(id);if(!g||!p)return;
+  const st=goalStatus(g);
+  if(!confirm(`「${g.name}」の貯金の残り ${fmt(potBal(p,todayStr()))}円 を、今日から使えるお金に戻しますか？${st.remain>0?'\n（まだ目標に届いていません。この先の積立も貯金分としては数えなくなります）':''}`))return;
+  g.release=todayStr();save();render();toast('使えるお金に戻しました');
+}
+function unreleasePot(id){const g=goalById(id);if(!g)return;delete g.release;save();render();}
 function editGoal(id){
   const bank=(S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id;
   const g=id?goalById(id):{name:'',icon:'🎯',kind:'debt',total:0,done:0,monthly:0,day:S.settings.startDay||15,adjust:S.settings.shift||'none',start:todayStr(),method:'a:'+bank,toAcc:''};
