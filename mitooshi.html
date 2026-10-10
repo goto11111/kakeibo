@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.0.0';
+const APP_VERSION='v1.0.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -208,7 +208,7 @@ function defaultCats(){return [
   {id:'salary',icon:'💴',name:'給料',kind:'in'},{id:'bonus',icon:'🎁',name:'臨時収入',kind:'in'},
   {id:'refund',icon:'↩️',name:'返金',kind:'in'},{id:'otherin',icon:'📥',name:'その他収入',kind:'in'}
 ];}
-// 既存「家計管理」(index.html) の決済サイクル設定を読み取り専用で参照（書き換えはしない）
+// 既存「家計管理」(kakeibo.html) の決済サイクル設定を読み取り専用で参照（書き換えはしない）
 function legacyCardCycles(){
   const def={'PayPayカード':{close:'end',offset:1,payDay:27},'リクルートカード':{close:15,offset:1,payDay:10},
     '三井住友カード':{close:'end',offset:1,payDay:26},'オリコカード':{close:'end',offset:1,payDay:27}};
@@ -1107,7 +1107,7 @@ function renderSet(){
     ${S.start?`<div class="muted" style="margin-bottom:6px">いまのスタート日：<b>${md(S.start)}</b>${(S.startBills||[]).length?`・スタート前の請求 ${S.startBills.length}件`:''}</div>`:''}
     <button class="btn" onclick="openRestart()">${S.start?'スタート時の設定を見直す':'仕切り直しを始める'}</button></div>
   <div class="card"><h3>📥 既存の家計管理から取り込む</h3>
-    <div class="note" style="margin-bottom:8px">家計管理（index.html）の月データ・固定費・給料・目標・カード設定・AIのクレジット記録を読み取って、この家計簿の記録に変換します。家計管理側のデータは読むだけで、書き換えません。もう一度取り込むと、前回取り込んだ分は入れ替わります（ここで手入力した記録はそのまま）。</div>
+    <div class="note" style="margin-bottom:8px">家計管理（kakeibo.html）の月データ・固定費・給料・目標・カード設定・AIのクレジット記録を読み取って、この家計簿の記録に変換します。家計管理側のデータは読むだけで、書き換えません。もう一度取り込むと、前回取り込んだ分は入れ替わります（ここで手入力した記録はそのまま）。</div>
     ${legacyLocalAvailable()?`<button class="btn" onclick="importLegacyLocal()">この端末の家計管理データから取り込む</button>`:`<div class="muted">この端末（このアドレス）には家計管理のデータが見つかりません。GitHub Pages の家計管理と同じ場所で開くと、ボタン一つで取り込めます。</div>`}
     <div class="fld" style="margin-top:10px"><label>クラウド（Gist）から取り込む：Gist ID</label><div class="row"><input id="lgGist" value="${esc(lsGet('gh_gist_id'))}" placeholder="家計管理の設定にある Gist ID"><button class="btn sm" onclick="importLegacyGist()">取り込む</button></div></div>
     <details style="margin-top:6px"><summary class="muted">バックアップの中身（JSON）を貼り付けて取り込む</summary><textarea id="lgPaste" rows="4" style="width:100%;margin-top:6px;font:12px monospace;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);padding:8px" placeholder='{"version":2,"kakeibo_settings":...}'></textarea><button class="btn sub sm" style="margin-top:6px" onclick="importLegacyPaste()">貼り付けた内容で取り込む</button></details>
@@ -1116,7 +1116,7 @@ function renderSet(){
     <div class="grid2"><button class="btn sub" onclick="exportJSON()">バックアップを保存</button><button class="btn sub" onclick="document.getElementById('fileIn').click()">バックアップから戻す</button></div>
     <button class="btn sub" style="margin-top:8px" onclick="exportCSV()">記録をCSVで書き出す</button>
     <button class="btn del" style="margin-top:8px" onclick="resetAll()">すべて消して最初から</button></div>
-  <div class="muted" style="text-align:center;margin:10px 0 20px">見通し家計簿 ${APP_VERSION}・<a href="index.html" style="color:var(--pri)">家計管理へ</a></div>`;
+  <div class="muted" style="text-align:center;margin:10px 0 20px">見通し家計簿 ${APP_VERSION}・<a href="kakeibo.html" style="color:var(--pri)">以前の家計管理へ</a></div>`;
   return h;
 }
 function setS(k,v){S.settings[k]=v;save();curKey=periodKeyOf(sel||todayStr());render();}
@@ -1498,7 +1498,7 @@ async function generateAI(){
   }catch(e){local();}
 }
 
-// ── 既存「家計管理」(index.html) からの取り込み（読み取りのみ）──
+// ── 既存「家計管理」(kakeibo.html) からの取り込み（読み取りのみ）──
 function lsGet(k){try{return localStorage.getItem(k)||'';}catch(e){return '';}}
 function legacyLocalAvailable(){try{for(let i=0;i<localStorage.length;i++)if(/^kakeibo_\d{4}_\d{2}$/.test(localStorage.key(i)||''))return true;}catch(e){}return false;}
 function legacyCollectLocal(){
