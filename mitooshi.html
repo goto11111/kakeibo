@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.1.0';
+const APP_VERSION='v0.2.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -295,13 +295,14 @@ function recDates(r,from,to){
   const s=r.start>from?r.start:from;const e=(r.end&&r.end<to)?r.end:to;
   if(!r.start||s>e)return [];
   const res=[];
-  if(r.every==='month'){
+  if(r.every==='month'||r.every==='year'){
     let d=pd(s);let y=d.getFullYear(),m=d.getMonth();const ed=pd(e);
     // 調整で前月にずれる分を拾うため1か月前から
     m--;
     for(let g=0;g<400;g++){
       const yy=y+Math.floor(m/12),m0=((m%12)+12)%12;
       if(new Date(yy,m0,1)>addDays(ed,31))break;
+      if(r.every==='year'&&m0+1!==Number(r.month)){m++;continue;}
       const L=lastDay(yy,m0);const day=r.day==='end'?L:Math.min(Number(r.day)||1,L);
       const x=ds(adjust(new Date(yy,m0,day),r.adjust||'none'));
       if(x>=s&&x<=e&&x>=r.start)res.push(x);
@@ -586,6 +587,7 @@ function saveTx(){
   if(amount<=0){toast('金額を入力してください');return;}
   if(!F.date){toast('日付を入れてください');return;}
   const t={id:F.id||uid(),date:F.date,type:F.type,amount,memo:(F.memo||'').trim()};
+  if(F.src)t.src=F.src;
   if(F.type==='move'){if(!F.from||!F.to||F.from===F.to){toast('別々の口座を選んでください');return;}t.from=F.from;t.to=F.to;}
   else{if(!F.method){toast('支払い方法を選んでください');return;}t.cat=F.cat;t.method=F.method;t.count=cardOf(F.method)&&F.type==='out'?Number(F.count)||1:1;
     if(F.type==='out'){S.ui.lastMethod=F.method;S.ui.lastCat=F.cat;}}
@@ -755,6 +757,7 @@ const dayOpts=(v,withEnd)=>[...Array(31)].map((_,i)=>`<option value="${i+1}" ${S
 const HOL={next:'翌営業日にずらす',prev:'前営業日にずらす',none:'ずらさない'};
 function cardRule(c){return `${c.close==='end'?'末日':c.close+'日'}締め・${c.payMonth==2?'翌々月':'翌月'}${c.payDay==='end'?'末日':c.payDay+'日'}払い（土日祝は${c.holiday==='prev'?'前':c.holiday==='none'?'そのまま':'翌営業日'}）`;}
 function everyLabel(r){
+  if(r.every==='year')return `毎年${r.month}月${r.day==='end'?'末日':r.day+'日'}`;
   if(r.every==='month')return `毎月${r.day==='end'?'末日':r.day+'日'}${r.adjust&&r.adjust!=='none'?`（土日祝は${r.adjust==='prev'?'前':'後'}）`:''}`;
   if(r.every==='week')return `毎週${WD[pd(r.start).getDay()]}曜`;if(r.every==='2week')return `2週ごと（${WD[pd(r.start).getDay()]}曜）`;return `${r.n}日ごと`;
 }
@@ -777,6 +780,12 @@ function renderSet(){
     <button class="addbtn" onclick="editRec()">＋ 固定費・定期収入を追加</button></div>
   <div class="card"><h3>🏷️ カテゴリ</h3><div class="chips">${S.cats.map(c=>`<button class="chip" onclick="editCat('${c.id}')">${c.icon} ${esc(c.name)}${c.kind==='in'?'（収入）':''}</button>`).join('')}</div>
     <button class="addbtn" onclick="editCat()">＋ カテゴリを追加</button></div>
+  <div class="card"><h3>📥 既存の家計管理から取り込む</h3>
+    <div class="note" style="margin-bottom:8px">家計管理（index.html）の月データ・固定費・給料・積立・カード設定を読み取って、この家計簿の記録に変換します。家計管理側のデータは読むだけで、書き換えません。もう一度取り込むと、前回取り込んだ分は入れ替わります（ここで手入力した記録はそのまま）。</div>
+    ${legacyLocalAvailable()?`<button class="btn" onclick="importLegacyLocal()">この端末の家計管理データから取り込む</button>`:`<div class="muted">この端末（このアドレス）には家計管理のデータが見つかりません。GitHub Pages の家計管理と同じ場所で開くと、ボタン一つで取り込めます。</div>`}
+    <div class="fld" style="margin-top:10px"><label>クラウド（Gist）から取り込む：Gist ID</label><div class="row"><input id="lgGist" value="${esc(lsGet('gh_gist_id'))}" placeholder="家計管理の設定にある Gist ID"><button class="btn sm" onclick="importLegacyGist()">取り込む</button></div></div>
+    <details style="margin-top:6px"><summary class="muted">バックアップの中身（JSON）を貼り付けて取り込む</summary><textarea id="lgPaste" rows="4" style="width:100%;margin-top:6px;font:12px monospace;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);padding:8px" placeholder='{"version":2,"kakeibo_settings":...}'></textarea><button class="btn sub sm" style="margin-top:6px" onclick="importLegacyPaste()">貼り付けた内容で取り込む</button></details>
+    ${S.tx.some(t=>t.src==='legacy')||S.recurring.some(r=>r.src==='legacy')?`<button class="btn del sm" style="margin-top:8px" onclick="removeLegacy()">取り込んだ分をすべて消す</button>`:''}</div>
   <div class="card"><h3>💾 データ</h3><div class="note" style="margin-bottom:8px">記録はこの端末（ブラウザ）の中だけに保存されます。既存の「家計管理」とは別のデータで、あちらには一切書き込みません。機種変更やブラウザのデータ削除に備えてバックアップを取ってください。</div>
     <div class="grid2"><button class="btn sub" onclick="exportJSON()">バックアップを保存</button><button class="btn sub" onclick="document.getElementById('fileIn').click()">バックアップから戻す</button></div>
     <button class="btn sub" style="margin-top:8px" onclick="exportCSV()">記録をCSVで書き出す</button>
@@ -848,8 +857,8 @@ function editRec(id){
   sheet(id?'固定費・定期収入を編集':'固定費・定期収入を追加',`<div class="seg" id="rType">${[['out','支出（固定費）'],['in','収入（給料など）']].map(([k,l])=>`<button class="${r.type===k?'on':''}" onclick="recType('${k}')">${l}</button>`).join('')}</div>
     <div class="row"><div class="fld sp"><label>名前</label><input id="rName" value="${esc(r.name)}" placeholder="例：家賃、給料"></div><div class="fld sp"><label>金額</label><input id="rAmt" type="number" inputmode="numeric" value="${r.amount||''}"></div></div>
     <div class="row"><div class="fld sp"><label>カテゴリ</label><select id="rCat">${catOpts(r.type)}</select></div><div class="fld sp"><label>支払い方法・入金先</label><select id="rMethod">${methodOpts(r.type)}</select></div></div>
-    <div class="fld"><label>くり返し</label><select id="rEvery" onchange="recEvery()">${[['month','毎月'],['week','毎週'],['2week','2週ごと'],['ndays','◯日ごと']].map(([k,l])=>`<option value="${k}" ${r.every===k?'selected':''}>${l}</option>`).join('')}</select></div>
-    <div class="row" id="rMonthRow"><div class="fld sp"><label>日</label><select id="rDay">${dayOpts(r.day,true)}</select></div><div class="fld sp"><label>土日祝のとき</label><select id="rAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${r.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div></div>
+    <div class="fld"><label>くり返し</label><select id="rEvery" onchange="recEvery()">${[['month','毎月'],['year','毎年'],['week','毎週'],['2week','2週ごと'],['ndays','◯日ごと']].map(([k,l])=>`<option value="${k}" ${r.every===k?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="row" id="rMonthRow"><div class="fld sp" id="rMonWrap"><label>月</label><select id="rMon">${[...Array(12)].map((_,i)=>`<option value="${i+1}" ${Number(r.month)===i+1?'selected':''}>${i+1}月</option>`).join('')}</select></div><div class="fld sp"><label>日</label><select id="rDay">${dayOpts(r.day,true)}</select></div><div class="fld sp"><label>土日祝のとき</label><select id="rAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${r.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div></div>
     <div class="fld" id="rNRow"><label>何日ごと</label><input id="rN" type="number" value="${r.n||10}"></div>
     <div class="row"><div class="fld sp"><label>いつから（毎週・◯日ごとはこの日が基準）</label><input id="rStart" type="date" value="${r.start}"></div><div class="fld sp"><label>いつまで（任意）</label><input id="rEnd" type="date" value="${r.end||''}"></div></div>
     <button class="btn" style="margin-top:6px" onclick="saveRec('${id||''}')">保存</button>${id?`<button class="btn del" style="margin-top:8px" onclick="delRec('${id}')">削除</button>`:''}`);
@@ -859,11 +868,11 @@ function recType(t){
   window._recT=t;document.querySelectorAll('#rType button').forEach((b,i)=>b.classList.toggle('on',(i===0)===(t==='out')));
   document.getElementById('rCat').innerHTML=window._recCO(t);document.getElementById('rMethod').innerHTML=window._recMO(t);
 }
-function recEvery(){const v=document.getElementById('rEvery').value;document.getElementById('rMonthRow').style.display=v==='month'?'flex':'none';document.getElementById('rNRow').style.display=v==='ndays'?'block':'none';}
+function recEvery(){const v=document.getElementById('rEvery').value;document.getElementById('rMonthRow').style.display=(v==='month'||v==='year')?'flex':'none';document.getElementById('rMonWrap').style.display=v==='year'?'block':'none';document.getElementById('rNRow').style.display=v==='ndays'?'block':'none';}
 function saveRec(id){
   const v=x=>document.getElementById(x).value;
   const o={name:v('rName').trim(),type:window._recT,amount:Number(v('rAmt'))||0,cat:v('rCat'),method:v('rMethod'),every:v('rEvery'),
-    day:v('rDay')==='end'?'end':Number(v('rDay')),adjust:v('rAdj'),n:Math.max(1,Number(v('rN'))||10),start:v('rStart')||todayStr(),end:v('rEnd')||''};
+    day:v('rDay')==='end'?'end':Number(v('rDay')),month:Number(v('rMon'))||1,adjust:v('rAdj'),n:Math.max(1,Number(v('rN'))||10),start:v('rStart')||todayStr(),end:v('rEnd')||''};
   if(!o.name||o.amount<=0){toast('名前と金額を入れてください');return;}
   if(o.end&&o.end<o.start){toast('終わりの日が始まりより前です');return;}
   if(id){const r=S.recurring.find(x=>x.id===id);Object.assign(r,o);}else S.recurring.push(Object.assign({id:uid(),ex:{}},o));
@@ -884,6 +893,129 @@ function saveCat(id){
 function delCat(id){
   if(S.tx.some(t=>t.cat===id)||S.recurring.some(r=>r.cat===id)){toast('使っている記録があるので削除できません');return;}
   if(!confirm('削除しますか？'))return;S.cats=S.cats.filter(c=>c.id!==id);save();closeSheet();render();
+}
+
+// ── 既存「家計管理」(index.html) からの取り込み（読み取りのみ）──
+function lsGet(k){try{return localStorage.getItem(k)||'';}catch(e){return '';}}
+function legacyLocalAvailable(){try{for(let i=0;i<localStorage.length;i++)if(/^kakeibo_\d{4}_\d{2}$/.test(localStorage.key(i)||''))return true;}catch(e){}return false;}
+function legacyCollectLocal(){
+  const d={};for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(!k||!k.startsWith('kakeibo_'))continue;
+    try{d[k]=JSON.parse(localStorage.getItem(k));}catch(e){}}
+  return d;
+}
+// 家計管理と同じ給料日の決め方（基準日が土日なら前／後の平日。祝日は見ない）
+function legacyPayDate(y,m0,st){
+  let base=(st&&st.payDay!=null&&st.payDay!=='')?Number(st.payDay):15;if(!(base>=1))base=15;if(base>31)base=31;
+  const fwd=st&&st.payShift==='fwd';const L=lastDay(y,m0);let d=Math.min(base,L);
+  const we=x=>{const w=new Date(y,m0,x).getDay();return w===0||w===6;};
+  for(let g=0;g<10&&we(d);g++){if(fwd){d++;if(d>L){d=L;while(we(d)&&d>1)d--;break;}}else{d--;if(d<1){d=1;while(we(d)&&d<L)d++;break;}}}
+  return `${y}-${pad(m0+1)}-${pad(d)}`;
+}
+function legacyAdopted(it){
+  const mk=(Number(it.mikomi)||0)||(Number(it.budget)||0);
+  if(it.confirmed){if(it.amount==null||it.amount==='')return mk;return Number(it.amount)||0;}
+  const a=Number(it.amount)||0;return mk>a?mk:a;
+}
+function legacyFixedCat(name){
+  const n=String(name||'');
+  const rules=[[/携帯|ネット|スマホ|アニメ|AI|サブスク|Netflix|Spotify|Prime|通信/i,'tel'],[/水道|ガス|電気|家賃|光熱/,'house'],
+    [/ガソリン|車|駐車|保険|高速/,'car'],[/たばこ|タバコ/,'tobacco'],[/髪|美容|服/,'cloth'],[/奨学金|返す|返済|ローン/,'repay']];
+  for(const [re,c] of rules)if(re.test(n))return c;return 'fixed';
+}
+function ensureCat(id,icon,name,kind){if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});}
+function convertLegacy(data){
+  const months=Object.keys(data).filter(k=>/^kakeibo_\d{4}_\d{2}$/.test(k)&&data[k]&&typeof data[k]==='object').sort();
+  if(!months.length)throw new Error('家計管理の月データが見つかりません');
+  const settings=data.kakeibo_settings||{};const goals=Array.isArray(data.kakeibo_goals)?data.kakeibo_goals:[];
+  const scheds=data.kakeibo_schedules||{};const schedDate={};
+  Object.values(scheds).forEach(arr=>(arr||[]).forEach(s=>{if(s&&s.schedId&&s.startISO)schedDate[s.schedId]=s.startISO;}));
+  ensureCat('free','🎈','自由費','out');ensureCat('fixed','📌','固定費','out');ensureCat('repay','💸','返済','out');ensureCat('saving','🐷','積立','out');
+  // カード：家計管理の設定に合わせて不足分を追加
+  const bank=(S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id;const wallet=(S.accounts.find(a=>a.type==='wallet')||{}).id||bank;
+  const def={'PayPayカード':{close:'end',offset:1,payDay:27},'リクルートカード':{close:15,offset:1,payDay:10},'三井住友カード':{close:'end',offset:1,payDay:26},'オリコカード':{close:'end',offset:1,payDay:27}};
+  const cyc=Object.assign({},def,settings.cardCycles||{});
+  Object.keys(cyc).forEach(n=>{if(cyc[n]&&!['現金','口座振替','PayPayチャージ','その他'].includes(n)&&!S.cards.some(c=>c.name===n))S.cards.push(cardFromLegacy({name:n,c:cyc[n]},S.cards.length,bank));});
+  const method=pay=>{const c=S.cards.find(x=>x.name===pay);if(c)return 'c:'+c.id;if(pay==='現金')return 'a:'+wallet;return 'a:'+bank;};
+  const goalCat=g=>/返済|借金|ローン/.test(g&&g.name||'')?'repay':'saving';
+  const tx=[];const add=(date,type,amount,cat,m,memo)=>{amount=Math.round(Number(amount)||0);if(amount<=0||!/^\d{4}-\d{2}-\d{2}$/.test(date||''))return;
+    tx.push({id:uid(),src:'legacy',date,type,amount,cat,method:m,count:1,memo});};
+  const savedByGoal={};
+  months.forEach(k=>{
+    const [,y,mm]=k.match(/^kakeibo_(\d{4})_(\d{2})$/);const Y=Number(y),M0=Number(mm)-1;const kym=Y*100+M0+1;const st=data[k];
+    const pday=legacyPayDate(Y,M0,st);
+    add(pday,'in',st.salary,'salary','a:'+bank,'給料');
+    (st.fixed||[]).forEach(f=>{
+      if(f.startMonth&&Number(f.startMonth)>kym)return;
+      const pm=Number(f.payMonth)||0;if(pm>=1&&pm<=12&&pm!==M0+1)return;
+      let date=pday;if(pm){const L=lastDay(Y,M0);date=`${Y}-${pad(M0+1)}-${pad(Math.min(Math.max(Number(f.payDay)||1,1),L))}`;}
+      add(date,'out',legacyAdopted(f),legacyFixedCat(f.name),method(f.pay),f.name+(f.confirmed?'':'（見込み）'));
+    });
+    (st.expenses||[]).forEach(e=>{
+      const total=legacyAdopted(e);const cat=e.cat==='食費'?'food':'free';const m=method(e.pay);const nm=e.name||(e.cat||'支出');
+      const base=(e.schedId&&schedDate[e.schedId])||e.addedAt||pday;
+      let used=0;(e.history||[]).forEach(h=>{const a=Number(h.amt)||0;if(a>0&&h.date&&used+a<=total){add(String(h.date).slice(0,10),'out',a,cat,m,nm+(h.memo?'・'+h.memo:''));used+=a;}});
+      add(String(base).slice(0,10),'out',total-used,cat,m,nm+(e.confirmed?'':'（見込み）'));
+      if(e.refundDate)add(String(e.refundDate).slice(0,10),'in',e.refundAmt!=null?e.refundAmt:total,'refund','a:'+bank,nm+' 返金');
+    });
+    Object.entries(st.goalSavings||{}).forEach(([gid,v])=>{const g=goals.find(x=>x.id===gid)||{name:'積立'};
+      savedByGoal[gid]=(savedByGoal[gid]||0)+(Number(v)||0);add(pday,'out',v,goalCat(g),'a:'+bank,g.name);});
+  });
+  // 最後の月より先は「固定費・定期収入」として続ける
+  const last=months[months.length-1].match(/^kakeibo_(\d{4})_(\d{2})$/);const lastSt=data[months[months.length-1]];
+  const nx=new Date(Number(last[1]),Number(last[2]),1);const start=ds(nx);
+  const pdBase=(lastSt&&Number(lastSt.payDay))||15;const pdAdj=lastSt&&lastSt.payShift==='fwd'?'next':'prev';
+  const rec=[];const addRec=o=>rec.push(Object.assign({id:uid(),src:'legacy',ex:{},n:10,adjust:'none',start,end:''},o));
+  const salary=Number(settings.salary!=null?settings.salary:(lastSt&&lastSt.salary))||0;
+  if(salary>0)addRec({name:'給料',type:'in',amount:salary,cat:'salary',method:'a:'+bank,every:'month',day:pdBase,adjust:pdAdj});
+  (Array.isArray(settings.fixed)?settings.fixed:(lastSt&&lastSt.fixed)||[]).forEach(f=>{
+    const amt=Number(f.budget)||0;if(amt<=0)return;const pm=Number(f.payMonth)||0;
+    let st2=start;if(f.startMonth){const sm=String(f.startMonth);const sd=`${sm.slice(0,4)}-${sm.slice(4,6)}-01`;if(sd>st2)st2=sd;}
+    if(pm>=1&&pm<=12)addRec({name:f.name,type:'out',amount:amt,cat:legacyFixedCat(f.name),method:method(f.pay),every:'year',month:pm,day:Number(f.payDay)||1,start:st2});
+    else addRec({name:f.name,type:'out',amount:amt,cat:legacyFixedCat(f.name),method:method(f.pay),every:'month',day:pdBase,adjust:pdAdj,start:st2});
+  });
+  goals.forEach(g=>{const mo=Number(g.monthly)||0;if(mo<=0)return;
+    const remain=(Number(g.startRemaining!=null?g.startRemaining:g.total)||0)-(savedByGoal[g.id]||0);if(remain<=0)return;
+    const n=Math.ceil(remain/mo);const end=ds(new Date(nx.getFullYear(),nx.getMonth()+n-1,28));
+    addRec({name:g.name,type:'out',amount:mo,cat:goalCat(g),method:'a:'+bank,every:'month',day:pdBase,adjust:pdAdj,end});
+  });
+  return {tx,rec,months,pdBase,pdAdj};
+}
+function applyLegacy(data,label){
+  let r;const backup=JSON.stringify(S);
+  try{
+    S.tx=S.tx.filter(t=>t.src!=='legacy');S.recurring=S.recurring.filter(x=>x.src!=='legacy');
+    r=convertLegacy(data);
+  }catch(e){S=JSON.parse(backup);toast(e.message||'取り込めませんでした');return;}
+  const ml=m=>m.replace(/^kakeibo_(\d{4})_(\d{2})$/,(_,y,mm)=>`${y}年${Number(mm)}月`);
+  if(!confirm(`${label}\n\n${ml(r.months[0])}〜${ml(r.months[r.months.length-1])}（${r.months.length}か月分）\n記録 ${r.tx.length}件、固定費・定期収入 ${r.rec.length}件を取り込みます。\n\n月のはじまりも家計管理に合わせて「${r.pdBase}日・土日は${r.pdAdj==='prev'?'前':'後'}の平日」にします。よろしいですか？`)){S=JSON.parse(backup);return;}
+  S.tx.push(...r.tx);S.recurring.push(...r.rec);
+  S.settings.startDay=r.pdBase;S.settings.shift=r.pdAdj;S.settings.nameBy='start';
+  S.ui.setupDone=true;S.ui.importedAt=todayStr();save();goToday();
+  toast('取り込みました');
+  setTimeout(()=>alert('取り込みが終わりました。\n\n家計管理には「口座の今の残高」が無いため、⚙️設定 →「口座・財布」で今の残高（今日の日付）を入れてください。入れると「この先使える額」と引き落とし日の残高チェックが正しく出ます。'),300);
+}
+function importLegacyLocal(){applyLegacy(legacyCollectLocal(),'この端末の家計管理データ');}
+function importLegacyPaste(){
+  let d;try{d=JSON.parse(document.getElementById('lgPaste').value);}catch(e){toast('JSONとして読めませんでした');return;}
+  if(d&&d.files&&d.files['kakeibo_data.json'])d=JSON.parse(d.files['kakeibo_data.json'].content);
+  applyLegacy(d,'貼り付けたデータ');
+}
+async function importLegacyGist(){
+  const id=(document.getElementById('lgGist').value||'').trim().replace(/^.*\//,'');if(!id){toast('Gist ID を入れてください');return;}
+  const proxy=lsGet('gh_proxy').trim().replace(/\/+$/,'');const token=lsGet('gh_token');
+  toast('読み込み中…');
+  try{
+    let res=await fetch(`https://api.github.com/gists/${id}`,{headers:token?{'Authorization':`Bearer ${token}`}:{}}).catch(()=>null);
+    if((!res||!res.ok)&&proxy)res=await fetch(`${proxy}/gists/${id}`,{headers:token?{'Authorization':`Bearer ${token}`}:{}});
+    if(!res||!res.ok)throw new Error('Gist を読み込めませんでした（IDを確認してください）');
+    const j=await res.json();const f=j.files&&j.files['kakeibo_data.json'];if(!f)throw new Error('Gist に kakeibo_data.json がありません');
+    let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url)).text();
+    applyLegacy(JSON.parse(content),'クラウド（Gist）のデータ');
+  }catch(e){toast(e.message||'読み込めませんでした');}
+}
+function removeLegacy(){
+  if(!confirm('家計管理から取り込んだ記録と固定費をすべて消します（手入力した分は残ります）。よろしいですか？'))return;
+  S.tx=S.tx.filter(t=>t.src!=='legacy');S.recurring=S.recurring.filter(x=>x.src!=='legacy');save();render();
 }
 
 // ── バックアップ ──
