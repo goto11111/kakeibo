@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v0.4.0';
+const APP_VERSION='v0.4.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -237,7 +237,23 @@ function load(){
   try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);if(d&&d.v===1){S=Object.assign(freshData(),d);S.ui=Object.assign({},freshData().ui,d.ui||{});migrateData();return;}}}catch(e){}
   S=freshData();save();
 }
+// 取り込んだ「各月の固定費・給料のコピー」のうちスタート日（なければ今期のはじめ）以降の分を消し、
+// 固定費・定期収入の設定から出すようにまとめる（設定を編集すれば今月分にも反映される）
+function unifyLegacyFixed(){
+  const st=S.start||periodRange(periodKeyOf(todayStr()))[0];
+  const byName={};S.recurring.forEach(r=>{(byName[r.name]||(byName[r.name]=[])).push(r);});
+  const hit=new Set();
+  S.tx=S.tx.filter(t=>{
+    if(t.src!=='legacy'||t.date<st)return true;
+    if(t.cat==='saving'&&t.memo==='積立')return false; // v0.2の取り込みで出来た名前不明の積立
+    const n=String(t.memo||'').replace(/（見込み）$/,'');
+    if(byName[n]&&byName[n].some(r=>r.type===t.type)){hit.add(n);return false;}
+    return true;
+  });
+  hit.forEach(n=>byName[n].forEach(r=>{if(r.start>st)r.start=st;}));
+}
 function migrateData(){
+  if(!S.ui.unifyFixed1){S.ui.unifyFixed1=true;unifyLegacyFixed();}
   [['repay','💸','返済','out'],['saving','🐷','積立','out']].forEach(([id,icon,name,kind])=>{if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});});
   S.ai=Object.assign({usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},S.ai||{});
 }
@@ -401,8 +417,9 @@ function balAt(L,accId,date){
 function totalAt(L,date){return S.accounts.filter(a=>a.openingDate<=date).reduce((s,a)=>s+balAt(L,a.id,date),0);}
 
 // ── 期間の収支（後払いの数え方を反映）──
-function flows(key){
-  const [s,e]=periodRange(key);let out=0,inn=0;const byCat={};const items=[];
+function flows(key){const [s,e]=periodRange(key);return flowsRange(s,e);}
+function flowsRange(s,e){
+  let out=0,inn=0;const byCat={};const items=[];
   const addOut=(cat,v,it)=>{out+=v;byCat[cat]=(byCat[cat]||0)+v;items.push(it);};
   entries(s,e).forEach(x=>{
     if(x.type==='in'){inn+=x.amount;return;}
@@ -412,6 +429,15 @@ function flows(key){
   });
   if(S.settings.basis==='withdraw')charges(s,e).forEach(p=>addOut(p.e.cat,p.principal+p.fee,{date:p.date,cat:p.e.cat,amount:p.principal+p.fee,e:p.e,p}));
   return {out,inn,byCat,items,s,e};
+}
+// 仕切り直し後：スタート時に入れたお金から、収入を足して使った分を引いていく
+// （カードは使った日で引く。スタート前に使ったカードの請求は最初に引いておく）
+function startPool(upto){
+  if(!S.start||upto<S.start)return null;
+  const base=S.accounts.filter(a=>a.openingDate<=upto).reduce((s,a)=>s+(Number(a.opening)||0),0);
+  const bills=S.settings.basis==='withdraw'?0:(S.startBills||[]).reduce((s,b)=>s+(Number(b.amount)||0),0);
+  const f=flowsRange(S.start,upto);
+  return {base,bills,inn:f.inn,out:f.out,remain:base-bills+f.inn-f.out};
 }
 function budgetOf(key){
   const b=S.budgets;if(b.only[key])return b.only[key];
@@ -493,10 +519,15 @@ function renderCal(){
     top+=`<div class="banner">👋 はじめに <b>⚙️設定</b> で「口座の今の残高」と「給料（定期収入）」を登録すると、この先いくら使えるかが出ます。カードの締め日・引き落とし日は既存の家計管理の設定を読み込んで初期登録済みです。<div style="margin-top:6px" class="row"><button class="btn sm" onclick="setTab('set')">設定を開く</button><button class="btn sm sub" onclick="S.ui.setupDone=true;save();render()">あとで</button></div></div>`;
   }
   const fc=forecast(horizonEnd(fcH));const nw=nextWithdraw();
+  const poolEnd=startPool(e),poolToday=startPool(t<e?t:e);
+  const fp=poolEnd&&S.start>s?flowsRange(S.start,e):f; // スタート日が期の途中ならスタート日から数える
+  const poolPrev=poolEnd?(S.start>=s?{remain:poolEnd.base-poolEnd.bills}:startPool(ds(addDays(pd(s),-1)))):null;
   const leftHtml=b.total>0
     ?`<h3>今月の残り（予算）</h3><div class="big ${b.total-f.out<0?'out':''}">${Y(b.total-f.out)}</div>
       <div class="bar ${f.out>b.total?'over':''}"><i style="width:${Math.min(100,f.out/b.total*100)}%"></i></div>
       <div class="muted">予算 ${Y(b.total)}・残り${daysLeft}日</div>`
+    :poolEnd?`<h3>今期末に残るお金</h3><div class="big ${poolEnd.remain<0?'out':''}">${Y(poolEnd.remain)}</div>
+      <div class="muted">今日まで ${Y(poolToday?poolToday.remain:poolEnd.base-poolEnd.bills)}・残り${daysLeft}日</div>`
     :`<h3>今月の収支</h3><div class="big ${f.inn-f.out<0?'out':''}">${Y(f.inn-f.out)}</div><div class="muted">予算未設定・残り${daysLeft}日</div>`;
   const nwHtml=nw?`<h3>次の引き落とし</h3><div class="mid">${Y(nw.total)}</div>
       <div class="muted">${md(nw.date)}・${nw.list.map(x=>esc(x.card.name)).join('、')}</div>`
@@ -518,7 +549,13 @@ function renderCal(){
       ${w?w.map(g=>`<span class="cw" style="background:${cardColor(g.card)}">💳<span class="amt">${fmtS(g.total)}</span></span>`).join(''):''}</div>`;
   }
   cal+='</div>';
-  const sum=`<div class="row" style="justify-content:space-around;margin-top:10px;text-align:center">
+  const sum=poolEnd?`<div class="row" style="justify-content:space-around;margin-top:10px;text-align:center">
+    <div><div class="muted">${S.start>=s?'スタート時':'前期から'}</div><b>${Y(poolPrev.remain)}</b></div>
+    <div><div class="muted">収入</div><b class="in">${Y(fp.inn)}</b></div>
+    <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(fp.out)}</b></div>
+    <div><div class="muted">期末に残る</div><b class="${poolEnd.remain<0?'out':''}">${Y(poolEnd.remain)}</b></div></div>
+    ${S.start>=s?`<div class="note" style="text-align:center">スタート時 = ${md(S.start)}の口座・財布の合計 ${fmt(poolEnd.base)}円${poolEnd.bills?` − スタート前のカード請求 ${fmt(poolEnd.bills)}円`:''}</div>`:''}`
+  :`<div class="row" style="justify-content:space-around;margin-top:10px;text-align:center">
     <div><div class="muted">収入</div><b class="in">${Y(f.inn)}</b></div>
     <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(f.out)}</b></div>
     <div><div class="muted">収支</div><b>${Y(f.inn-f.out)}</b></div></div>`;
@@ -1138,7 +1175,7 @@ function applyRestart(){
   S.startBills=RS.bills.filter(b=>Number(b.amount)>0).map(b=>({id:b.id,cardId:b.cardId,date:b.date,amount:Number(b.amount)}));
   if(RS.del){S.tx=S.tx.filter(x=>x.date>=st);S.recurring.forEach(r=>{if(r.start<st)r.start=st;});}
   (S.goals||[]).forEach(g=>{const rem=Number(RS.goals[g.id]);if(!isNaN(rem)&&RS.goals[g.id]!==''){g.done=Math.max(0,(Number(g.total)||0)-rem);if(!g.start||g.start<st)g.start=st;Object.keys(g.ex||{}).forEach(d=>{if(d<st)delete g.ex[d];});}});
-  S.ui.setupDone=true;RS=null;save();closeSheet();goToday();toast('仕切り直しました');
+  unifyLegacyFixed();S.ui.setupDone=true;RS=null;save();closeSheet();goToday();toast('仕切り直しました');
 }
 
 // ── 🤖 AI提案（家計管理と同じ中継サーバー・モデル）──
@@ -1373,7 +1410,7 @@ function applyLegacy(data,label){
   r.goals.forEach(ng=>{const og=oldG.find(o=>o.lid===ng.lid)||S.goals.find(o=>o.src==='preset'&&o.name===ng.name);
     if(og){ng.method=goalMethod(og);ng.toAcc=og.toAcc;ng.icon=og.icon;ng.kind=og.kind;ng.replaces=og.replaces;ng.extra=og.extra;}});
   S.goals=S.goals.filter(g=>g.src!=='legacy'&&!(g.src==='preset'&&r.goals.some(n=>n.name===g.name))).concat(r.goals);
-  dedupeGoalFixed();
+  dedupeGoalFixed();unifyLegacyFixed();
   // AI提案のクレジット記録を引き継ぐ（初回のみ）
   if(data.kakeibo_ai_usd&&!S.ai.usd.fromLegacy){const u=data.kakeibo_ai_usd;S.ai.usd={spent:Number(u.spent)||0,uses:u.uses||[],deposits:u.deposits||[],fromLegacy:true};}
   S.settings.startDay=r.pdBase;S.settings.shift=r.pdAdj;S.settings.nameBy='start';
