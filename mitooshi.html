@@ -146,7 +146,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.3.1';
+const APP_VERSION='v1.3.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -866,9 +866,11 @@ function renderWd(){
   let h=`<div class="card" style="text-align:center"><div class="muted">${y}年${m}月 口座から出ていく合計</div><div class="big out">${Y(cardTotal+dirTotal+goalTotal)}</div>
     <div class="muted">カード${gs.some(g=>g.budget)?'（📊予算込み）':''} ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
   if(!gs.length&&!direct.length&&!goalsM.length)h+=`<div class="card muted">この月の引き落とし予定はありません</div>`;
-  gs.forEach(g=>{
+  gs.forEach((g,i)=>{
     const key=g.card.id+'|'+g.date;const a=accById(cardAcc(g.card));
-    const after=a?balAt(L,a.id,g.date):null;
+    // 同じ日・同じ口座で後に並ぶカードの引き落としはまだ引かれていない扱い（その日の終わりの残高から戻す）
+    const later=a?gs.slice(i+1).filter(h=>h.date===g.date&&cardAcc(h.card)===a.id).reduce((s,h)=>s+h.total,0):0;
+    const after=a?balAt(L,a.id,g.date)+later:null;
     const ok=after==null||after>=0;
     const items=g.items.slice().sort((p,q)=>cmp(p.e.date,q.e.date));
     h+=`<div class="wd"><div class="hd" onclick="openWd['${key}']=!openWd['${key}'];render()"><span class="cdot" style="background:${cardColor(g.card)}"></span>
