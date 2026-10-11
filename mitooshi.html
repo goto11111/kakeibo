@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.5.0';
+const APP_VERSION='v1.5.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -953,12 +953,14 @@ function cardCycle(card,date){
   return [ds(addDays(prevEnd,1)),ds(end)];
 }
 const cycleNote=c=>`${c.close==='end'?'月末':c.close+'日'}締め・${c.payMonth>1?c.payMonth+'か月後':'翌月'}${c.payDay==='end'?'末':c.payDay+'日'}払い`;
-// 🧾 今期にカードで使った分：締め期間ごとに引き落とし日を分けて出す（表示中の月に関係なく、いつも今日を基準）
+// 🧾 その期にカードで使った分：締め期間ごとに「◯〜◯に使った分 → ◯に引き落とし」を分けて出す
+// 表示する期は引き落としタブの月に合わせて動く（今月を見ているときが今期）。今日を含む期なら、今日の締め期間に📍を付ける
 function cardCycles(){
-  const t=todayStr();const pk=periodKeyOf(t);const [ps,pe]=periodRange(pk);
   if(!S.cards.length)return '';
-  let h=`<div class="card"><h3>🧾 今期（${rangeLabel(pk)}）のカード：使った日で引き落とし日が変わります</h3>
-    <div class="note" style="margin-bottom:4px">📍 今日は <b>${md(t)}</b>。今日カードで払うと、各カードの「📍今日」の行の日に引き落とされます</div>`;
+  const t=todayStr();const tm=t.slice(0,7);
+  const mdiff=(Number(wdKey.slice(0,4))-Number(tm.slice(0,4)))*12+Number(wdKey.slice(5,7))-Number(tm.slice(5,7));
+  const pk=keyAdd(periodKeyOf(t),mdiff);const [ps,pe]=periodRange(pk);const inNow=t>=ps&&t<=pe;
+  let h=`<div class="card"><h3>🧾 ${inNow?'今期':mdiff<0?'前の期':'この先の期'}（${rangeLabel(pk)}）のカード：使った日で引き落とし日が変わります</h3>`;
   S.cards.forEach(c=>{
     const cyc=[];let s=ps;
     for(let g=0;g<6&&s<=pe;g++){const [a,b]=cardCycle(c,s);cyc.push([a,b]);s=ds(addDays(pd(b),1));}
@@ -966,12 +968,11 @@ function cardCycles(){
       const lo=a<ps?ps:a,hi=b>pe?pe:b;const wd=ds(wdDate(c,pd(b),0));
       const used=entries(lo,hi).filter(x=>x.type==='out'&&x.method==='c:'+c.id);
       const v=used.reduce((s,x)=>s+portions(x,c).filter(p=>p.k===0).reduce((u,p)=>u+p.principal+p.fee,0),0);
-      return {lo,hi,a,b,wd,v,n:used.length,now:t>=a&&t<=b};
-    }).filter(r=>r.v>0||r.now);
-    if(!rows.length)return;
+      return {lo,hi,b,wd,v,n:used.length,now:inNow&&t>=lo&&t<=hi};
+    });
     h+=`<div class="cyc"><div class="cyh"><span class="cdot" style="background:${cardColor(c)}"></span><b>${esc(c.name)}</b><span class="muted">${cycleNote(c)}</span></div>
-      ${rows.map(r=>`<div class="fl${r.now?' now':''}"><div class="t"><b>${md(r.lo)}〜${md(r.hi)}に使った分${r.hi<r.b?`<span class="muted">（締めは${md(r.b)}）</span>`:''}</b>
-        <small>${r.now?`📍 今日（${md(t)}）使うとここ・`:''}→ <span class="wdd">${md(r.wd)}</span> に引き落とし${r.n?`・${r.n}件`:''}</small></div>
+      ${rows.map(r=>`<div class="fl"><div class="t"><b>${md(r.lo)}〜${md(r.hi)}に使った分${r.hi<r.b?`<span class="muted">（締めは${md(r.b)}）</span>`:''}</b>
+        <small>→ <span class="wdd">${md(r.wd)}</span> に引き落とし${r.n?`・${r.n}件`:''}${r.now?` <span class="pill">📍 今日（${md(t)}）使うとここ</span>`:''}</small></div>
         <div class="bal"><span class="amt">${fmt(r.v)}</span>円</div></div>`).join('')}</div>`;
   });
   return h+`</div>`;
