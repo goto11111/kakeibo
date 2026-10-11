@@ -94,6 +94,9 @@ main{padding:10px 12px}
 .fl .bal{text-align:right;white-space:nowrap;font-weight:800;font-variant-numeric:tabular-nums}.fl .bal small{display:block;font-weight:400;font-size:11px;color:var(--text2)}
 .fl.edge{background:var(--card2);border-radius:10px;border-top:0;margin:4px 0;padding:9px 8px}
 .fl.past{opacity:.75}
+.sumtb{overflow-x:auto;margin:0 -4px}.sumtb table{border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.sumtb th{position:sticky;left:0;background:var(--card);text-align:left;font-weight:600;padding:4px 8px 4px 4px;color:var(--text2)}
+.sumtb td{text-align:right;padding:4px 8px}.sumtb td small{display:block;font-size:10px;color:var(--text2)}
 .flbd{padding:0 4px 4px 36px;background:var(--card2);border-radius:0 0 10px 10px}
 .cyc{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}.cyc .cyh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cyc .cdot{display:inline-block;width:8px;height:18px;border-radius:3px}.cyc .fl{border-top:0;padding:6px 8px}.cyc .fl .t b{white-space:normal}.wdd{font-weight:800;color:var(--text)}
@@ -157,7 +160,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.7.1';
+const APP_VERSION='v1.7.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -570,7 +573,7 @@ function budgetOf(key){
 }
 
 // ── 画面状態 ──
-let tab='cal',curKey,sel,fcH='1',chartKind='out',openWd={},catDrill=null,openGoal={},openPer={},perN=6;
+let tab='cal',curKey,sel,fcH='1',chartKind='out',openWd={},catDrill=null,openGoal={},perN=6;
 function goToday(){sel=todayStr();curKey=periodKeyOf(sel);render();}
 function navMove(n){
   {curKey=keyAdd(curKey,n);const [s,e]=periodRange(curKey);if(!(sel>=s&&sel<=e))sel=(todayStr()>=s&&todayStr()<=e)?todayStr():s;catDrill=null;}
@@ -962,24 +965,20 @@ function renderChain(){
   });
   // 概要（その先〜6期／12期先）
   const rest=all.filter(r=>r.k>last);
-  if(rest.length){h+=`<div class="card"><h3>📅 その先の期（概要）</h3>`;
-    rest.forEach(r=>{const c=r.c;
-    h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
-      <div class="t" style="white-space:normal"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
-        <small style="white-space:normal">${rangeLabel(r.k)}<br>${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(r.out)}${r.res?` −予算 ${fmt(r.res)}`:''}${c.saved?` ＝ 合計 ${fmt(r.end)}`:''}</small></div>
-      <div class="a">${c.saved?`<small>使える</small><span class="${r.end-c.saved<0?'out':''}" style="font-size:15px">${Y(r.end-c.saved)}</span><small>＋🐷貯金 ${fmt(c.saved)}</small>`:`<span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>`}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>
-      <div class="chips" style="margin:0 0 6px 2px">${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0,u=r.accEnd[a.id]-sv;return `<span class="pill ${u<0?'r':''}" style="font-weight:600">${a.type==='wallet'?'👛':'🏦'}${esc(a.name)} ${fmt(u)}</span>`;}).join('')}${S.accounts.filter(a=>r.accSaved[a.id]).map(a=>`<span class="pill w" style="font-weight:600">🐷${esc(a.name)}の貯金 ${fmt(r.accSaved[a.id])}</span>`).join('')}</div>`;
-    if(openPer[r.k]===undefined&&r.now)openPer[r.k]=true;
-    if(openPer[r.k]){
-      h+=`<div style="padding:0 4px 8px 10px">
-        <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
-        ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
-        <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
-        ${c.saved?`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp">うち 使えるお金</span><b class="${r.end-c.saved<0?'out':''}">${fmt(r.end-c.saved)}円</b></div><div class="row" style="padding:2px 0 4px 12px;font-size:12.5px"><span class="sp">うち 🐷貯金</span><b>${fmt(c.saved)}円</b></div>`:''}
-        ${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0;return `<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp muted">${a.type==='wallet'?'👛':'🏦'} ${esc(a.name)}${sv?`<br>　使える ${fmt(r.accEnd[a.id]-sv)}円 ＋ 🐷貯金 ${fmt(sv)}円`:''}</span><span class="${r.accEnd[a.id]<0?'out':''}">${fmt(r.accEnd[a.id])}円</span></div>`;}).join('')}
-      </div>`;}
-    });
-    h+=`<button class="btn sub sm" style="margin-top:6px" onclick="perN=perN>=12?6:12;render()">${perN>=12?'6期先まで表示':'12期先まで表示'}</button></div>`;}
+  if(rest.length){
+    // 概要は横並びの表（列＝期、行＝項目）。横にスクロールして見る
+    const accs=S.accounts.filter(a=>rest.some(r=>r.accEnd[a.id]!=null));const anySaved=rest.some(r=>r.c.saved);
+    const td=(v,cls,st)=>`<td class="${cls||''}" style="${st||''}">${v}</td>`;const num=(v,sign)=>`<span class="${v<0?'out':''}">${sign&&v>0?'+':''}${fmt(v)}</span>`;
+    const row=(lb,f,st)=>`<tr><th>${lb}</th>${rest.map(r=>td(f(r),'',st)).join('')}</tr>`;
+    h+=`<div class="card"><h3>📅 その先の期（概要）</h3><div class="sumtb"><table>
+      <tr><th></th>${rest.map(r=>`<td><b>${keyLabel(r.k).replace(/^\d+年/,'')}</b><small>${rangeLabel(r.k)}</small></td>`).join('')}</tr>
+      ${row('給料など',r=>`<span class="in">+${fmt(r.c.inn)}</span>`)}
+      ${row('引き落とし',r=>`<span class="out">−${fmt(r.out+r.res)}</span>`)}
+      ${row('<b>使える</b>',r=>`<b>${num(r.end-r.c.saved)}</b>`,'border-top:1px solid var(--line)')}
+      ${accs.map(a=>row(`${a.type==='wallet'?'👛':'🏦'}${esc(a.name)}`,r=>r.accEnd[a.id]==null?'—':num(r.accEnd[a.id]-(r.accSaved[a.id]||0)))).join('')}
+      ${anySaved?row('🐷貯金',r=>fmt(r.c.saved||0)):''}
+    </table></div>
+    <button class="btn sub sm" style="margin-top:6px" onclick="perN=perN>=12?6:12;render()">${perN>=12?'6期先まで表示':'12期先まで表示'}</button></div>`;}
   return h;
 }
 function renderFc(){
