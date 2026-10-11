@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.5.3';
+const APP_VERSION='v1.6.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -483,7 +483,7 @@ function cashPeriod(s,e){
   L.forEach(x=>{if(x.date<from||x.date>e)return;
     if(x.kind!=='move'&&x.kind!=='save'){const a=accById(x.acc);let ic,lb;
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
-      else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';lb=`${x.r.label||'予算'}（${keyLabel(x.r.key)}の予算・${x.r.via}${x.r.card?'で払う予定':'から'}）`;}
+      else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';lb=`${x.r.label||'予算'}（予算）`;}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
       else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=x.e.memo||c.name;}
       r.list.push({date:x.date,ic,lb,acc:a?a.name:'',v:x.delta,kind:x.kind});}
@@ -570,7 +570,7 @@ function budgetOf(key){
 }
 
 // ── 画面状態 ──
-let tab='cal',curKey,sel,wdKey,fcH='1',chartKind='out',openWd={},catDrill=null,fcAcc=null,openGoal={},openPer={},perN=6;
+let tab='cal',curKey,sel,wdKey,fcH='1',chartKind='out',openWd={},catDrill=null,openGoal={};
 function goToday(){sel=todayStr();curKey=periodKeyOf(sel);const t=new Date();wdKey=`${t.getFullYear()}-${pad(t.getMonth()+1)}`;render();}
 function navMove(n){
   if(tab==='wd')wdKey=keyAdd(wdKey,n);
@@ -589,7 +589,7 @@ function render(){
   const navBtns=document.querySelectorAll('header .arrow');
   const showNav=tab!=='set'&&tab!=='fc'&&tab!=='goal';navBtns.forEach(b=>b.style.visibility=showNav?'visible':'hidden');
   if(tab==='wd'){nl.textContent=keyLabel(wdKey);ns.textContent='引き落とし予定';}
-  else if(tab==='fc'){nl.textContent='この先の見通し';ns.textContent='口座ごと・AI提案';}
+  else if(tab==='fc'){nl.textContent='この先の見通し';ns.textContent='期ごとの残り';}
   else if(tab==='goal'){nl.textContent='目標';ns.textContent='返済・積立の進み具合';}
   else if(tab==='set'){nl.textContent='設定';ns.textContent=APP_VERSION;}
   else{nl.textContent=keyLabel(curKey);ns.textContent=rangeLabel(curKey);}
@@ -1001,67 +1001,40 @@ function periodChain(n,withB){
   return rows;
 }
 function renderChain(){
-  const withB=S.ui.chainB!==false;
-  const rows=periodChain(perN,withB);
-  let h=`<div class="card"><h3>📅 期ごとに残るお金（前の期から引き継ぎ）</h3>`;
-  if(!rows){return h+`<div class="muted">⚙️設定の「仕切り直し」でスタート日と口座の残高を入れると、期ごとの残りがここに並びます。</div></div>`;}
-  h+=`<div class="seg" style="margin-bottom:6px">${[[true,'予算も引く'],[false,'確定分だけ']].map(([v,l])=>`<button class="${withB===v?'on':''}" onclick="S.ui.chainB=${v};save();render()">${l}</button>`).join('')}</div>
-    <div class="note" style="margin-bottom:6px">期末 ＝ 前期から ＋ 給料など − 引き落とし${withB?' − 予算':''}。期末がそのまま次の期の「前期から」になります。カードは引き落とし日で数えます${withB?'。予算は固定費と同じく、期のはじめにカードで全部使ったことにして、そのカードが落ちる日の期に入ります（スタートの期は実績だけ）':''}。</div>`;
+  const withB=S.ui.chainB!==false;const n=Number(fcH)+1;const cur=periodKeyOf(todayStr());
+  const all=periodChain(n,withB);
+  if(!all)return `<div class="card"><h3>📅 期ごとのお金</h3><div class="muted">⚙️設定の「仕切り直し」でスタート日と口座の残高を入れると表示されます。</div></div>`;
+  const rows=all.filter(r=>r.k>=cur);const pots=savingPots();const t=todayStr();
+  let h=`<div class="seg" style="margin:4px 0 8px">${[[true,'予算も引く'],[false,'確定分だけ']].map(([v,l])=>`<button class="${withB===v?'on':''}" onclick="S.ui.chainB=${v};save();render()">${l}</button>`).join('')}</div>`;
+  const line=(ic,b,v,cls)=>`<div class="fl ${cls}"><div class="ic">${ic}</div><div class="t">${b}</div><div class="bal"><b class="${v<0?'out':''}">${Y(v)}</b></div></div>`;
   rows.forEach(r=>{const c=r.c;
-    h+=`<div class="li tap" onclick="openPer['${r.k}']=!openPer['${r.k}'];render()" style="${r.now?'background:var(--pri2);border-radius:10px;padding-left:6px':''}">
-      <div class="t" style="white-space:normal"><b>${keyLabel(r.k)}${r.now?' <span class="pill">今期</span>':r.past?' <span class="muted">（終了）</span>':''}</b>
-        <small style="white-space:normal">${rangeLabel(r.k)}<br>${c.from===S.start?'スタート時':'前期から'} ${fmt(r.prev)} ＋給料など ${fmt(c.inn)} −引き落とし ${fmt(r.out)}${r.res?` −予算 ${fmt(r.res)}`:''}${c.saved?` ＝ 合計 ${fmt(r.end)}`:''}</small></div>
-      <div class="a">${c.saved?`<small>使える</small><span class="${r.end-c.saved<0?'out':''}" style="font-size:15px">${Y(r.end-c.saved)}</span><small>＋🐷貯金 ${fmt(c.saved)}</small>`:`<span class="${r.end<0?'out':''}" style="font-size:15px">${Y(r.end)}</span>`}</div><span class="muted">${openPer[r.k]?'▲':'▼'}</span></div>
-      <div class="chips" style="margin:0 0 6px 2px">${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0,u=r.accEnd[a.id]-sv;return `<span class="pill ${u<0?'r':''}" style="font-weight:600">${a.type==='wallet'?'👛':'🏦'}${esc(a.name)} ${fmt(u)}</span>`;}).join('')}${S.accounts.filter(a=>r.accSaved[a.id]).map(a=>`<span class="pill w" style="font-weight:600">🐷${esc(a.name)}の貯金 ${fmt(r.accSaved[a.id])}</span>`).join('')}</div>`;
-    if(openPer[r.k]===undefined&&r.now)openPer[r.k]=true;
-    if(openPer[r.k]){
-      h+=`<div style="padding:0 4px 8px 10px">
-        <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
-        ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
-        <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
-        ${c.saved?`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp">うち 使えるお金</span><b class="${r.end-c.saved<0?'out':''}">${fmt(r.end-c.saved)}円</b></div><div class="row" style="padding:2px 0 4px 12px;font-size:12.5px"><span class="sp">うち 🐷貯金</span><b>${fmt(c.saved)}円</b></div>`:''}
-        ${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0;return `<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp muted">${a.type==='wallet'?'👛':'🏦'} ${esc(a.name)}${sv?`<br>　使える ${fmt(r.accEnd[a.id]-sv)}円 ＋ 🐷貯金 ${fmt(sv)}円`:''}</span><span class="${r.accEnd[a.id]<0?'out':''}">${fmt(r.accEnd[a.id])}円</span></div>`;}).join('')}
-      </div>`;}
+    // 使えるお金（🐷貯金を除く）で数える：貯金が増えた日は引き、使った・戻した日は足す
+    const items=c.list.filter(x=>withB||x.kind!=='reserve').map(x=>({date:x.date,ic:x.ic,lb:x.lb,sub:x.acc,v:x.v}));
+    let d=c.from,prevSaved=savedIn(pots,ds(addDays(pd(d),-1)));
+    while(d<=r.e){const sv=savedIn(pots,d);if(sv!==prevSaved)items.push({date:d,ic:'🐷',lb:sv>prevSaved?'貯金へ取り分け':'貯金から',sub:'',v:prevSaved-sv,late:1});prevSaved=sv;d=ds(addDays(pd(d),1));}
+    items.sort((a,b)=>cmp(a.date,b.date)||(b.v>0)-(a.v>0)||(a.late||0)-(b.late||0));
+    let bal=r.prev-savedIn(pots,ds(addDays(pd(c.from),-1)));let minV=bal,minD=null;
+    let body=line('🏁',`<b>${c.from===S.start?`スタート時（${md(S.start)}）`:'前の期から'}</b>`,bal,'edge');
+    let nowShown=!r.now;
+    const nowLine=()=>line('📍',`<b>今日（${md(t)}）</b>`,bal,'now');
+    items.forEach(x=>{
+      if(!nowShown&&x.date>t){nowShown=true;body+=nowLine();}
+      bal+=x.v;if(bal<minV){minV=bal;minD=x.date;}
+      body+=`<div class="fl${x.date<=t?' past':''}"><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}</b><small>${md(x.date)}${x.sub?'・'+esc(x.sub):''}</small></div>
+        <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span><small>→ 残り <b class="${bal<0?'out':''}">${Y(bal)}</b></small></div></div>`;});
+    if(!nowShown)body+=nowLine();
+    body+=line('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,bal,'edge');
+    h+=`<div class="card"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minV<0?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
   });
-  h+=`<button class="btn sub sm" style="margin-top:6px" onclick="perN=perN>=12?6:12;render()">${perN>=12?'6期先まで表示':'12期先まで表示'}</button></div>`;
   return h;
 }
 function renderFc(){
   const H=horizonEnd(fcH);const f=forecast(H);
-  let h=`<div class="seg" style="margin-bottom:10px">${[['0','今期の終わりまで'],['1','来期の終わりまで'],['2','再来期まで']].map(([k,l])=>`<button class="${fcH===k?'on':''}" onclick="fcH='${k}';render()">${l}</button>`).join('')}</div>`;
-  h+=renderChain();
+  let h=`<div class="seg" style="margin-bottom:6px">${[['0','今期の終わりまで'],['1','来期の終わりまで'],['2','再来期まで']].map(([k,l])=>`<button class="${fcH===k?'on':''}" onclick="fcH='${k}';render()">${l}</button>`).join('')}</div>`;
   h+=`<div class="card" style="text-align:center"><div class="muted">${md(H)}までに使っていい額</div><div class="big ${f.free<0?'out':''}">${Y(f.free)}</div>
     ${f.free<f.use?`<div class="muted">最少 ${md(f.minDate)}：${Y(f.min)}</div>`:''}</div>`;
-  h+=`<div class="card"><h3>🏦 口座</h3>${S.accounts.map(a=>{const mn=f.accMin[a.id];const end=f.accEnd[a.id];const sv=f.accSaved[a.id];
-      return `<div class="li tap" onclick="fcAcc=fcAcc==='${a.id}'?null:'${a.id}';render()" style="${fcAcc===a.id?'background:var(--pri2);border-radius:10px':''}"><div class="ic">${a.type==='wallet'?'👛':'🏦'}</div>
-      <div class="t"><b>${esc(a.name)}</b><small>${md(H)} ${end!=null?fmt(end)+'円':'—'}${mn&&mn.v<(f.bal[a.id]||0)?`・最少 <span class="${mn.v<0?'out':''}">${fmt(mn.v)}（${md(mn.date)}）</span>`:''}${sv?`・🐷${fmt(sv)}`:''}</small></div>
-      <div class="a">${a.openingDate<=todayStr()?Y((f.bal[a.id]||0)-(sv||0)):'—'}</div></div>`;}).join('')}
-    <div class="li"><div class="t"><b>合計</b>${f.saved?`<small>🐷貯金 ${fmt(f.saved)}は別</small>`:''}</div><div class="a mid">${Y(f.use)}</div></div></div>`;
-  if(f.short.length){
-    h+=`<div class="card" style="border-color:var(--out)"><h3 class="out">⚠️ 残高不足</h3>${f.short.map(s=>`<div class="li"><div class="t"><b>${md(s.date)} ${esc(s.g.card.name)}</b><small>${esc((accById(s.acc)||{}).name)}</small></div><div class="a out">${fmt(-s.bal)}円不足</div></div>`).join('')}</div>`;
-  }
-  const fa=fcAcc&&accById(fcAcc);
-  h+=`<div class="card"><h3>これからの予定${fa?`（${esc(fa.name)}）`:''}</h3>`;
-  if(fa)h+=`<button class="btn sub sm" style="margin-bottom:4px" onclick="fcAcc=null;render()">すべて表示</button>`;
-  const days=fa?f.days.map(d=>Object.assign({},d,{items:d.items.filter(x=>x.acc===fcAcc)})).filter(d=>d.items.length):f.days;
-  if(!days.length)h+='<div class="muted">予定なし</div>';
-  days.forEach(d=>{
-    const bv=fa?d.acc[fcAcc]:d.total;const neg=(!fa&&d.saved?d.use:bv)<0;
-    h+=`<div class="tl-d">${md(d.date)}${isHol(pd(d.date))?' 祝':''}<span class="${neg?'out':''}">${Y(!fa&&d.saved?d.use:bv)}</span></div>`;
-    d.items.forEach(x=>{
-      const a=accById(x.acc);let ic='•',name='',sub=esc(a?a.name:'');
-      if(x.kind==='card'){ic='💳';name=x.g.card.name+' 引き落とし';}
-      else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';name=x.r.label||'予算';}
-      else if(x.kind==='save'){ic='🐷';name=(goalById(x.e.gid)||{}).name+' 貯金';}
-      else if(x.e&&x.e.goal){ic='🎯';name=(goalById(x.e.gid)||{}).name+(x.delta<0?(x.kind==='move'?' 積立':' 返済'):' 入金');}
-      else if(x.kind==='move'){ic='🔁';name='振替';}
-      else if(x.kind==='open'){ic='🏁';name='開始残高';}
-      else{const c=catById(x.e.cat);ic=c.icon;name=x.e.memo||c.name;}
-      h+=`<div class="li"><div class="ic">${ic}</div><div class="t"><b>${esc(name)}</b><small>${sub}${d.acc[x.acc]<0?' <span class="out">マイナス</span>':''}</small></div>
-        <div class="a ${x.delta>0?'in':''}">${x.kind==='save'?`🐷<span class="amt">${fmt(x.e.amount)}</span>円`:`${x.delta>0?'+':'-'}<span class="amt">${fmt(Math.abs(x.delta))}</span>円`}</div></div>`;
-    });
-  });
-  h+='</div>';
+  if(f.short.length)h+=`<div class="card" style="border-color:var(--out)"><h3 class="out">⚠️ 残高不足</h3>${f.short.map(s=>`<div class="li"><div class="t"><b>${md(s.date)} ${esc(s.g.card.name)}</b><small>${esc((accById(s.acc)||{}).name)}</small></div><div class="a out">${fmt(-s.bal)}円不足</div></div>`).join('')}</div>`;
+  h+=renderChain();
   h+=renderAiCard();
   return h;
 }
@@ -1175,57 +1148,40 @@ function everyLabel(r){
   if(r.every==='week')return `毎週${WD[pd(r.start).getDay()]}曜`;if(r.every==='2week')return `2週ごと（${WD[pd(r.start).getDay()]}曜）`;return `${r.n}日ごと`;
 }
 function renderSummary(){
-  const st=S.settings;const pk=periodKeyOf(todayStr());const [s,e]=periodRange(pk);
+  const st=S.settings;const pk=periodKeyOf(todayStr());
   const row=(ic,title,sub,amt,click)=>`<div class="li tap" onclick="${click}"><div class="ic">${ic}</div><div class="t"><b>${title}</b>${sub?`<small>${sub}</small>`:''}</div>${amt!=null?`<div class="a">${amt}</div>`:''}<span class="muted">›</span></div>`;
-  const sec=t=>`<div class="tl-d">${t}</div>`;
-  let h=`<div class="card"><h3>📋 いまの設定のまとめ（タップで直せます）</h3>`;
-  h+=sec('📆 月のはじまり')+row('📆',`毎月${st.startDay==='end'?'末日':st.startDay+'日'}から`,`土日祝は${st.shift==='prev'?'前の平日':st.shift==='next'?'次の平日':'ずらさない'}・今期 ${rangeLabel(pk)}`,null,"document.getElementById('setMonth').scrollIntoView({behavior:'smooth'})");
-  h+=row('🔄',S.start?`スタート日 ${md(S.start)}`:'仕切り直しはまだです',S.start?`スタート前のカード請求 ${(S.startBills||[]).length}件・${fmt((S.startBills||[]).reduce((a,b)=>a+Number(b.amount),0))}円`:'スタート日の残高を入れて始め直せます',null,'openRestart()');
-  h+=sec('🏦 口座・財布（スタート時の残高）')+S.accounts.map(a=>row(a.type==='wallet'?'👛':'🏦',esc(a.name),`${md(a.openingDate)}の朝`,Y(Number(a.opening)||0),`editAcc('${a.id}')`)).join('');
-  h+=sec('💳 カード')+S.cards.map(c=>row('💳',esc(c.name),`${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}から`,null,`editCard('${c.id}')`)).join('');
+  const sec=(t,add)=>`<div class="tl-d">${t}${add?`<span class="tap" style="color:var(--pri)" onclick="${add}">＋ 追加</span>`:''}</div>`;
+  const none='<div class="muted">なし</div>';
+  let h=`<div class="card"><h3>⚙️ 設定（タップで編集）</h3>`;
+  h+=sec('📆 月のはじまり')+row('📆',`毎月${st.startDay==='end'?'末日':st.startDay+'日'}から`,`土日祝は${st.shift==='prev'?'前の平日':st.shift==='next'?'次の平日':'ずらさない'}・今期 ${rangeLabel(pk)}・カードは${st.basis==='withdraw'?'引き落とし日':'使った日'}で数える`,null,'editMonth()');
+  h+=sec('🏦 口座・財布','editAcc()')+(S.accounts.map(a=>row(a.type==='wallet'?'👛':'🏦',esc(a.name),`${md(a.openingDate)}の残高`,Y(Number(a.opening)||0),`editAcc('${a.id}')`)).join('')||none);
+  h+=sec('💳 カード','editCard()')+(S.cards.map(c=>row(`<span class="cdot" style="display:inline-block;width:8px;height:22px;border-radius:3px;background:${cardColor(c)}"></span>`,esc(c.name),`${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}`,null,`editCard('${c.id}')`)).join('')||none);
   const rin=S.recurring.filter(r=>r.type==='in'),rout=S.recurring.filter(r=>r.type==='out');
-  h+=sec('💴 定期収入')+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}`,`<span class="in">+${fmt(r.amount)}円</span>`,`editRec('${r.id}')`)).join('')||'<div class="muted">なし（給料を登録すると見通しが出ます）</div>');
-  h+=sec('🔁 固定費（毎回決まって出るお金）')+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}`,`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||'<div class="muted">なし</div>');
+  h+=sec('💴 定期収入',"editRec('','in')")+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,`<span class="in">+${fmt(r.amount)}円</span>`,`editRec('${r.id}')`)).join('')||none);
+  h+=sec('🔁 固定費',"editRec('','out')")+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||none);
   const b=budgetOf(pk);const bc=Object.keys(b.cats||{}).filter(k=>Number(b.cats[k])>0);
-  h+=sec('📊 予算（手で記録する支出の上限）')+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):row('📊','予算はまだありません','食費・日用品などを予算で管理するならここから',null,"setTab('bud');editBudget()"));
+  h+=sec('📊 予算',"setTab('bud');editBudget()")+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):none);
   const ag=(S.goals||[]).filter(g=>goalStatus(g).remain>0);
-  h+=sec('🎯 目標（返済・積立）')+(ag.map(g=>row(esc(g.icon||'🎯'),esc(g.name),`毎月${g.day==='end'?'末日':g.day+'日'}・${esc(mName(goalMethod(g)))}・あと${fmt(goalStatus(g).remain)}円`,`-${fmt(g.monthly)}円`,`editGoal('${g.id}')`)).join('')||'<div class="muted">なし</div>');
-  h+='</div>';
-  // 期ごとのお金の流れ（前の期から引き継ぎ）
-  h+=renderChain();
-  return h;
+  h+=sec('🎯 目標','editGoal()')+(ag.map(g=>row(esc(g.icon||'🎯'),esc(g.name),`毎月${g.day==='end'?'末日':g.day+'日'}・${esc(mName(goalMethod(g)))}・あと${fmt(goalStatus(g).remain)}円`,`-${fmt(g.monthly)}円`,`editGoal('${g.id}')`)).join('')||none);
+  return h+'</div>';
 }
-function renderSet(){
-  const st=S.settings;const t=new Date();
-  let h=renderSummary()+`<div class="card" id="setMonth"><h3>📆 月のはじまり</h3>
-    <div class="fld"><label>開始日</label><select onchange="setS('startDay',this.value==='end'?'end':Number(this.value))">${dayOpts(st.startDay,true)}</select></div>
-    <div class="fld"><label>開始日が土日祝のとき</label><select onchange="setS('shift',this.value)">${['prev','next','none'].map(k=>`<option value="${k}" ${st.shift===k?'selected':''}>${{prev:'前の平日にする（給料の前倒し）',next:'次の平日にする',none:'ずらさない'}[k]}</option>`).join('')}</select></div>
+function editMonth(){const st=S.settings;
+  sheet('月のはじまり',`<div class="fld"><label>開始日</label><select onchange="setS('startDay',this.value==='end'?'end':Number(this.value))">${dayOpts(st.startDay,true)}</select></div>
+    <div class="fld"><label>開始日が土日祝のとき</label><select onchange="setS('shift',this.value)">${['prev','next','none'].map(k=>`<option value="${k}" ${st.shift===k?'selected':''}>${{prev:'前の平日にする',next:'次の平日にする',none:'ずらさない'}[k]}</option>`).join('')}</select></div>
     <div class="fld"><label>その期間を何月と呼ぶか</label><select onchange="setS('nameBy',this.value)"><option value="start" ${st.nameBy==='start'?'selected':''}>始まる月（9/15〜10/14 → 9月）</option><option value="end" ${st.nameBy==='end'?'selected':''}>終わる月（9/15〜10/14 → 10月）</option></select></div>
-    <div class="muted">今期：${keyLabel(periodKeyOf(todayStr()))}（${rangeLabel(periodKeyOf(todayStr()))}）</div></div>
-  <div class="card"><h3>🧮 カードを数える日</h3><div class="seg">${[['use','使った日'],['withdraw','引き落とし日']].map(([k,l])=>`<button class="${st.basis===k?'on':''}" onclick="setS('basis','${k}')">${l}</button>`).join('')}</div></div>
-  <div class="card"><h3>🏦 口座・財布</h3>${S.accounts.map(a=>`<div class="li tap" onclick="editAcc('${a.id}')"><div class="ic">${a.type==='wallet'?'👛':'🏦'}</div><div class="t"><b>${esc(a.name)}</b><small>${md(a.openingDate)} ${fmt(a.opening)}円</small></div><span class="muted">›</span></div>`).join('')}
-    <button class="addbtn" onclick="editAcc()">＋ 口座・財布を追加</button></div>
-  <div class="card"><h3>💳 カード</h3>${S.cards.map(c=>{return `<div class="li tap" onclick="editCard('${c.id}')"><span class="cdot" style="width:8px;height:30px;border-radius:3px;background:${cardColor(c)};flex:none"></span><div class="t"><b>${esc(c.name)}</b><small>${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}</small></div><span class="muted">›</span></div>`;}).join('')}
-    <button class="addbtn" onclick="editCard()">＋ カードを追加</button>
-    <button class="btn sub sm" style="margin-top:8px" onclick="importLegacyCards()">既存の家計管理のカード設定を読み込む</button></div>
-  <div class="card"><h3>🔁 固定費・定期収入</h3>${S.recurring.length?S.recurring.map(r=>{const c=catById(r.cat);return `<div class="li tap" onclick="editRec('${r.id}')"><div class="ic">${c.icon}</div><div class="t"><b>${esc(r.name)}</b><small>${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}</small></div><div class="a ${r.type==='in'?'in':''}">${r.type==='in'?'+':'-'}<span class="amt">${fmt(r.amount)}</span>円</div></div>`;}).join(''):'<div class="muted">なし</div>'}
-    <button class="addbtn" onclick="editRec()">＋ 固定費・定期収入を追加</button></div>
-  <div class="card"><h3>🏷️ カテゴリ</h3><div class="chips">${S.cats.map(c=>`<button class="chip" onclick="editCat('${c.id}')">${c.icon} ${esc(c.name)}${c.kind==='in'?'（収入）':''}</button>`).join('')}</div>
+    <div class="fld"><label>カードを数える日</label><select onchange="setS('basis',this.value)"><option value="use" ${st.basis!=='withdraw'?'selected':''}>使った日</option><option value="withdraw" ${st.basis==='withdraw'?'selected':''}>引き落とし日</option></select></div>
+    <button class="btn" style="margin-top:6px" onclick="closeSheet()">閉じる</button>`);}
+function renderSet(){
+  return renderSummary()+`<div class="card"><h3>🏷️ カテゴリ</h3><div class="chips">${S.cats.map(c=>`<button class="chip" onclick="editCat('${c.id}')">${c.icon} ${esc(c.name)}${c.kind==='in'?'（収入）':''}</button>`).join('')}</div>
     <button class="addbtn" onclick="editCat()">＋ カテゴリを追加</button></div>
   <div class="card"><h3>🔄 仕切り直し</h3>
     ${S.start?`<div class="muted" style="margin-bottom:6px">スタート日 <b>${md(S.start)}</b></div>`:''}
     <button class="btn" onclick="openRestart()">${S.start?'スタート時の設定を見直す':'仕切り直しを始める'}</button></div>
-  <div class="card"><h3>📥 既存の家計管理から取り込む</h3>
-    ${legacyLocalAvailable()?`<button class="btn" onclick="importLegacyLocal()">この端末の家計管理データから取り込む</button>`:`<div class="muted">この端末に家計管理のデータはありません</div>`}
-    <div class="fld" style="margin-top:10px"><label>Gist ID から取り込む</label><div class="row"><input id="lgGist" value="${esc(lsGet('gh_gist_id'))}" placeholder="家計管理の設定にある Gist ID"><button class="btn sm" onclick="importLegacyGist()">取り込む</button></div></div>
-    <details style="margin-top:6px"><summary class="muted">JSONを貼り付けて取り込む</summary><textarea id="lgPaste" rows="4" style="width:100%;margin-top:6px;font:12px monospace;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);padding:8px" placeholder='{"version":2,"kakeibo_settings":...}'></textarea><button class="btn sub sm" style="margin-top:6px" onclick="importLegacyPaste()">貼り付けた内容で取り込む</button></details>
-    ${S.tx.some(t=>t.src==='legacy')||S.recurring.some(r=>r.src==='legacy')||S.goals.some(g=>g.src==='legacy')?`<button class="btn del sm" style="margin-top:8px" onclick="removeLegacy()">取り込んだ分をすべて消す</button>`:''}</div>
   <div class="card"><h3>💾 データ</h3>
     <div class="grid2"><button class="btn sub" onclick="exportJSON()">バックアップを保存</button><button class="btn sub" onclick="document.getElementById('fileIn').click()">バックアップから戻す</button></div>
     <button class="btn sub" style="margin-top:8px" onclick="exportCSV()">記録をCSVで書き出す</button>
     <button class="btn del" style="margin-top:8px" onclick="resetAll()">すべて消して最初から</button></div>`+renderSync()+`
-  <div class="muted" style="text-align:center;margin:10px 0 20px">見通し家計簿 ${APP_VERSION}・<a href="kakeibo.html" style="color:var(--pri)">以前の家計管理へ</a></div>`;
-  return h;
+  <div class="muted" style="text-align:center;margin:10px 0 20px">見通し家計簿 ${APP_VERSION}</div>`;
 }
 function setS(k,v){S.settings[k]=v;save();curKey=periodKeyOf(sel||todayStr());render();}
 function editAcc(id){
@@ -1284,8 +1240,8 @@ function importLegacyCards(){
   add.forEach(x=>S.cards.push(cardFromLegacy(x,S.cards.length,acc)));
   save();render();toast(add.length?`${add.length}枚追加しました`:'追加するカードはありません');
 }
-function editRec(id){
-  const r=id?S.recurring.find(x=>x.id===id):{name:'',type:'out',amount:0,cat:'house',method:defaultMethod('out'),every:'month',day:25,n:10,adjust:'none',start:todayStr(),end:''};
+function editRec(id,ty){
+  const r=id?S.recurring.find(x=>x.id===id):{name:'',type:ty||'out',amount:0,cat:ty==='in'?((S.cats.find(c=>c.kind==='in')||{}).id||'house'):'house',method:defaultMethod(ty||'out'),every:'month',day:25,n:10,adjust:'none',start:todayStr(),end:''};
   const methodOpts=t=>(t==='in'?S.accounts.map(a=>'a:'+a.id):[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)]).map(m=>`<option value="${m}" ${m===r.method?'selected':''}>${esc(mName(m))}</option>`).join('');
   const catOpts=t=>S.cats.filter(c=>c.kind===(t==='in'?'in':'out')).map(c=>`<option value="${c.id}" ${c.id===r.cat?'selected':''}>${c.icon} ${esc(c.name)}</option>`).join('');
   sheet(id?'固定費・定期収入を編集':'固定費・定期収入を追加',`<div class="seg" id="rType">${[['out','支出（固定費）'],['in','収入（給料など）']].map(([k,l])=>`<button class="${r.type===k?'on':''}" onclick="recType('${k}')">${l}</button>`).join('')}</div>
