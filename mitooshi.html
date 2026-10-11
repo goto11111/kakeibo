@@ -93,6 +93,10 @@ main{padding:10px 12px}
 .fl .t small{display:block;font-size:11px;color:var(--text2)}
 .fl .bal{text-align:right;white-space:nowrap;font-weight:800;font-variant-numeric:tabular-nums}.fl .bal small{display:block;font-weight:400;font-size:11px;color:var(--text2)}
 .fl.edge{background:var(--card2);border-radius:10px;border-top:0;margin:4px 0;padding:9px 8px}
+.fl.past{opacity:.75}
+.flbd{padding:0 4px 4px 36px;background:var(--card2);border-radius:0 0 10px 10px}
+.cyc{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}.cyc .cyh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.cyc .cdot{display:inline-block;width:8px;height:18px;border-radius:3px}.cyc .fl{border-top:0;padding:6px 8px}.cyc .fl .t b{white-space:normal}.wdd{font-weight:800;color:var(--text)}
 .fl.now{background:var(--pri2);border-radius:10px;border-top:0;margin:4px 0;padding:7px 8px;color:var(--pri)}
 .wd .chk{font-size:12px;padding:8px 14px;background:var(--card2)}
 /* tabs */
@@ -153,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.4.0';
+const APP_VERSION='v1.5.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -864,90 +868,113 @@ function renderWd(){
     (g.budget||(g.budget=[])).push(x);g.total+=x.amount;});
   gs.sort((a,b)=>cmp(a.date,b.date));
   const L=buildLedger(to);
-  // 口座から直接出ていく分（口座払い・固定費の口座振替など）
   const monthEnts=entries(from,to);
   const direct=monthEnts.filter(x=>!x.goal&&x.type==='out'&&accOf(x.method)&&accOf(x.method).type==='bank');
   const goalsM=monthEnts.filter(x=>x.goal&&!cardOf(x.method));
-  const cardGoals=gs.flatMap(g=>g.items).filter(p=>p.e.goal);
   const cardTotal=gs.reduce((s,g)=>s+g.total,0),dirTotal=direct.reduce((s,x)=>s+x.amount,0),goalTotal=goalsM.reduce((s,x)=>s+x.amount,0);
   let h=`<div class="card" style="text-align:center"><div class="muted">${y}年${m}月 口座から出ていく合計</div><div class="big out">${Y(cardTotal+dirTotal+goalTotal)}</div>
     <div class="muted">カード${gs.some(g=>g.budget)?'（📊予算込み）':''} ${Y(cardTotal)} ／ 口座払い ${Y(dirTotal)} ／ 🎯目標 ${Y(goalTotal)}</div></div>`;
-  h+=moneyFlow(L,gs,from,to,m);
-  if(!gs.length&&!direct.length&&!goalsM.length)h+=`<div class="card muted">この月の引き落とし予定はありません</div>`;
-  gs.forEach((g,i)=>{
-    const key=g.card.id+'|'+g.date;const a=accById(cardAcc(g.card));
-    // 同じ日・同じ口座で後に並ぶカードの引き落としはまだ引かれていない扱い（その日の終わりの残高から戻す）
-    const later=a?gs.slice(i+1).filter(h=>h.date===g.date&&cardAcc(h.card)===a.id).reduce((s,h)=>s+h.total,0):0;
-    const after=a?balAt(L,a.id,g.date)+later:null;
-    const ok=after==null||after>=0;
-    const items=g.items.slice().sort((p,q)=>cmp(p.e.date,q.e.date));
-    h+=`<div class="wd"><div class="hd" onclick="openWd['${key}']=!openWd['${key}'];render()"><span class="cdot" style="background:${cardColor(g.card)}"></span>
-      <div class="sp"><b>${esc(g.card.name)}</b><div class="muted">${md(g.date)} 引き落とし・${esc(a?a.name:'口座未設定')}・${g.items.length}件${g.budget?`＋📊予算 ${fmt(g.budget.reduce((s,x)=>s+x.amount,0))}円`:''}</div></div>
-      <div style="text-align:right"><div class="mid">${Y(g.total)}</div>${g.fee?`<div class="muted">うち手数料 ${Y(g.fee)}</div>`:''}</div><span class="muted">${openWd[key]?'▲':'▼'}</span></div>
-      ${a?`<div class="chk">${ok?'✅':'⚠️'} 引き落とし後の${esc(a.name)}残高 <b class="${ok?'':'out'}">${Y(after)}</b>${ok?'':`　<b class="out">${fmt(-after)}円 足りません</b>`}</div>`:''}
-      ${openWd[key]?`<div class="bd">${items.map(p=>{const c=catById(p.e.cat);return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':c.icon}</div>
-        <div class="t"><b>${esc(p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}</small></div>
-        <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')}
-        ${(g.budget||[]).map(x=>`<div class="li tap" onclick="curKey='${x.key}';setTab('bud')"><div class="ic">📊</div><div class="t"><b>${esc(x.label)}</b><small>📊 ${keyLabel(x.key)}の予算・まだ使っていない分（全部使った場合）</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('')}</div>`:''}</div>`;
-  });
-  if(direct.length){
-    h+=`<div class="card"><h3>🏦 口座から直接（口座払い・口座振替）</h3>${direct.map(x=>{const c=catById(x.cat);return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div>
-      <div class="t"><b>${esc(x.memo||c.name)}</b><small>${md(x.date)}・${esc(mName(x.method))}${x.rec?'・固定費':''}</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`;}).join('')}</div>`;
-  }
-  if(goalsM.length||cardGoals.length){
-    h+=`<div class="card"><h3>🎯 目標の引き落とし（返済・積立）</h3>${goalsM.map(entryRow).join('')}
-      ${cardGoals.map(p=>{const g=goalById(p.e.gid)||{};return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">🎯</div><div class="t"><b>${esc(g.name||'目標')}（${g.kind==='debt'?'返済':'積立'}）</b>
-        <small>💳 ${esc(p.card.name)}の${md(p.date)}引き落としに含む・${p.e.k}回目・このあと残り ${fmt(p.e.after)}円</small></div><div class="a muted"><span class="amt">${fmt(p.principal+p.fee)}</span>円</div></div>`;}).join('')}
-      <button class="btn sub sm" style="margin-top:6px" onclick="setTab('goal')">目標の進み具合を見る</button></div>`;
-  }
-  // カード別：今月使った分がいつ引かれるか
-  const t=todayStr();const pk=periodKeyOf(t);const [ps,pe]=periodRange(pk);
-  const used=entries(ps,pe).filter(x=>x.type==='out'&&cardOf(x.method));
-  if(used.length){
-    const by={};used.forEach(x=>portions(x,cardOf(x.method)).forEach(p=>{const k=p.card.id+'|'+p.date;(by[k]||(by[k]={card:p.card,date:p.date,v:0})).v+=p.principal+p.fee;}));
-    h+=`<div class="card"><h3>🧾 今期（${rangeLabel(pk)}）にカードで使った分の行き先</h3>${Object.values(by).sort((a,b)=>cmp(a.date,b.date)).map(x=>`<div class="li"><span class="cdot" style="width:8px;height:22px;border-radius:3px;background:${cardColor(x.card)}"></span>
-      <div class="t"><b>${esc(x.card.name)}</b><small>${md(x.date)} に引き落とし</small></div><div class="a"><span class="amt">${fmt(x.v)}</span>円</div></div>`).join('')}</div>`;
-  }
+  const flow=moneyFlow(L,gs,from,to,m);
+  h+=flow||`<div class="card muted">この月の口座の出入りはありません</div>`;
+  h+=cardCycles();
   return h;
 }
 
-// 口座ごとのお金の流れ：月初（元金）→ 給料で増える → 引き落としで減る → 月末、を残高つきで順に並べる
-// 同じ日は 入るお金 → 口座払いなど → カード（上の一覧と同じ順）で、カードの「引き落とし後の残高」と合わせる
+// カードの請求の中身（タップで開く）
+function wdItems(g){
+  const items=g.items.slice().sort((p,q)=>cmp(p.e.date,q.e.date));
+  return items.map(p=>{const c=catById(p.e.cat);const gl=p.e.goal?goalById(p.e.gid)||{}:null;return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':gl?'🎯':c.icon}</div>
+    <div class="t"><b>${esc(gl?`${gl.name||'目標'}（${gl.kind==='debt'?'返済':'積立'}）`:p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}${gl?`・このあと残り ${fmt(p.e.after)}円`:''}</small></div>
+    <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')
+  +(g.budget||[]).map(x=>`<div class="li tap" onclick="curKey='${x.key}';setTab('bud')"><div class="ic">📊</div><div class="t"><b>${esc(x.label)}</b><small>📊 ${keyLabel(x.key)}の予算・まだ使っていない分（全部使った場合）</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('');
+}
+
+// 口座ごとのお金の流れ：月はじめ（元金）→ 給料で増える → 引き落としで減る → 月おわり、を「使えるお金」の残りつきで順に並べる
+// 🐷貯金（積立の目標で口座に貯める分）は残りに数えない：積み立てた日に「貯金へ」で引き、貯金から使った・戻した日に足す
+// 同じ日は 入るお金 → 口座払い・移動など → 貯金へ → カード（請求の順）
 function moneyFlow(L,gs,from,to,m){
-  const t=todayStr();const prevDay=ds(addDays(pd(from),-1));let h='';
+  const t=todayStr();const pots=savingPots();let h='';
   S.accounts.forEach(a=>{
     if(a.openingDate>to)return;
-    const rows=[];
-    L.forEach(x=>{if(x.acc!==a.id||x.date<from||x.date>to||!x.delta)return;
-      if(x.kind==='card'||(x.kind==='reserve'&&x.r.card))return; // カードは下で予算込みの合計でまとめる
-      let ic,lb,sub='';
-      if(x.kind==='in'){const c=catById(x.e.cat);ic='💴';lb=x.e.memo||c.name;}
-      else if(x.kind==='move'){const o=accById(x.delta>0?x.e.from:x.e.to);ic='🔁';lb=x.delta>0?`${o?o.name:'口座'}から移す`:`${o?o.name:'口座'}へ移す`;}
-      else if(x.kind==='reserve'){ic='📊';lb=`${x.r.label||'予算'}（予算）`;}
-      else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
-      else{const c=catById(x.e.cat);ic=c.icon;lb=x.e.memo||c.name;sub=x.e.rec?'固定費':'';}
-      rows.push({date:x.date,ic,lb,sub,v:x.delta,rank:x.delta>0?0:1,ord:0,click:x.e&&x.kind!=='reserve'?clickFor(x.e):''});});
+    const rows=[];const add=r=>{if(r.date>=from&&r.date<=to&&r.date>=a.openingDate&&r.v)rows.push(r);};
+    L.forEach(x=>{if(x.acc!==a.id||!x.delta)return;
+      if(x.kind==='card'||(x.kind==='reserve'&&x.r.card))return; // カードは下で予算込みの請求ごとにまとめる
+      let ic,lb,sub='';const e=x.e;const gl=e&&e.goal?goalById(e.gid)||{}:null;
+      if(x.kind==='in'){const c=catById(e.cat);ic='💴';lb=e.memo||c.name;sub=e.rec?'定期収入':'';}
+      else if(x.kind==='move'){const o=accById(x.delta>0?e.from:e.to);ic='🔁';lb=x.delta>0?`${o?o.name:'口座'}から移す`:`${o?o.name:'口座'}へ移す`;
+        sub=gl?`🎯 ${gl.name||'目標'}・${e.k}回目`:'';}
+      else if(x.kind==='reserve'){ic='📊';lb=`${x.r.label||'予算'}（予算）`;sub=`${keyLabel(x.r.key)}の予算・まだ使っていない分`;}
+      else if(gl){ic='🎯';lb=`${gl.name||'目標'}（${gl.kind==='debt'?'返済':'積立'}）`;sub=`${e.k}回目・このあと残り ${fmt(e.after)}円`;}
+      else{const c=catById(e.cat);ic=c.icon;lb=e.memo||c.name;sub=[e.rec?'固定費':'',e.type==='out'?c.name:''].filter(Boolean).join('・');}
+      add({date:x.date,ic,lb,sub,v:x.delta,rank:x.delta>0?0:1,ord:0,click:e&&x.kind!=='reserve'?clickFor(e):''});});
+    // 🐷 貯金の出入り（口座の残高は変わらないが、使えるお金からは外す・戻す）
+    pots.filter(p=>p.acc===a.id).forEach(p=>{const nm=p.g.name||'貯金';const rel=p.release;
+      p.pays.forEach(x=>{if(rel&&x.date>=rel)return;add({date:x.date,ic:'🐷',lb:`${nm}（積立）`,sub:`貯金へ取り分ける・${x.k}回目・使えるお金に数えない`,v:-x.amount,rank:1.5,ord:0,click:`openGoalOcc('${p.g.id}','${x.date}')`});});
+      p.uses.forEach(x=>{if(rel&&x.date>=rel)return;add({date:x.date,ic:'🐷',lb:`${nm}から使う`,sub:`${x.memo||''}${x.memo?'・':''}貯金から出す分は使えるお金を減らさない`,v:Number(x.amount)||0,rank:0.5,ord:0,click:`editTx('${x.id}')`});});
+      if(rel&&rel>=from&&rel<=to){const v=potBal(p,ds(addDays(pd(rel),-1)));add({date:rel,ic:'🐷',lb:`${nm}を使えるお金に戻す`,sub:'貯金の残りを戻した',v,rank:0.5,ord:0,click:''});}
+    });
     gs.forEach((g,i)=>{if(cardAcc(g.card)!==a.id)return;
-      rows.push({date:g.date,ic:'💳',lb:`${g.card.name}`,sub:'カードの引き落とし'+(g.budget?'（📊予算込み）':''),v:-g.total,rank:2,ord:i,dot:cardColor(g.card)});});
+      add({date:g.date,ic:'💳',lb:g.card.name,sub:`カードの引き落とし・${g.items.length}件${g.budget?`＋📊予算 ${fmt(g.budget.reduce((s,x)=>s+x.amount,0))}円`:''}${g.fee?`・うち手数料 ${fmt(g.fee)}円`:''}`,v:-g.total,rank:2,ord:i,dot:cardColor(g.card),g});});
     if(!rows.length)return;
     rows.sort((p,q)=>cmp(p.date,q.date)||p.rank-q.rank||p.ord-q.ord);
-    const fresh=a.openingDate>=from;
-    let bal=fresh?(Number(a.opening)||0):balAt(L,a.id,prevDay);
+    // 月おわりの「使えるお金」から逆にたどって月はじめを出す（行の足し引きと必ず合う）
+    const endPot=savedIn(pots,to,a.id),endTot=balAt(L,a.id,to);
+    const sum=rows.reduce((s,r)=>s+r.v,0);let bal=endTot-endPot-sum;
+    const fresh=a.openingDate>=from;const startTot=fresh?(Number(a.opening)||0):balAt(L,a.id,ds(addDays(pd(from),-1)));
+    const startPot=startTot-bal;
     const inn=rows.filter(r=>r.v>0).reduce((s,r)=>s+r.v,0),out=rows.filter(r=>r.v<0).reduce((s,r)=>s-r.v,0);
-    const line=(lead,b,rest,cls='')=>`<div class="fl ${cls}">${lead}<div class="t">${b}</div>${rest}</div>`;
-    let body=line(`<div class="ic">🏁</div>`,`<b>${fresh?`スタート時の残高（${md(a.openingDate)}）`:`${m}月はじめの残高`}</b>`,`<div class="bal"><b>${Y(bal)}</b></div>`,'edge');
-    let nowShown=!(t>=from&&t<=to);
+    const potNote=v=>v>0?`<small>口座には ${fmt(v+0)}円 多くある（🐷貯金の分）</small>`:'';
+    const line=(ic,b,rest,cls)=>`<div class="fl ${cls}"><div class="ic">${ic}</div><div class="t">${b}</div>${rest}</div>`;
+    let body=line('🏁',`<b>${fresh?`スタート時（${md(a.openingDate)}）`:`${m}月はじめ`}の使えるお金</b>${potNote(startPot)}`,`<div class="bal"><b class="${bal<0?'out':''}">${Y(bal)}</b></div>`,'edge');
+    let nowShown=!(t>=from&&t<=to);let minV=bal,minD=null;
+    const nowLine=()=>line('📍',`<b>今日（${md(t)}）の使えるお金</b><small>ここから下はこれからの予定</small>`,`<div class="bal"><b class="${bal<0?'out':''}">${Y(bal)}</b></div>`,'now');
     rows.forEach(r=>{
-      if(!nowShown&&r.date>t){nowShown=true;body+=line(`<div class="ic">📍</div>`,`<b>今日（${md(t)}）の残高</b>`,`<div class="bal"><b>${Y(bal)}</b></div>`,'now');}
-      bal+=r.v;
-      body+=`<div class="fl${r.click?' tap':''}" ${r.click?`onclick="${r.click}"`:''}><div class="ic">${r.dot?`<span class="cdot" style="background:${r.dot}"></span>`:r.ic}</div>
-        <div class="t"><b>${esc(r.lb)}</b><small>${md(r.date)}${r.sub?'・'+r.sub:''}</small></div>
-        <div class="bal"><span class="${r.v>0?'in':'out'}">${r.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(r.v))}円</span></span><small>→ 残り <b class="${bal<0?'out':''}">${Y(bal)}</b></small></div></div>`;});
-    if(!nowShown)body+=line(`<div class="ic">📍</div>`,`<b>今日（${md(t)}）の残高</b>`,`<div class="bal"><b>${Y(bal)}</b></div>`,'now');
-    body+=line(`<div class="ic">🏁</div>`,`<b>${m}月おわりの残高</b><small>入る ＋${fmt(inn)}円 ／ 出る −${fmt(out)}円</small>`,`<div class="bal"><b class="${bal<0?'out':''}">${Y(bal)}</b></div>`,'edge');
-    h+=`<div class="card"><h3>💰 ${esc(a.name)}のお金の流れ</h3>${body}</div>`;
+      if(!nowShown&&r.date>t){nowShown=true;body+=nowLine();}
+      bal+=r.v;if(bal<minV){minV=bal;minD=r.date;}
+      const key=r.g?r.g.card.id+'|'+r.g.date:null;const open=key&&openWd[key];
+      const click=key?`openWd['${key}']=!openWd['${key}'];render()`:r.click;
+      body+=`<div class="fl${click?' tap':''}${r.date<=t?' past':''}" ${click?`onclick="${click}"`:''}><div class="ic">${r.dot?`<span class="cdot" style="background:${r.dot}"></span>`:r.ic}</div>
+        <div class="t"><b>${esc(r.lb)}${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b><small>${md(r.date)}${r.sub?'・'+esc(r.sub):''}</small></div>
+        <div class="bal"><span class="${r.v>0?'in':'out'}">${r.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(r.v))}円</span></span><small>→ 残り <b class="${bal<0?'out':''}">${Y(bal)}</b></small>${bal<0&&r.v<0?`<small class="out"><b>⚠️ ${fmt(-bal)}円 足りません</b></small>`:''}</div></div>`;
+      if(open)body+=`<div class="flbd">${wdItems(r.g)}</div>`;});
+    if(!nowShown)body+=nowLine();
+    body+=line('🏁',`<b>${m}月おわりの使えるお金</b><small>入る ＋${fmt(inn)}円 ／ 出る −${fmt(out)}円${endPot>0?` ／ 🐷貯金 ${fmt(endPot)}円は別`:''}</small>`,`<div class="bal"><b class="${bal<0?'out':''}">${Y(bal)}</b></div>`,'edge');
+    h+=`<div class="card"><h3>💰 ${esc(a.name)}のお金の流れ${minV<0?` <span class="out">⚠️ ${md(minD)}に足りなくなります</span>`:''}</h3>${body}</div>`;
   });
   return h;
+}
+
+// カードの締め期間：date を含む締め期間 [はじめ, 締め日]
+function cardCycle(card,date){
+  const d=pd(date);let y=d.getFullYear(),mo=d.getMonth();
+  const cl=(yy,mm)=>{const Y0=yy+Math.floor(mm/12),M0=((mm%12)+12)%12;return new Date(Y0,M0,card.close==='end'?lastDay(Y0,M0):Math.min(Number(card.close)||lastDay(Y0,M0),lastDay(Y0,M0)));};
+  let end=cl(y,mo);if(d>end)end=cl(y,mo+1);
+  const prevEnd=cl(end.getFullYear(),end.getMonth()-1);
+  return [ds(addDays(prevEnd,1)),ds(end)];
+}
+const cycleNote=c=>`${c.close==='end'?'月末':c.close+'日'}締め・${c.payMonth>1?c.payMonth+'か月後':'翌月'}${c.payDay==='end'?'末':c.payDay+'日'}払い`;
+// 🧾 今期にカードで使った分：締め期間ごとに引き落とし日を分けて出す（表示中の月に関係なく、いつも今日を基準）
+function cardCycles(){
+  const t=todayStr();const pk=periodKeyOf(t);const [ps,pe]=periodRange(pk);
+  if(!S.cards.length)return '';
+  let h=`<div class="card"><h3>🧾 今期（${rangeLabel(pk)}）のカード：使った日で引き落とし日が変わります</h3>
+    <div class="note" style="margin-bottom:4px">📍 今日は <b>${md(t)}</b>。今日カードで払うと、各カードの「📍今日」の行の日に引き落とされます</div>`;
+  S.cards.forEach(c=>{
+    const cyc=[];let s=ps;
+    for(let g=0;g<6&&s<=pe;g++){const [a,b]=cardCycle(c,s);cyc.push([a,b]);s=ds(addDays(pd(b),1));}
+    const rows=cyc.map(([a,b])=>{
+      const lo=a<ps?ps:a,hi=b>pe?pe:b;const wd=ds(wdDate(c,pd(b),0));
+      const used=entries(lo,hi).filter(x=>x.type==='out'&&x.method==='c:'+c.id);
+      const v=used.reduce((s,x)=>s+portions(x,c).filter(p=>p.k===0).reduce((u,p)=>u+p.principal+p.fee,0),0);
+      return {lo,hi,a,b,wd,v,n:used.length,now:t>=a&&t<=b};
+    }).filter(r=>r.v>0||r.now);
+    if(!rows.length)return;
+    h+=`<div class="cyc"><div class="cyh"><span class="cdot" style="background:${cardColor(c)}"></span><b>${esc(c.name)}</b><span class="muted">${cycleNote(c)}</span></div>
+      ${rows.map(r=>`<div class="fl${r.now?' now':''}"><div class="t"><b>${md(r.lo)}〜${md(r.hi)}に使った分${r.hi<r.b?`<span class="muted">（締めは${md(r.b)}）</span>`:''}</b>
+        <small>${r.now?`📍 今日（${md(t)}）使うとここ・`:''}→ <span class="wdd">${md(r.wd)}</span> に引き落とし${r.n?`・${r.n}件`:''}</small></div>
+        <div class="bal"><span class="amt">${fmt(r.v)}</span>円</div></div>`).join('')}</div>`;
+  });
+  return h+`</div>`;
 }
 
 // ── 🔭 見通し ──
