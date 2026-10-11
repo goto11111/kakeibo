@@ -118,10 +118,7 @@ nav.tabs button.on{color:var(--pri)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
 .chip{border:1px solid var(--line);background:var(--card);border-radius:99px;padding:6px 11px;font-size:12.5px;font-weight:700}
 .chip.on{background:var(--pri);border-color:var(--pri);color:var(--onpri)}
-.amtd{font-size:32px;font-weight:800;text-align:right;padding:6px 4px;font-variant-numeric:tabular-nums}
-.keys{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:8px}
-.keys button{border:0;background:var(--card);border-radius:11px;padding:13px 0;font-size:20px;font-weight:700;box-shadow:0 1px 0 var(--line)}
-.keys .save{grid-row:span 2;background:var(--pri);color:var(--onpri);font-size:16px}
+.amtd{display:flex;align-items:baseline;gap:4px;margin-top:8px}.amtd input{font-size:30px;font-weight:800;text-align:right;padding:6px 10px;font-variant-numeric:tabular-nums;color:inherit}.amtd small{font-size:16px;font-weight:800}
 .fld{margin:8px 0}
 .fld label{display:block;font-size:11.5px;color:var(--text2);margin-bottom:3px;font-weight:700}
 .prev{font-size:12px;background:var(--pri2);color:var(--pri);border-radius:10px;padding:7px 10px;margin:6px 0;font-weight:700}
@@ -159,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.7.4';
+const APP_VERSION='v1.8.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -743,6 +740,7 @@ function defaultMethod(type){
   return S.cards[0]?'c:'+S.cards[0].id:(S.accounts[0]?'a:'+S.accounts[0].id:null);
 }
 function openInput(o){
+  const isNew=!o.edit;
   if(o.edit){F=Object.assign({},o.edit,{amountStr:String(o.edit.amount)});}
   else{
     F={type:'out',date:o.date||sel||todayStr(),amountStr:'',cat:S.ui.lastCat||'food',method:defaultMethod('out'),count:1,memo:''};
@@ -751,6 +749,8 @@ function openInput(o){
     if(o.plan){renderInput();pickPlan(o.plan);}
   }
   renderInput();showSheet();
+  // 新しく記録するときは金額欄にカーソルを置いて、端末のキーボードを出す
+  if(isNew){const a=document.getElementById('inAmt');if(a)a.focus();}
 }
 function editTx(id){const t=S.tx.find(x=>x.id===id);if(t)openInput({edit:t});}
 function setF(k,v){
@@ -764,12 +764,10 @@ function setF(k,v){
   if(k==='method'&&!cardOf(v))F.count=1;
   renderInput();
 }
-function keyPress(k){
-  let s=F.amountStr;
-  if(k==='C')s='';else if(k==='⌫')s=s.slice(0,-1);
-  else if(s.length<9){s=(s+k).replace(/^0+/,'');}
-  F.amountStr=s;
-  document.getElementById('inAmt').innerHTML=`${fmt(Number(s)||0)}<small style="font-size:16px">円</small>`;
+// 金額欄（端末のキーボードで入力）。全角数字も受け付け、数字以外は捨てる
+function amtInput(el){
+  const s=el.value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/\D/g,'').replace(/^0+(?=\d)/,'').slice(0,9);
+  if(el.value!==s)el.value=s;F.amountStr=s;
   const p=document.getElementById('inPrev');if(p)p.innerHTML=cardPreview();
 }
 function cardPreview(){
@@ -787,8 +785,8 @@ function renderInput(){
   const accOpts=sel=>S.accounts.map(a=>`<option value="${a.id}" ${a.id===sel?'selected':''}>${esc(a.name)}</option>`).join('');
   let h=`<div class="shd"><b>${F.id?'記録を編集':'記録する'}</b><button class="x" onclick="closeSheet()">✕</button></div>
   <div class="seg">${[['out','支出'],['in','収入'],['move','振替']].map(([k,l])=>`<button class="${F.type===k?'on':''}" onclick="setF('type','${k}')">${l}</button>`).join('')}</div>
-  <div class="row" style="margin-top:8px"><input type="date" value="${F.date}" onchange="F.date=this.value;renderInput()" style="width:auto"><div class="sp"></div>
-  <div class="amtd ${F.type==='in'?'in':F.type==='out'?'out':''}" id="inAmt">${fmt(Number(F.amountStr)||0)}<small style="font-size:16px">円</small></div></div>`;
+  <div class="amtd ${F.type==='in'?'in':F.type==='out'?'out':''}"><input id="inAmt" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="金額" value="${esc(F.amountStr||'')}" oninput="amtInput(this)" onkeydown="if(event.key==='Enter'&&!event.isComposing){event.preventDefault();saveTx();}"><small>円</small></div>
+  <div class="row" style="margin-top:8px"><span class="muted">日付</span><input type="date" value="${F.date}" onchange="F.date=this.value;renderInput()" style="width:auto"></div>`;
   if(isMove){
     h+=`<div class="row fld"><div class="sp"><label>出す口座</label><select onchange="F.from=this.value">${accOpts(F.from)}</select></div><div style="padding-top:16px">→</div>
       <div class="sp"><label>入れる口座</label><select onchange="F.to=this.value">${accOpts(F.to)}</select></div></div>
@@ -812,8 +810,7 @@ function renderInput(){
     h+=`<div class="prev" id="inPrev" style="${cardOf(F.method)&&F.type==='out'?'':'display:none'}">${cardPreview()}</div>`;
   }
   h+=`<input placeholder="メモ（店名など・任意）" value="${esc(F.memo||'')}" oninput="F.memo=this.value" style="margin-top:6px">
-  <div class="keys">${['7','8','9','⌫','4','5','6','C','1','2','3'].map(k=>`<button onclick="keyPress('${k}')">${k}</button>`).join('')}
-    <button class="save" onclick="saveTx()">保存</button><button onclick="keyPress('00')">00</button><button onclick="keyPress('0')">0</button><button onclick="keyPress('000')">000</button></div>
+  <button class="btn" style="margin-top:10px" onclick="saveTx()">保存</button>
   ${F.id?`<button class="btn del" style="margin-top:10px" onclick="delTx()">この記録を削除</button>`:''}`;
   document.getElementById('sheetIn').innerHTML=h;
 }
@@ -1692,7 +1689,7 @@ const syncReady=()=>!!syncToken();
 let syncTimer=null,syncBusy=false,syncMsg='';
 function syncErr(e){return e&&e.message==='Failed to fetch'?'GitHub に接続できませんでした（中継URLを確認してください）':(e&&e.message)||'不明なエラー';}
 // 自動保存：変更のたびに少し待ってからアップロード（この端末を正とする）
-function scheduleSync(){const c=syncCfg();c.localAt=new Date().toISOString();saveSyncCfg(c);if(!c.auto||!syncReady()||!c.gistId)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>syncUpload(true),4000);}
+function scheduleSync(){const c=syncCfg();c.localAt=new Date().toISOString();saveSyncCfg(c);if(!c.auto||!syncReady()||!c.gistId)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>{syncTimer=null;syncUpload(true);},4000);}
 async function syncUpload(silent){
   if(syncBusy)return;const token=syncToken();if(!token){if(!silent)toast('GitHub Token を入れてください');return;}
   const c=syncCfg();syncBusy=true;syncMsg='☁️ 保存中…';if(!silent)render();
@@ -1714,23 +1711,34 @@ async function syncFetch(){
   let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url)).text();
   return {data:JSON.parse(content),updatedAt:j.updated_at};
 }
+function syncApply(r){
+  if(!r.data||r.data.v!==1)throw new Error('データの形式が違います');
+  delete r.data.savedAt;S=Object.assign(freshData(),r.data);S.ui=Object.assign({},freshData().ui,r.data.ui||{});migrateData();
+  try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
+  const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;saveSyncCfg(c);
+}
 async function syncDownload(){
   if(!confirm('クラウドのデータでこの端末のデータを置き換えます。よろしいですか？'))return;
   syncMsg='☁️ 読み込み中…';render();
-  try{const r=await syncFetch();if(!r.data||r.data.v!==1)throw new Error('データの形式が違います');
-    delete r.data.savedAt;S=Object.assign(freshData(),r.data);S.ui=Object.assign({},freshData().ui,r.data.ui||{});migrateData();
-    try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
-    const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;saveSyncCfg(c);
-    syncMsg='✅ クラウドから読み込みました';goToday();toast('読み込みました');
+  try{syncApply(await syncFetch());syncMsg='✅ クラウドから読み込みました';goToday();toast('読み込みました');
   }catch(e){syncMsg='❌ 読み込めませんでした：'+syncErr(e);render();}
 }
-// 開いたとき：クラウドの方が新しければ（他の端末で保存されていれば）知らせる。勝手に上書きはしない
+// 開いたとき・アプリに戻ったとき：クラウドの方が新しければ（他の端末で保存されていれば）自動で読み込む。
+// この端末にもまだクラウドに上げていない変更があるときは、どちらを残すか聞く
 async function syncCheckOnLoad(){
-  const c=syncCfg();if(!c.gistId||!syncReady())return;
+  const c=syncCfg();if(!c.gistId||!syncReady()||syncBusy||syncTimer)return;
   try{const token=syncToken();const res=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:{'Authorization':`Bearer ${token}`}});if(!res.ok)return;
-    const j=await res.json();if(c.remoteAt&&j.updated_at>c.remoteAt&&(!c.localAt||c.localAt<=c.lastSync)){syncMsg='🔔 ほかの端末でクラウドに保存されています。「クラウドから読み込む」で最新にできます';render();toast('クラウドに新しいデータがあります（⚙️設定）');}
+    const j=await res.json();const n=syncCfg();if(!n.remoteAt||!(j.updated_at>n.remoteAt)||syncBusy||syncTimer)return;
+    // 入力中（シートが開いている）なら書きかけを消さないよう、読み込まずに知らせるだけ
+    if(document.getElementById('sheet').style.display==='flex'){syncMsg='🔔 クラウドに新しいデータがあります。「クラウドから読込」で最新にできます';toast('クラウドに新しいデータがあります（閉じてから戻ると読み込みます）');return;}
+    const dirty=n.localAt&&n.lastSync&&n.localAt>n.lastSync;
+    if(dirty&&!confirm('ほかの端末でクラウドに新しいデータが保存されています。\nこの端末にもまだクラウドに保存していない変更があります。\n\nOK：クラウドの最新を読み込む（この端末の変更は消えます）\nキャンセル：この端末のデータを残す'))
+      {syncMsg='🔔 クラウドに新しいデータがあります。「クラウドから読込」で最新にできます';if(tab==='set')render();return;}
+    syncApply(await syncFetch());syncMsg='✅ クラウドの最新を自動で読み込みました';
+    applyHide();goToday();toast('最新のデータを読み込みました');
   }catch(e){}
 }
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncCheckOnLoad();});
 function renderSync(){
   const c=syncCfg();const tk=syncToken();
   return `<div class="card" id="syncCard"><h3>☁️ クラウド同期</h3>
