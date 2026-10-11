@@ -94,7 +94,8 @@ main{padding:10px 12px}
 .fl .bal{text-align:right;white-space:nowrap;font-weight:800;font-variant-numeric:tabular-nums}.fl .bal small{display:block;font-weight:400;font-size:11px;color:var(--text2)}
 .fl.edge{background:var(--card2);border-radius:10px;border-top:0;margin:4px 0;padding:9px 8px}
 .fl.past{opacity:.75}
-.accchips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;padding-left:36px;margin-top:2px}.accchips span{font-size:11px;padding:1px 7px;border-radius:99px;font-variant-numeric:tabular-nums;white-space:nowrap}.accchips .ac{background:var(--card2);color:var(--text2);font-weight:600}
+.cf .fl{padding:3px 2px;gap:0 6px}.cf .fl.edge,.cf .fl.now{padding:4px 8px;margin:2px 0}.cf .fl .ic{width:20px;font-size:13px}.cf .fl .t b{font-size:12.5px}.cf .fl .t b small{display:inline;font-weight:400;color:var(--text2);margin-left:4px;font-size:10.5px}.cf .fl .bal{font-size:12.5px}
+.accchips{flex-basis:100%;display:flex;flex-wrap:wrap;gap:3px;padding-left:26px}.cf .fl.edge .accchips,.cf .fl.now .accchips{flex-basis:auto;padding-left:0;margin-left:auto;justify-content:flex-end}.cf .fl.edge .t,.cf .fl.now .t{flex:none}.accchips span{font-size:10px;line-height:1.5;padding:0 6px;border-radius:99px;font-variant-numeric:tabular-nums;white-space:nowrap}.accchips .ac{background:var(--card2);color:var(--text2);font-weight:600}
 .flbd{padding:0 4px 4px 36px;background:var(--card2);border-radius:0 0 10px 10px}
 .cyc{border-top:1px solid var(--line);padding-top:8px;margin-top:8px}.cyc .cyh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .cyc .cdot{display:inline-block;width:8px;height:18px;border-radius:3px}.cyc .fl{border-top:0;padding:6px 8px}.cyc .fl .t b{white-space:normal}.wdd{font-weight:800;color:var(--text)}
@@ -158,7 +159,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.7.3';
+const APP_VERSION='v1.7.4';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -956,12 +957,12 @@ function renderChain(){
       bal[x.acc]+=x.v;const v=bal[x.acc];if(v<0&&x.v<0&&!minD)minD=x.date;
       const key=x.g?x.g.card.id+'|'+x.g.date:null;const open=key&&openWd[key];
       const click=key?`openWd['${key}']=!openWd['${key}'];render()`:x.e&&!x.e.bill?clickFor(x.e):'';
-      body+=`<div class="fl${x.date<=t?' past':''}${click?' tap':''}" style="flex-wrap:wrap" ${click?`onclick="${click}"`:''}><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b><small>${md(x.date)}</small></div>
+      body+=`<div class="fl${x.date<=t?' past':''}${click?' tap':''}" style="flex-wrap:wrap" ${click?`onclick="${click}"`:''}><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}<small>${md(x.date)}</small>${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b></div>
         <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span></div>${chips(x.acc)}</div>`;
       if(open)body+=`<div class="flbd">${wdItems(x.g)}</div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
-    h+=`<div class="card"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
+    h+=`<div class="card cf"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
   });
   // 概要（その先〜6期／12期先）
   const rest=all.filter(r=>r.k>last);
