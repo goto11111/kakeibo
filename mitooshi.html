@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.5.2';
+const APP_VERSION='v1.5.3';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1174,9 +1174,30 @@ function everyLabel(r){
   if(r.every==='month')return `毎月${r.day==='end'?'末日':r.day+'日'}${r.adjust&&r.adjust!=='none'?`（土日祝は${r.adjust==='prev'?'前':'後'}）`:''}`;
   if(r.every==='week')return `毎週${WD[pd(r.start).getDay()]}曜`;if(r.every==='2week')return `2週ごと（${WD[pd(r.start).getDay()]}曜）`;return `${r.n}日ごと`;
 }
+function renderSummary(){
+  const st=S.settings;const pk=periodKeyOf(todayStr());const [s,e]=periodRange(pk);
+  const row=(ic,title,sub,amt,click)=>`<div class="li tap" onclick="${click}"><div class="ic">${ic}</div><div class="t"><b>${title}</b>${sub?`<small>${sub}</small>`:''}</div>${amt!=null?`<div class="a">${amt}</div>`:''}<span class="muted">›</span></div>`;
+  const sec=t=>`<div class="tl-d">${t}</div>`;
+  let h=`<div class="card"><h3>📋 いまの設定のまとめ（タップで直せます）</h3>`;
+  h+=sec('📆 月のはじまり')+row('📆',`毎月${st.startDay==='end'?'末日':st.startDay+'日'}から`,`土日祝は${st.shift==='prev'?'前の平日':st.shift==='next'?'次の平日':'ずらさない'}・今期 ${rangeLabel(pk)}`,null,"document.getElementById('setMonth').scrollIntoView({behavior:'smooth'})");
+  h+=row('🔄',S.start?`スタート日 ${md(S.start)}`:'仕切り直しはまだです',S.start?`スタート前のカード請求 ${(S.startBills||[]).length}件・${fmt((S.startBills||[]).reduce((a,b)=>a+Number(b.amount),0))}円`:'スタート日の残高を入れて始め直せます',null,'openRestart()');
+  h+=sec('🏦 口座・財布（スタート時の残高）')+S.accounts.map(a=>row(a.type==='wallet'?'👛':'🏦',esc(a.name),`${md(a.openingDate)}の朝`,Y(Number(a.opening)||0),`editAcc('${a.id}')`)).join('');
+  h+=sec('💳 カード')+S.cards.map(c=>row('💳',esc(c.name),`${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}から`,null,`editCard('${c.id}')`)).join('');
+  const rin=S.recurring.filter(r=>r.type==='in'),rout=S.recurring.filter(r=>r.type==='out');
+  h+=sec('💴 定期収入')+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}`,`<span class="in">+${fmt(r.amount)}円</span>`,`editRec('${r.id}')`)).join('')||'<div class="muted">なし（給料を登録すると見通しが出ます）</div>');
+  h+=sec('🔁 固定費（毎回決まって出るお金）')+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}`,`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||'<div class="muted">なし</div>');
+  const b=budgetOf(pk);const bc=Object.keys(b.cats||{}).filter(k=>Number(b.cats[k])>0);
+  h+=sec('📊 予算（手で記録する支出の上限）')+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):row('📊','予算はまだありません','食費・日用品などを予算で管理するならここから',null,"setTab('bud');editBudget()"));
+  const ag=(S.goals||[]).filter(g=>goalStatus(g).remain>0);
+  h+=sec('🎯 目標（返済・積立）')+(ag.map(g=>row(esc(g.icon||'🎯'),esc(g.name),`毎月${g.day==='end'?'末日':g.day+'日'}・${esc(mName(goalMethod(g)))}・あと${fmt(goalStatus(g).remain)}円`,`-${fmt(g.monthly)}円`,`editGoal('${g.id}')`)).join('')||'<div class="muted">なし</div>');
+  h+='</div>';
+  // 期ごとのお金の流れ（前の期から引き継ぎ）
+  h+=renderChain();
+  return h;
+}
 function renderSet(){
   const st=S.settings;const t=new Date();
-  let h=`<div class="card" id="setMonth"><h3>📆 月のはじまり</h3>
+  let h=renderSummary()+`<div class="card" id="setMonth"><h3>📆 月のはじまり</h3>
     <div class="fld"><label>開始日</label><select onchange="setS('startDay',this.value==='end'?'end':Number(this.value))">${dayOpts(st.startDay,true)}</select></div>
     <div class="fld"><label>開始日が土日祝のとき</label><select onchange="setS('shift',this.value)">${['prev','next','none'].map(k=>`<option value="${k}" ${st.shift===k?'selected':''}>${{prev:'前の平日にする（給料の前倒し）',next:'次の平日にする',none:'ずらさない'}[k]}</option>`).join('')}</select></div>
     <div class="fld"><label>その期間を何月と呼ぶか</label><select onchange="setS('nameBy',this.value)"><option value="start" ${st.nameBy==='start'?'selected':''}>始まる月（9/15〜10/14 → 9月）</option><option value="end" ${st.nameBy==='end'?'selected':''}>終わる月（9/15〜10/14 → 10月）</option></select></div>
