@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.7.0';
+const APP_VERSION='v1.7.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -946,15 +946,16 @@ function renderChain(){
     accs.forEach(a=>{let d=from,pv=savedIn(pots,dayBefore(from),a.id);
       while(d<=r.e){const sv=savedIn(pots,d,a.id);if(sv!==pv)items.push({date:d,acc:a.id,ic:'🐷',lb:sv>pv?'貯金へ取り分け':'貯金から',v:pv-sv,ord:2});pv=sv;d=ds(addDays(pd(d),1));}});
     items.sort((a,b)=>cmp(a.date,b.date)||a.ord-b.ord);
-    const accLines=()=>`<div class="bal">${accs.map(a=>`<small>${accIc(a)}${esc(a.name)} <b class="${bal[a.id]<0?'out':''}" style="color:${bal[a.id]<0?'':'var(--text)'}">${fmt(bal[a.id])}円</b></small>`).join('')}</div>`;
+    const accRows=hit=>accs.map(a=>{const on=a.id===hit;return `<small${on?' style="background:var(--pri2);color:var(--pri);border-radius:6px;padding:0 4px;margin-right:-4px"':''}>${accIc(a)}${esc(a.name)} <b class="${bal[a.id]<0?'out':''}" style="${bal[a.id]<0?'':on?'color:var(--pri)':'color:var(--text)'}">${fmt(bal[a.id])}円</b></small>`;}).join('');
+    const accLines=()=>`<div class="bal">${accRows()}</div>`;
     const edge=(ic,b,cls)=>`<div class="fl ${cls}"><div class="ic">${ic}</div><div class="t">${b}</div>${accLines()}</div>`;
     let body=edge('🏁',`<b>${from===S.start?`スタート時（${md(S.start)}）`:'前の期から'}</b>`,'edge');
     let nowShown=!r.now,minD=null;
     items.forEach(x=>{
       if(!nowShown&&x.date>t){nowShown=true;body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');}
-      bal[x.acc]+=x.v;const a=accById(x.acc);const v=bal[x.acc];if(v<0&&x.v<0&&!minD)minD=x.date;
+      bal[x.acc]+=x.v;const v=bal[x.acc];if(v<0&&x.v<0&&!minD)minD=x.date;
       body+=`<div class="fl${x.date<=t?' past':''}"><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}</b><small>${md(x.date)}</small></div>
-        <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span><small>→ ${accIc(a)}${esc(a.name)} <b class="${v<0?'out':''}">${Y(v)}</b></small></div></div>`;});
+        <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span>${accRows(x.acc)}</div></div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
     h+=`<div class="card"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
