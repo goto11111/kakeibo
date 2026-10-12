@@ -58,7 +58,6 @@ main{padding:10px 12px}
 .cal .h.s0{color:var(--sun)}.cal .h.s6{color:var(--sat)}
 .day{min-height:62px;border-radius:9px;padding:3px 3px 2px;background:var(--card);border:1px solid transparent;cursor:pointer;overflow:hidden;display:flex;flex-direction:column}
 .day.dim{opacity:.38}
-.day.win{background:color-mix(in srgb,var(--warn) 14%,var(--card))}
 .day.sel{background:var(--sel);border-color:var(--warn)}
 .day .n{font-size:12px;font-weight:700}
 .day.today .n{background:var(--today);color:var(--onpri);border-radius:99px;display:inline-block;min-width:20px;text-align:center}
@@ -157,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.10.3';
+const APP_VERSION='v1.11.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -668,10 +667,9 @@ function renderCal(){
   const [s,e]=periodRange(curKey);const t=todayStr();
   const f=flows(curKey);const b=budgetOf(curKey);
   const ents=entries(s,e);const byDay={};
-  // 支払い日が決まっていない固定費（未払い）は、期間の全部の日に帯を出し、初日に金額を出す
-  const winByDay={};entries(ds(addDays(pd(s),-62)),e).filter(x=>x.win&&x.win.e>=s).forEach(x=>{
-    for(let d=pd(x.win.s);ds(d)<=x.win.e;d=addDays(d,1))(winByDay[ds(d)]||(winByDay[ds(d)]=[])).push(x);});
-  ents.forEach(x=>{if(x.type==='move'||x.win)return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
+  // 日付か金額がまだ確定していない固定費は、カレンダーには載せず（計算には入れる）、上の一覧にだけ出す。確定したら載る
+  const unsure=x=>!!(x.win||x.est);
+  ents.forEach(x=>{if(x.type==='move'||unsure(x))return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
   const plansByDay={};(reserveSkip(s)?[]:planItems(curKey)).filter(it=>!it.done&&it.date).forEach(it=>(plansByDay[it.date]||(plansByDay[it.date]=[])).push(it));
   const gs=groupCharges(charges(s,e));const wdByDay={};gs.forEach(g=>(wdByDay[g.date]||(wdByDay[g.date]=[])).push(g));
   // 要約
@@ -680,8 +678,12 @@ function renderCal(){
   if(!S.ui.setupDone&&S.accounts.every(a=>!Number(a.opening))&&!S.recurring.length){
     top+=`<div class="banner">👋 はじめに <b>⚙️設定</b> で「口座の今の残高」と「給料（定期収入）」を登録すると、この先いくら使えるかが出ます。カードの締め日・引き落とし日は既存の家計管理の設定を読み込んで初期登録済みです。<div style="margin-top:6px" class="row"><button class="btn sm" onclick="setTab('set')">設定を開く</button><button class="btn sm sub" onclick="S.ui.setupDone=true;save();render()">あとで</button></div></div>`;
   }
-  const miss=missingRecs();
-  if(miss.length)top+=`<div class="banner"><b>⚠️ 入力が済んでいない固定費</b>（いまは見込みで計算中）${miss.map(x=>`<div class="row tap" style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08)" onclick="openRecOcc('${x.rid}','${x.key}')"><span class="sp">${x.win?`${md(x.win.s)}〜${md(x.win.e)}`:md(x.date)} ${esc(x.memo)}<br><small>${missLabel(x)}</small></span><span>${fmt(x.amount)}円 ›</span></div>`).join('')}</div>`;
+  // この期の未確定分＋前の期から残っている入力忘れ
+  const pend=entries(ds(addDays(pd(s),-62)),e).filter(x=>unsure(x)&&(x.win?x.win.e:x.date)>=s);
+  const pids=new Set(pend.map(x=>x.id));missingRecs().forEach(x=>{if(!pids.has(x.id))pend.push(x);});
+  pend.sort((a,b)=>cmp(a.key,b.key));
+  const pendLabel=x=>x.missing?missLabel(x):x.win&&x.est?'日付・金額が未定':x.win?'日付が未定':'金額が未定';
+  if(pend.length)top+=`<div class="banner"><b>📝 まだ確定していない固定費</b>（見込みで計算に入れています。確定するとカレンダーに載ります）${pend.map(x=>`<div class="row tap" style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08)" onclick="openRecOcc('${x.rid}','${x.key}')"><span class="sp">${x.win?`${md(x.win.s)}〜${md(x.win.e)}`:md(x.date)} ${esc(x.memo)}<br><small>${x.missing?'⚠️ ':''}${pendLabel(x)}</small></span><span>${x.est?'見込み ':''}${fmt(x.amount)}円 ›</span></div>`).join('')}</div>`;
   const fc=forecast(horizonEnd(fcH));const nw=nextWithdraw();
   const cp=cashPeriod(s,e),cpNow=cp&&t>=S.start?cashPeriod(S.start,t):null;
   const leftHtml=b.total>0
@@ -707,10 +709,9 @@ function renderCal(){
   let cal='<div class="cal">'+[...WD].map((w,i)=>`<div class="h s${i}">${w}</div>`).join('');
   for(let d=st;d<=en;d=addDays(d,1)){
     const k=ds(d);const o=byDay[k];const w=wdByDay[k];
-    const cls=['day',winByDay[k]?'win':'',k<s||k>e?'dim':'',k===t?'today':'',k===sel?'sel':'',isHol(d)?'hol':'','w'+d.getDay()].join(' ');
+    const cls=['day',k<s||k>e?'dim':'',k===t?'today':'',k===sel?'sel':'',isHol(d)?'hol':'','w'+d.getDay()].join(' ');
     cal+=`<div class="${cls}" onclick="pickDay('${k}')"><span class="n">${d.getDate()}</span>
       ${plansByDay[k]?`<span class="v muted">📌${fmtS(plansByDay[k].reduce((a,x)=>a+Number(x.amount),0))}</span>`:''}${o&&o.i?`<span class="v in amt">+${fmtS(o.i)}</span>`:''}${o&&o.o?`<span class="v out amt">-${fmtS(o.o)}</span>`:''}
-      ${(winByDay[k]||[]).filter(x=>x.win.s===k).map(x=>`<span class="v amt" style="color:var(--warn)">⏳${fmtS(x.amount)}</span>`).join('')}
       ${w?w.map(g=>`<span class="cw" style="background:${cardColor(g.card)}">💳<span class="amt">${fmtS(g.total)}</span></span>`).join(''):''}</div>`;
   }
   cal+='</div>';
@@ -724,7 +725,7 @@ function renderCal(){
     <div><div class="muted">収入</div><b class="in">${Y(f.inn)}</b></div>
     <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(f.out)}</b></div>
     <div><div class="muted">収支</div><b>${Y(f.inn-f.out)}</b></div></div>`;
-  return top+`<div class="card">${cal}${sum}</div>`+renderDayPanel(sel,ents,wdByDay[sel],plansByDay[sel],winByDay[sel])+cardCycles(curKey);
+  return top+`<div class="card">${cal}${sum}</div>`+renderDayPanel(sel,ents.filter(x=>!unsure(x)),wdByDay[sel],plansByDay[sel])+cardCycles(curKey);
 }
 function openWdDay(d){sel=d;curKey=periodKeyOf(d);openWd={};groupCharges(charges(d,d)).forEach(g=>openWd[g.card.id+'|'+g.date]=1);render();
   const p=document.getElementById('dayPanel');if(p)p.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -751,8 +752,8 @@ function entryRow(x){
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
-function renderDayPanel(day,ents,wds,plans,wins){
-  const list=ents.filter(x=>x.date===day&&!x.win).concat(wins||[]);
+function renderDayPanel(day,ents,wds,plans){
+  const list=ents.filter(x=>x.date===day);
   let h=`<div class="card" id="dayPanel"><div class="row"><b>${md(day)}${isHol(pd(day))?' <span class="pill r">祝</span>':''}</b><div class="sp"></div>
     <span class="muted" style="margin-right:56px">日付2回タップでも追加</span></div>`;
   if(wds&&wds.length)h+=wds.map(g=>`<div class="li tap" onclick="openWd['${g.card.id}|${g.date}']=!openWd['${g.card.id}|${g.date}'];render()"><div class="ic" style="background:${cardColor(g.card)};color:#fff">💳</div>
