@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.8.0';
+const APP_VERSION='v1.9.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -357,17 +357,31 @@ function recDates(r,from,to){
 // 記録＋固定費の発生分（from〜to、購入日ベース）
 function entries(from,to){
   const out=S.tx.filter(t=>t.date>=from&&t.date<=to).map(t=>Object.assign({},t));
-  S.recurring.forEach(r=>recDates(r,from,to).forEach(d=>{
-    const ex=(r.ex||{})[d];if(ex&&ex.skip)return;
-    out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date:d,type:r.type,amount:(ex&&ex.amount!=null)?ex.amount:r.amount,
-      cat:r.cat,method:r.method,count:1,memo:r.name});
-  }));
+  const t=todayStr();
+  S.recurring.forEach(r=>{const est=r.vary?recEst(r):r.amount;recDates(r,from,to).forEach(d=>{
+    const ex=(r.ex||{})[d];if(ex&&ex.skip)return;const has=ex&&ex.amount!=null;
+    out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date:d,type:r.type,amount:has?ex.amount:est,
+      cat:r.cat,method:r.method,count:1,memo:r.name,est:!!r.vary&&!has,missing:!!r.vary&&!has&&d<=t});
+  });});
   (S.goals||[]).forEach(g=>goalPays(g,to).forEach(p=>{
     if(p.skip||p.amount<=0||p.date<from)return;const m=goalMethod(g);const fa=accOf(m);const mv=g.kind==='save'&&fa&&g.toAcc;
     out.push({id:'g:'+g.id+':'+p.date,gid:g.id,goal:true,date:p.date,type:mv?'move':'out',amount:p.amount,cat:g.kind==='debt'?'repay':'saving',
       method:m,from:fa?fa.id:null,to:g.toAcc,count:1,memo:'🎯 '+g.name,k:p.k,after:p.after});
   }));
   return out.sort((a,b)=>cmp(a.date,b.date));
+}
+// 金額が変わる固定費（ガス・電気など）：まだ金額を入れていない回は、直近3回の実際の金額（平均か最大）で見込む。
+// 実際の金額がまだ1回もなければ、設定の金額を見込みにする
+function recActuals(r){return Object.keys(r.ex||{}).filter(d=>r.ex[d]&&!r.ex[d].skip&&r.ex[d].amount!=null).sort().map(d=>({date:d,amount:Number(r.ex[d].amount)||0}));}
+function recEst(r){
+  const a=recActuals(r).slice(-3).map(x=>x.amount);if(!a.length)return Number(r.amount)||0;
+  return r.est==='max'?Math.max(...a):Math.round(a.reduce((s,v)=>s+v,0)/a.length);
+}
+const estLabel=r=>r.est==='max'?'直近3回の最大':'直近3回の平均';
+// 日付が過ぎたのに金額を入れていない回（スタート日か90日前のどちらか遅いほうから今日まで）
+function missingRecs(){
+  const t=todayStr();const back=ds(addDays(pd(t),-90));const from=S.start&&S.start>back?S.start:back;
+  return entries(from,t).filter(x=>x.missing);
 }
 // ── 🎯 目標（返済・積立）：毎月の支払いを残りがなくなるまで並べる ──
 function goalMethod(g){return g.method||(g.fromAcc?'a:'+g.fromAcc:'a:'+((S.accounts.find(a=>a.type==='bank')||S.accounts[0]||{}).id));}
@@ -484,7 +498,7 @@ function cashPeriod(s,e){
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
       else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';lb=`${x.r.label||'予算'}（予算）`;}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
-      else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=x.e.memo||c.name;}
+      else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=(x.e.memo||c.name)+(x.e.est?'（見込み）':'');}
       r.list.push({date:x.date,ic,lb,acc:a?a.name:'',v:x.delta,kind:x.kind});}
     if(x.kind==='in')r.inn+=x.delta;
     else if(x.kind==='card'){r.card-=x.delta;r.cards[x.g.card.name]=(r.cards[x.g.card.name]||0)-x.delta;}
@@ -644,6 +658,8 @@ function renderCal(){
   if(!S.ui.setupDone&&S.accounts.every(a=>!Number(a.opening))&&!S.recurring.length){
     top+=`<div class="banner">👋 はじめに <b>⚙️設定</b> で「口座の今の残高」と「給料（定期収入）」を登録すると、この先いくら使えるかが出ます。カードの締め日・引き落とし日は既存の家計管理の設定を読み込んで初期登録済みです。<div style="margin-top:6px" class="row"><button class="btn sm" onclick="setTab('set')">設定を開く</button><button class="btn sm sub" onclick="S.ui.setupDone=true;save();render()">あとで</button></div></div>`;
   }
+  const miss=missingRecs();
+  if(miss.length)top+=`<div class="banner"><b>⚠️ 金額を入れていない固定費</b>（いまは見込みで計算中）${miss.map(x=>`<div class="row tap" style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08)" onclick="openRecOcc('${x.rid}','${x.date}')"><span class="sp">${md(x.date)} ${esc(x.memo)}</span><span>見込み ${fmt(x.amount)}円 ›</span></div>`).join('')}</div>`;
   const fc=forecast(horizonEnd(fcH));const nw=nextWithdraw();
   const cp=cashPeriod(s,e),cpNow=cp&&t>=S.start?cashPeriod(S.start,t):null;
   const leftHtml=b.total>0
@@ -706,7 +722,7 @@ function entryRow(x){
   const c=catById(x.cat);const card=cardOf(x.method);
   let sub=mName(x.method);
   if(card&&x.type==='out'){const ps=portions(x,card);sub+=` → ${md(ps[0].date)}引落${ps.length>1?`（${ps.length}回払い）`:''}`;}
-  if(x.rec)sub='🔁 固定費・'+sub;
+  if(x.rec)sub=(x.missing?'⚠️ 金額未入力（見込み）・':x.est?'見込み・':'')+'🔁 固定費・'+sub;
   if(x.pot){const g=goalById(x.pot);sub='🐷 '+(g?g.name:'貯金')+'から・'+sub;}
   if(x.plan){const [pid,pk]=x.plan.split('@');const it=(budgetOf(pk).items||[]).find(i=>i.id===pid);sub='📌 '+(it?it.name:'予算')+'・'+sub;}
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
@@ -847,6 +863,13 @@ function sheet(title,body){document.getElementById('sheetIn').innerHTML=`<div cl
 // 固定費の1回分（この回だけ変更／スキップ）
 function openRecOcc(rid,date){
   const r=S.recurring.find(x=>x.id===rid);if(!r)return;const ex=(r.ex||{})[date]||{};
+  if(r.vary){const est=recEst(r),has=ex.amount!=null;
+    sheet(`${esc(r.name)}（${md(date)}）`,`<div class="fld"><label>この回の実際の金額</label><input type="text" inputmode="numeric" id="occAmt" value="${has?ex.amount:''}" placeholder="見込み ${fmt(est)}" onkeydown="if(event.key==='Enter')saveOcc('${rid}','${date}',false)"></div>
+      <div class="note">${has?'入れた金額で計算しています。':`まだ入れていないので、見込み ${fmt(est)}円（${recActuals(r).length?estLabel(r):'設定の金額'}）で計算しています。`}明細や検針票の金額を入れると、この回はその金額になり、これから先の見込みにも使われます。</div>
+      <div class="grid2" style="margin-top:10px"><button class="btn" onclick="saveOcc('${rid}','${date}',false)">この金額にする</button><button class="btn sub" onclick="saveOcc('${rid}','${date}',true)">この回はスキップ</button></div>
+      ${has||ex.skip?`<button class="btn sub" style="margin-top:8px" onclick="clearOcc('${rid}','${date}')">見込みに戻す</button>`:''}
+      <button class="btn sub" style="margin-top:8px" onclick="editRec('${rid}')">固定費の設定を開く</button>`);
+    const a=document.getElementById('occAmt');if(a&&!has)a.focus();return;}
   sheet(`${esc(r.name)}（${md(date)}）`,`<div class="fld"><label>この回の金額</label><input type="number" inputmode="numeric" id="occAmt" value="${ex.amount!=null?ex.amount:r.amount}"></div>
     <div class="note">変更はこの回だけに反映されます。毎回の金額を変えるときは固定費の設定から。</div>
     <div class="grid2" style="margin-top:10px"><button class="btn" onclick="saveOcc('${rid}','${date}',false)">この回だけ変更</button><button class="btn sub" onclick="saveOcc('${rid}','${date}',true)">この回はスキップ</button></div>
@@ -854,9 +877,13 @@ function openRecOcc(rid,date){
 }
 function saveOcc(rid,date,skip){
   const r=S.recurring.find(x=>x.id===rid);r.ex=r.ex||{};
-  if(skip)r.ex[date]={skip:true};else{const v=Number(document.getElementById('occAmt').value);r.ex[date]={amount:v>=0?v:r.amount};}
+  if(skip)r.ex[date]={skip:true};
+  else if(r.vary){const raw=String(document.getElementById('occAmt').value).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^\d]/g,'');
+    if(raw===''){toast('金額を入れてください');return;}r.ex[date]={amount:Number(raw)};}
+  else{const v=Number(document.getElementById('occAmt').value);r.ex[date]={amount:v>=0?v:r.amount};}
   save();closeSheet();render();
 }
+function clearOcc(rid,date){const r=S.recurring.find(x=>x.id===rid);if(r&&r.ex)delete r.ex[date];save();closeSheet();render();}
 
 // ── 💳 引き落とし ──
 // カードの請求の中身（タップで開く）
@@ -940,7 +967,7 @@ function renderChain(){
       else if(x.kind==='reserve'){ic='📊';lb=(x.r.label||'予算')+'（予算）';}
       else if(x.kind==='move'){ic='🔁';const gl=x.e.goal&&goalById(x.e.gid);lb=gl?gl.name+' 積立':'振替';}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
-      else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=x.e.memo||cc.name;}
+      else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=(x.e.memo||cc.name)+(x.e.est?'（見込み）':'');}
       items.push({date:x.date,acc:x.acc,ic,lb,v:x.delta,ord:x.delta>0?1:3,g:x.kind==='card'?x.g:null,e:x.kind!=='card'&&x.kind!=='reserve'?x.e:null});});
     accs.forEach(a=>{let d=from,pv=savedIn(pots,dayBefore(from),a.id);
       while(d<=r.e){const sv=savedIn(pots,d,a.id);if(sv!==pv)items.push({date:d,acc:a.id,ic:'🐷',lb:sv>pv?'貯金へ取り分け':'貯金から',v:pv-sv,ord:2});pv=sv;d=ds(addDays(pd(d),1));}});
@@ -1113,7 +1140,7 @@ function renderSummary(){
   h+=sec('💳 カード','editCard()')+(S.cards.map(c=>row(`<span class="cdot" style="display:inline-block;width:8px;height:22px;border-radius:3px;background:${cardColor(c)}"></span>`,esc(c.name),`${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}`,null,`editCard('${c.id}')`)).join('')||none);
   const rin=S.recurring.filter(r=>r.type==='in'),rout=S.recurring.filter(r=>r.type==='out');
   h+=sec('💴 定期収入',"editRec('','in')")+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,`<span class="in">+${fmt(r.amount)}円</span>`,`editRec('${r.id}')`)).join('')||none);
-  h+=sec('🔁 固定費',"editRec('','out')")+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||none);
+  h+=sec('🔁 固定費',"editRec('','out')")+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,r.vary?`<small>見込み</small>-${fmt(recEst(r))}円`:`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||none);
   const b=budgetOf(pk);const bc=Object.keys(b.cats||{}).filter(k=>Number(b.cats[k])>0);
   h+=sec('📊 予算',"setTab('bud');editBudget()")+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):none);
   const ag=(S.goals||[]).filter(g=>goalStatus(g).remain>0);
@@ -1201,6 +1228,9 @@ function editRec(id,ty){
   const catOpts=t=>S.cats.filter(c=>c.kind===(t==='in'?'in':'out')).map(c=>`<option value="${c.id}" ${c.id===r.cat?'selected':''}>${c.icon} ${esc(c.name)}</option>`).join('');
   sheet(id?'固定費・定期収入を編集':'固定費・定期収入を追加',`<div class="seg" id="rType">${[['out','支出（固定費）'],['in','収入（給料など）']].map(([k,l])=>`<button class="${r.type===k?'on':''}" onclick="recType('${k}')">${l}</button>`).join('')}</div>
     <div class="row"><div class="fld sp"><label>名前</label><input id="rName" value="${esc(r.name)}" placeholder="例：家賃、給料"></div><div class="fld sp"><label>金額</label><input id="rAmt" type="number" inputmode="numeric" value="${r.amount||''}"></div></div>
+    <div class="fld"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="rVary" ${r.vary?'checked':''} onchange="document.getElementById('rEstRow').style.display=this.checked?'block':'none'" style="width:auto"> 毎回金額が変わる（ガス・電気・水道など）</label>
+      <div id="rEstRow" style="display:${r.vary?'block':'none'}"><select id="rEst">${[['avg','直近3回の平均で見込む'],['max','直近3回の最大で見込む（多めに見る）']].map(([k,l])=>`<option value="${k}" ${(r.est||'avg')===k?'selected':''}>${l}</option>`).join('')}</select>
+      <div class="note">各回の実際の金額は、カレンダーでその日の固定費をタップして入れます。入れた回はその金額で、まだの回は見込みで計算します。実際の金額がまだ1回もないうちは上の「金額」を見込みにします。日付が過ぎても入れていない回はカレンダーの上に出ます。</div></div></div>
     <div class="row"><div class="fld sp"><label>カテゴリ</label><select id="rCat">${catOpts(r.type)}</select></div><div class="fld sp"><label>支払い方法・入金先</label><select id="rMethod">${methodOpts(r.type)}</select></div></div>
     <div class="fld"><label>くり返し</label><select id="rEvery" onchange="recEvery()">${[['month','毎月'],['nmonth','◯か月ごと（2か月に1回など）'],['year','毎年'],['week','毎週'],['2week','2週ごと'],['ndays','◯日ごと']].map(([k,l])=>`<option value="${k}" ${r.every===k?'selected':''}>${l}</option>`).join('')}</select></div>
     <div class="row" id="rMonthRow"><div class="fld sp" id="rMonWrap"><label>月</label><select id="rMon">${[...Array(12)].map((_,i)=>`<option value="${i+1}" ${Number(r.month)===i+1?'selected':''}>${i+1}月</option>`).join('')}</select></div><div class="fld sp"><label>日</label><select id="rDay">${dayOpts(r.day,true)}</select></div><div class="fld sp"><label>土日祝のとき</label><select id="rAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${r.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div></div>
@@ -1218,7 +1248,7 @@ function recEvery(){const v=document.getElementById('rEvery').value;document.get
 function saveRec(id){
   const v=x=>document.getElementById(x).value;
   const o={name:v('rName').trim(),type:window._recT,amount:Number(v('rAmt'))||0,cat:v('rCat'),method:v('rMethod'),every:v('rEvery'),
-    day:v('rDay')==='end'?'end':Number(v('rDay')),month:Number(v('rMon'))||1,mInt:Number(v('rMInt'))||2,adjust:v('rAdj'),n:Math.max(1,Number(v('rN'))||10),start:v('rStart')||todayStr(),end:v('rEnd')||''};
+    day:v('rDay')==='end'?'end':Number(v('rDay')),month:Number(v('rMon'))||1,mInt:Number(v('rMInt'))||2,adjust:v('rAdj'),n:Math.max(1,Number(v('rN'))||10),start:v('rStart')||todayStr(),end:v('rEnd')||'',vary:document.getElementById('rVary').checked,est:v('rEst')};
   if(!o.name||o.amount<=0){toast('名前と金額を入れてください');return;}
   if(o.end&&o.end<o.start){toast('終わりの日が始まりより前です');return;}
   if(id){const r=S.recurring.find(x=>x.id===id);Object.assign(r,o);}else S.recurring.push(Object.assign({id:uid(),ex:{}},o));
