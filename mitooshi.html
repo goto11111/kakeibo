@@ -64,6 +64,8 @@ main{padding:10px 12px}
 .day.hol .n,.day.w0 .n{color:var(--sun)}.day.w6 .n{color:var(--sat)}
 .day.today.hol .n,.day.today.w0 .n,.day.today.w6 .n{color:var(--onpri)}
 .day .v{font-size:9.5px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.day .wb{display:block;height:4px;border-radius:2px;background:var(--warn);opacity:.55;margin:1px -3px}
+.day .wb.s{margin-left:2px}.day .wb.e{margin-right:2px}
 .day .cw{font-size:9px;line-height:1.2;margin-top:auto;border-radius:4px;padding:0 2px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* list */
 .li{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid var(--line)}
@@ -156,7 +158,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.10.1';
+const APP_VERSION='v1.10.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -666,7 +668,10 @@ function renderCal(){
   const [s,e]=periodRange(curKey);const t=todayStr();
   const f=flows(curKey);const b=budgetOf(curKey);
   const ents=entries(s,e);const byDay={};
-  ents.forEach(x=>{if(x.type==='move')return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
+  // 支払い日が決まっていない固定費（未払い）は、期間の全部の日に帯を出し、初日に金額を出す
+  const winByDay={};entries(ds(addDays(pd(s),-62)),e).filter(x=>x.win&&x.win.e>=s).forEach(x=>{
+    for(let d=pd(x.win.s);ds(d)<=x.win.e;d=addDays(d,1))(winByDay[ds(d)]||(winByDay[ds(d)]=[])).push(x);});
+  ents.forEach(x=>{if(x.type==='move'||x.win)return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
   const plansByDay={};(reserveSkip(s)?[]:planItems(curKey)).filter(it=>!it.done&&it.date).forEach(it=>(plansByDay[it.date]||(plansByDay[it.date]=[])).push(it));
   const gs=groupCharges(charges(s,e));const wdByDay={};gs.forEach(g=>(wdByDay[g.date]||(wdByDay[g.date]=[])).push(g));
   // 要約
@@ -705,6 +710,7 @@ function renderCal(){
     const cls=['day',k<s||k>e?'dim':'',k===t?'today':'',k===sel?'sel':'',isHol(d)?'hol':'','w'+d.getDay()].join(' ');
     cal+=`<div class="${cls}" onclick="pickDay('${k}')"><span class="n">${d.getDate()}</span>
       ${plansByDay[k]?`<span class="v muted">📌${fmtS(plansByDay[k].reduce((a,x)=>a+Number(x.amount),0))}</span>`:''}${o&&o.i?`<span class="v in amt">+${fmtS(o.i)}</span>`:''}${o&&o.o?`<span class="v out amt">-${fmtS(o.o)}</span>`:''}
+      ${(winByDay[k]||[]).filter(x=>x.win.s===k).map(x=>`<span class="v muted amt">⏳-${fmtS(x.amount)}</span>`).join('')}${winByDay[k]?`<span class="wb ${winByDay[k].some(x=>x.win.s===k)?'s':''} ${winByDay[k].some(x=>x.win.e===k)?'e':''}"></span>`:''}
       ${w?w.map(g=>`<span class="cw" style="background:${cardColor(g.card)}">💳<span class="amt">${fmtS(g.total)}</span></span>`).join(''):''}</div>`;
   }
   cal+='</div>';
@@ -718,7 +724,7 @@ function renderCal(){
     <div><div class="muted">収入</div><b class="in">${Y(f.inn)}</b></div>
     <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(f.out)}</b></div>
     <div><div class="muted">収支</div><b>${Y(f.inn-f.out)}</b></div></div>`;
-  return top+`<div class="card">${cal}${sum}</div>`+renderDayPanel(sel,ents,wdByDay[sel],plansByDay[sel])+cardCycles(curKey);
+  return top+`<div class="card">${cal}${sum}</div>`+renderDayPanel(sel,ents,wdByDay[sel],plansByDay[sel],winByDay[sel])+cardCycles(curKey);
 }
 function openWdDay(d){sel=d;curKey=periodKeyOf(d);openWd={};groupCharges(charges(d,d)).forEach(g=>openWd[g.card.id+'|'+g.date]=1);render();
   const p=document.getElementById('dayPanel');if(p)p.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -745,8 +751,8 @@ function entryRow(x){
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
-function renderDayPanel(day,ents,wds,plans){
-  const list=ents.filter(x=>x.date===day);
+function renderDayPanel(day,ents,wds,plans,wins){
+  const list=ents.filter(x=>x.date===day&&!x.win).concat(wins||[]);
   let h=`<div class="card" id="dayPanel"><div class="row"><b>${md(day)}${isHol(pd(day))?' <span class="pill r">祝</span>':''}</b><div class="sp"></div>
     <span class="muted" style="margin-right:56px">日付2回タップでも追加</span></div>`;
   if(wds&&wds.length)h+=wds.map(g=>`<div class="li tap" onclick="openWd['${g.card.id}|${g.date}']=!openWd['${g.card.id}|${g.date}'];render()"><div class="ic" style="background:${cardColor(g.card)};color:#fff">💳</div>
