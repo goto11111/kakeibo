@@ -64,6 +64,8 @@ main{padding:10px 12px}
 .day.hol .n,.day.w0 .n{color:var(--sun)}.day.w6 .n{color:var(--sat)}
 .day.today.hol .n,.day.today.w0 .n,.day.today.w6 .n{color:var(--onpri)}
 .day .v{font-size:9.5px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.day .wb{display:block;height:4px;border-radius:2px;background:var(--warn);opacity:.55;margin:1px -3px}
+.day .wb.s{margin-left:2px}.day .wb.e{margin-right:2px}
 .day .cw{font-size:9px;line-height:1.2;margin-top:auto;border-radius:4px;padding:0 2px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* list */
 .li{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid var(--line)}
@@ -156,7 +158,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.10.0';
+const APP_VERSION='v1.10.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -666,7 +668,10 @@ function renderCal(){
   const [s,e]=periodRange(curKey);const t=todayStr();
   const f=flows(curKey);const b=budgetOf(curKey);
   const ents=entries(s,e);const byDay={};
-  ents.forEach(x=>{if(x.type==='move')return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
+  // 支払い日が決まっていない固定費（未払い）は、期間の全部の日に帯を出し、初日に金額を出す
+  const winByDay={};entries(ds(addDays(pd(s),-62)),e).filter(x=>x.win&&x.win.e>=s).forEach(x=>{
+    for(let d=pd(x.win.s);ds(d)<=x.win.e;d=addDays(d,1))(winByDay[ds(d)]||(winByDay[ds(d)]=[])).push(x);});
+  ents.forEach(x=>{if(x.type==='move'||x.win)return;const o=byDay[x.date]||(byDay[x.date]={o:0,i:0});if(x.type==='out')o.o+=x.amount;else o.i+=x.amount;});
   const plansByDay={};(reserveSkip(s)?[]:planItems(curKey)).filter(it=>!it.done&&it.date).forEach(it=>(plansByDay[it.date]||(plansByDay[it.date]=[])).push(it));
   const gs=groupCharges(charges(s,e));const wdByDay={};gs.forEach(g=>(wdByDay[g.date]||(wdByDay[g.date]=[])).push(g));
   // 要約
@@ -705,6 +710,7 @@ function renderCal(){
     const cls=['day',k<s||k>e?'dim':'',k===t?'today':'',k===sel?'sel':'',isHol(d)?'hol':'','w'+d.getDay()].join(' ');
     cal+=`<div class="${cls}" onclick="pickDay('${k}')"><span class="n">${d.getDate()}</span>
       ${plansByDay[k]?`<span class="v muted">📌${fmtS(plansByDay[k].reduce((a,x)=>a+Number(x.amount),0))}</span>`:''}${o&&o.i?`<span class="v in amt">+${fmtS(o.i)}</span>`:''}${o&&o.o?`<span class="v out amt">-${fmtS(o.o)}</span>`:''}
+      ${(winByDay[k]||[]).filter(x=>x.win.s===k).map(x=>`<span class="v muted amt">⏳-${fmtS(x.amount)}</span>`).join('')}${winByDay[k]?`<span class="wb ${winByDay[k].some(x=>x.win.s===k)?'s':''} ${winByDay[k].some(x=>x.win.e===k)?'e':''}"></span>`:''}
       ${w?w.map(g=>`<span class="cw" style="background:${cardColor(g.card)}">💳<span class="amt">${fmtS(g.total)}</span></span>`).join(''):''}</div>`;
   }
   cal+='</div>';
@@ -718,7 +724,7 @@ function renderCal(){
     <div><div class="muted">収入</div><b class="in">${Y(f.inn)}</b></div>
     <div><div class="muted">支出${S.settings.basis==='withdraw'?'（引落日）':''}</div><b class="out">${Y(f.out)}</b></div>
     <div><div class="muted">収支</div><b>${Y(f.inn-f.out)}</b></div></div>`;
-  return top+`<div class="card">${cal}${sum}</div>`+renderDayPanel(sel,ents,wdByDay[sel],plansByDay[sel])+cardCycles(curKey);
+  return top+`<div class="card">${cal}${sum}</div>`+renderDayPanel(sel,ents,wdByDay[sel],plansByDay[sel],winByDay[sel])+cardCycles(curKey);
 }
 function openWdDay(d){sel=d;curKey=periodKeyOf(d);openWd={};groupCharges(charges(d,d)).forEach(g=>openWd[g.card.id+'|'+g.date]=1);render();
   const p=document.getElementById('dayPanel');if(p)p.scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -745,8 +751,8 @@ function entryRow(x){
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
-function renderDayPanel(day,ents,wds,plans){
-  const list=ents.filter(x=>x.date===day);
+function renderDayPanel(day,ents,wds,plans,wins){
+  const list=ents.filter(x=>x.date===day&&!x.win).concat(wins||[]);
   let h=`<div class="card" id="dayPanel"><div class="row"><b>${md(day)}${isHol(pd(day))?' <span class="pill r">祝</span>':''}</b><div class="sp"></div>
     <span class="muted" style="margin-right:56px">日付2回タップでも追加</span></div>`;
   if(wds&&wds.length)h+=wds.map(g=>`<div class="li tap" onclick="openWd['${g.card.id}|${g.date}']=!openWd['${g.card.id}|${g.date}'];render()"><div class="ic" style="background:${cardColor(g.card)};color:#fff">💳</div>
@@ -1257,10 +1263,9 @@ function editRec(id,ty){
       <div class="note">各回の実際の金額は、カレンダーでその日の固定費をタップして入れます。入れた回はその金額で、まだの回は見込みで計算します。実際の金額がまだ1回もないうちは上の「金額」を見込みにします。日付が過ぎても入れていない回はカレンダーの上に出ます。</div></div></div>
     <div class="row"><div class="fld sp"><label>カテゴリ</label><select id="rCat">${catOpts(r.type)}</select></div><div class="fld sp"><label>支払い方法・入金先</label><select id="rMethod">${methodOpts(r.type)}</select></div></div>
     <div class="fld"><label>くり返し</label><select id="rEvery" onchange="recEvery()">${[['month','毎月'],['nmonth','◯か月ごと（2か月に1回など）'],['year','毎年'],['week','毎週'],['2week','2週ごと'],['ndays','◯日ごと']].map(([k,l])=>`<option value="${k}" ${r.every===k?'selected':''}>${l}</option>`).join('')}</select></div>
-    <div class="row" id="rMonthRow"><div class="fld sp" id="rMonWrap"><label>月</label><select id="rMon">${[...Array(12)].map((_,i)=>`<option value="${i+1}" ${Number(r.month)===i+1?'selected':''}>${i+1}月</option>`).join('')}</select></div><div class="fld sp"><label>日</label><select id="rDay">${dayOpts(r.day,true)}</select></div><div class="fld sp"><label>土日祝のとき</label><select id="rAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${r.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div></div>
-    <div class="fld" id="rWinRow"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="rWin" ${r.win?'checked':''} onchange="document.getElementById('rWinTo').style.display=this.checked?'block':'none'" style="width:auto"> 支払い日が決まっていない（上の日〜この日のどこか）</label>
-      <div id="rWinTo" style="display:${r.win?'block':'none'}"><select id="rDayTo">${dayOpts(r.dayTo!=null&&r.dayTo!==''?r.dayTo:'end',true)}</select>
-      <div class="note">見通しでは、いちばん早い日（上の「日」）に出ていく扱いで計算します（足りなくなるのを見逃さないため）。払ったら、カレンダーでその回をタップして実際に払った日を入れてください。期間が過ぎても入れていない回はカレンダーの上に出ます。上の日より前の日を選ぶと翌月のその日までになります。</div></div></div>
+    <div class="fld" id="rWinRow" style="margin-bottom:2px"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="rWin" ${r.win?'checked':''} onchange="recWinUI()" style="width:auto"> 支払い日が決まっていない（◯日〜◯日のどこか）</label></div>
+    <div class="row" id="rMonthRow"><div class="fld sp" id="rMonWrap"><label>月</label><select id="rMon">${[...Array(12)].map((_,i)=>`<option value="${i+1}" ${Number(r.month)===i+1?'selected':''}>${i+1}月</option>`).join('')}</select></div><div class="fld sp"><label id="rDayLbl">日</label><select id="rDay">${dayOpts(r.day,true)}</select></div><div class="fld sp" id="rToWrap"><label>何日まで</label><select id="rDayTo">${dayOpts(r.dayTo!=null&&r.dayTo!==''?r.dayTo:'end',true)}</select></div><div class="fld sp" id="rAdjWrap"><label>土日祝のとき</label><select id="rAdj">${[['none','ずらさない'],['prev','前の平日'],['next','次の平日']].map(([k,l])=>`<option value="${k}" ${r.adjust===k?'selected':''}>${l}</option>`).join('')}</select></div></div>
+    <div class="note" id="rWinNote">見通しでは、いちばん早い日（何日から）に出ていく扱いで計算します。払ったら、カレンダーでその回をタップして実際に払った日を入れてください。期間が過ぎても入れていない回はカレンダーの上に出ます。「何日まで」に「何日から」より前の日を選ぶと、翌月のその日までになります。</div>
     <div class="fld" id="rMIntRow"><label>何か月ごと（「いつから」の日の月が1回目）</label><select id="rMInt">${[2,3,4,6].map(n=>`<option value="${n}" ${Number(r.mInt||2)===n?'selected':''}>${n}か月ごと</option>`).join('')}</select></div>
     <div class="fld" id="rNRow"><label>何日ごと</label><input id="rN" type="number" value="${r.n||10}"></div>
     <div class="row"><div class="fld sp"><label>いつから（毎週・◯日ごとはこの日が基準）</label><input id="rStart" type="date" value="${r.start}"></div><div class="fld sp"><label>いつまで（任意）</label><input id="rEnd" type="date" value="${r.end||''}"></div></div>
@@ -1271,7 +1276,11 @@ function recType(t){
   window._recT=t;document.querySelectorAll('#rType button').forEach((b,i)=>b.classList.toggle('on',(i===0)===(t==='out')));
   document.getElementById('rCat').innerHTML=window._recCO(t);document.getElementById('rMethod').innerHTML=window._recMO(t);
 }
-function recEvery(){const v=document.getElementById('rEvery').value;document.getElementById('rMonthRow').style.display=(v==='month'||v==='year'||v==='nmonth')?'flex':'none';document.getElementById('rMIntRow').style.display=v==='nmonth'?'block':'none';document.getElementById('rMonWrap').style.display=v==='year'?'block':'none';document.getElementById('rWinRow').style.display=(v==='month'||v==='nmonth')?'block':'none';document.getElementById('rNRow').style.display=v==='ndays'?'block':'none';}
+function recEvery(){const v=document.getElementById('rEvery').value;document.getElementById('rMonthRow').style.display=(v==='month'||v==='year'||v==='nmonth')?'flex':'none';document.getElementById('rMIntRow').style.display=v==='nmonth'?'block':'none';document.getElementById('rMonWrap').style.display=v==='year'?'block':'none';document.getElementById('rWinRow').style.display=(v==='month'||v==='nmonth')?'block':'none';document.getElementById('rNRow').style.display=v==='ndays'?'block':'none';recWinUI();}
+// 支払い日が決まっていないとき：「日」を「いつから」にして、横に「いつまで」を出す（土日祝のずらしは隠す）
+function recWinUI(){const v=document.getElementById('rEvery').value;const on=document.getElementById('rWin').checked&&(v==='month'||v==='nmonth');
+  document.getElementById('rDayLbl').textContent=on?'何日から':'日';document.getElementById('rToWrap').style.display=on?'block':'none';
+  document.getElementById('rAdjWrap').style.display=on?'none':'block';document.getElementById('rWinNote').style.display=on?'block':'none';}
 function saveRec(id){
   const v=x=>document.getElementById(x).value;
   const o={name:v('rName').trim(),type:window._recT,amount:Number(v('rAmt'))||0,cat:v('rCat'),method:v('rMethod'),every:v('rEvery'),
