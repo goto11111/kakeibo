@@ -58,14 +58,13 @@ main{padding:10px 12px}
 .cal .h.s0{color:var(--sun)}.cal .h.s6{color:var(--sat)}
 .day{min-height:62px;border-radius:9px;padding:3px 3px 2px;background:var(--card);border:1px solid transparent;cursor:pointer;overflow:hidden;display:flex;flex-direction:column}
 .day.dim{opacity:.38}
+.day.win{background:color-mix(in srgb,var(--warn) 14%,var(--card))}
 .day.sel{background:var(--sel);border-color:var(--warn)}
 .day .n{font-size:12px;font-weight:700}
 .day.today .n{background:var(--today);color:var(--onpri);border-radius:99px;display:inline-block;min-width:20px;text-align:center}
 .day.hol .n,.day.w0 .n{color:var(--sun)}.day.w6 .n{color:var(--sat)}
 .day.today.hol .n,.day.today.w0 .n,.day.today.w6 .n{color:var(--onpri)}
 .day .v{font-size:9.5px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
-.day .wb{display:block;height:4px;border-radius:2px;background:var(--warn);opacity:.55;margin:1px -3px}
-.day .wb.s{margin-left:2px}.day .wb.e{margin-right:2px}
 .day .cw{font-size:9px;line-height:1.2;margin-top:auto;border-radius:4px;padding:0 2px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* list */
 .li{display:flex;align-items:center;gap:10px;padding:9px 2px;border-top:1px solid var(--line)}
@@ -158,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.10.2';
+const APP_VERSION='v1.10.3';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -344,8 +343,9 @@ function recDates(r,from,to){
       // ◯か月ごと：「いつから」の月を基準に、mInt か月おきの月だけ
       if(r.every==='nmonth'&&(((yy*12+m0-stIdx)%mInt)+mInt)%mInt!==0){m++;continue;}
       const L=lastDay(yy,m0);const day=r.day==='end'?L:Math.min(Number(r.day)||1,L);
-      const x=ds(adjust(new Date(yy,m0,day),r.adjust||'none'));
-      if(x>=s&&x<=e&&x>=r.start)res.push(x);
+      const raw=ds(new Date(yy,m0,day)),x=ds(adjust(new Date(yy,m0,day),r.adjust||'none'));
+      // いつから・いつまでは土日祝でずらす前の日で判定（ずらして前に出た初回・後ろに出た最終回が消えないように）
+      if(x>=from&&x<=to&&raw>=r.start&&(!r.end||raw<=r.end))res.push(x);
       m++;
     }
   }else{
@@ -707,10 +707,10 @@ function renderCal(){
   let cal='<div class="cal">'+[...WD].map((w,i)=>`<div class="h s${i}">${w}</div>`).join('');
   for(let d=st;d<=en;d=addDays(d,1)){
     const k=ds(d);const o=byDay[k];const w=wdByDay[k];
-    const cls=['day',k<s||k>e?'dim':'',k===t?'today':'',k===sel?'sel':'',isHol(d)?'hol':'','w'+d.getDay()].join(' ');
+    const cls=['day',winByDay[k]?'win':'',k<s||k>e?'dim':'',k===t?'today':'',k===sel?'sel':'',isHol(d)?'hol':'','w'+d.getDay()].join(' ');
     cal+=`<div class="${cls}" onclick="pickDay('${k}')"><span class="n">${d.getDate()}</span>
       ${plansByDay[k]?`<span class="v muted">📌${fmtS(plansByDay[k].reduce((a,x)=>a+Number(x.amount),0))}</span>`:''}${o&&o.i?`<span class="v in amt">+${fmtS(o.i)}</span>`:''}${o&&o.o?`<span class="v out amt">-${fmtS(o.o)}</span>`:''}
-      ${(winByDay[k]||[]).filter(x=>x.win.s===k).map(x=>`<span class="v muted amt">⏳-${fmtS(x.amount)}</span>`).join('')}${winByDay[k]?`<span class="wb ${winByDay[k].some(x=>x.win.s===k)?'s':''} ${winByDay[k].some(x=>x.win.e===k)?'e':''}"></span>`:''}
+      ${(winByDay[k]||[]).filter(x=>x.win.s===k).map(x=>`<span class="v amt" style="color:var(--warn)">⏳${fmtS(x.amount)}</span>`).join('')}
       ${w?w.map(g=>`<span class="cw" style="background:${cardColor(g.card)}">💳<span class="amt">${fmtS(g.total)}</span></span>`).join(''):''}</div>`;
   }
   cal+='</div>';
