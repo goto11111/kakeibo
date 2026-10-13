@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.12.0';
+const APP_VERSION='v1.12.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -529,22 +529,22 @@ function cashPeriod(s,e){
   return r;
 }
 function budgetUse(s,e){
-  const byCat={};let all=0;
+  const byCat={},byRec={};let all=0;
   // そのカテゴリの支出はすべて（固定費も）数える。目標と🐷貯金から使った分は予算の外
   // 項目から使った分は、その項目のカテゴリで数える
   entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal||(x.pot&&goalById(x.pot)))return;all+=x.amount;
-    const it=planById(txPlan(x));const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+x.amount;});
-  return {byCat,all};
+    const it=planById(txPlan(x));const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+x.amount;if(x.rec)byRec[c]=(byRec[c]||0)+x.amount;});
+  return {byCat,all,byRec};
 }
 // 見通し用：その期に口座から実際に出ていく分で数える（カードは引き落とし日、口座・現金は使った日）。
 // たとえば 10/10 にカードで買った飲み物が 11/27 に引き落とされるなら、11/27 を含む期の飲み物の予算から引く
 function budgetUseCash(key){
-  const [s,e]=periodRange(key);const byCat={},byItem={};let all=0;
-  const add=(x,v)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;};
+  const [s,e]=periodRange(key);const byCat={},byItem={},byRec={};let all=0;
+  const add=(x,v)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;if(x.rec)byRec[c]=(byRec[c]||0)+v;};
   const skip=x=>x.type!=='out'||x.goal||x.bill||(x.pot&&goalById(x.pot));
   entries(s,e).forEach(x=>{if(skip(x)||cardOf(x.method))return;add(x,x.amount);});
   charges(s,e).forEach(p=>{if(skip(p.e))return;add(p.e,p.principal+p.fee);});
-  return {byCat,all,byItem};
+  return {byCat,all,byItem,byRec};
 }
 // その記録が key の期の予算のどの項目にあたるか（選んだ項目と同じ項目か、メモに項目名が入っているか）
 function planIn(t,key){
@@ -590,7 +590,9 @@ function budgetReserve(key,cash){
     // このカテゴリでまだ取っておく額は「予算 − 実際に使った額」まで（超えたら0）。
     // 項目に入れずに使った分は、まず項目にしていない分から減らし、足りなければ項目の残りから減らす
     // （日付なし → 日付の遅い項目から）。こうしないと、使った分と予算の枠を二重に引いてしまう
-    const R=Math.max(0,B-U);
+    // 固定費（例：車の任意保険）は項目の枠（例：📌ガソリン）を減らさない。減らすのは項目にしていない分だけ
+    const Ur=(u.byRec||{})[k]||0,nonItem=Math.max(0,B-its.reduce((a,i)=>a+(Number(i.amount)||0),0));
+    const R=Math.max(0,B-(U-Ur)-Math.min(Ur,nonItem));
     const pend=its.filter(i=>i.remain>0).map(i=>Object.assign({},i,{plan:i.remain}));
     let over=pend.reduce((a,i)=>a+i.remain,0)-R;
     pend.slice().sort((a,b)=>(a.date?1:0)-(b.date?1:0)||cmp(b.date||'',a.date||'')).forEach(i=>{if(over<=0)return;const c=Math.min(i.remain,over);i.remain-=c;over-=c;});
