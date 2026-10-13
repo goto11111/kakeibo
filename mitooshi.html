@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.14.0';
+const APP_VERSION='v1.14.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -639,18 +639,26 @@ function reservePlan(k){
 const reserveLabel=r=>!r.iid&&r.cat?`${r.label}（${Number(r.key.split('-')[1])}月分）`:`${r.label||'予算'}（${Number(r.key.split('-')[1])}月分の予算${r.used?`・この期に出ていく ${fmt(r.used)}円を引いた残り`:''}）`;
 // 見通しの予算の行をタップしたときの内訳：そのカテゴリの予算の枠と、その中で何にいくら使う（取っておく）か
 // 例：車・ガソリン 18,000円 ＝ 📌ガソリン 12,000 ＋ 車任意保険（固定費）5,770 ＋ あまり 230
-function resBreak(k,cat){
+// 見通しの予算の行をタップしたときの内訳。枠ごとに「予算」「使った（カードの引き落とし・口座から出る）」「残り（取っておく）」を分けて出す
+// atDate/atAcc：タップした行（その行で引く「残り」には「この行で取っておく」と出す）
+function resBreak(k,cat,atDate,atAcc){
   const br=budgetReserve(k,true);const d=br.cats[cat];if(!d)return '';const rp=reservePlan(k);const cn=catById(cat);
-  const row=(ic,name,sub,v,cls,ind)=>`<div class="li"${ind?' style="padding-left:18px"':''}><div class="ic">${ic}</div><div class="t"><b>${name}</b>${sub?`<small>${sub}</small>`:''}</div><div class="a ${cls||''}">${v}</div></div>`;
-  const useRow=x=>row(x.rec?'🔁':cn.icon,esc(x.name),`${x.rec?'固定費・':''}${md(x.used)}に利用 → ${md(x.date)} ${esc(x.via)}の引き落とし`,`${fmt(x.amount)}円`,'',1);
-  const keepRow=(v,at)=>v>0?row('⏳','まだ使っていない分（取っておく）',at?`${md(at.date)} ${esc(at.via)}${at.card?'の引き落とし':'から'}で引く`:'この期には引かない',`${fmt(v)}円`,'',1):'';
-  // 枠ごと：中身（この期に出ていく分）と、まだ使っていない分
-  const pot=(ic,name,amt,list,keep,at)=>{const used=list.reduce((a,x)=>a+x.amount,0),v=Math.max(amt,used),over=used-amt;
-    return row(ic,`${esc(name)} ${fmt(amt)}円`,over>0?`<span class="out">⚠️ ${fmt(over)}円オーバー → ${fmt(v)}円</span>`:'',`<b>${fmt(v)}円</b>`)+list.slice().sort((p,q)=>cmp(p.date,q.date)).map(useRow).join('')+keepRow(keep,at);};
-  let h=row('📊',`${esc(cn.name)}の予算（${Number(k.split('-')[1])}月分）`,`${rangeLabel(k)}に口座から出ていくお金${d.frame>d.B?`・予算 ${fmt(d.B)}円から ${fmt(d.frame-d.B)}円オーバー`:''}`,`<b class="${d.frame>d.B?'out':''}">${fmt(d.frame)}円</b>`);
-  if(d.free>0||d.list.some(x=>!x.item))h+=pot('📊','決まっていない分',d.free,d.list.filter(x=>!x.item),d.rest,rp.find(x=>!x.iid&&x.cat===cat));
-  d.items.forEach(it=>{const lv=d.live.find(i=>i.id===it.id);h+=pot('📌',it.name,Number(it.amount)||0,d.list.filter(x=>x.item===it.id),lv?lv.remain:0,rp.find(x=>x.iid===it.id));});
-  return h;
+  const keepWhere=at=>!at?'この期には取っておかない':at.date===atDate&&at.acc===atAcc?'👉 この行で取っておく':`${md(at.date)} の「${esc(catById(at.cat).name)}の予算」の行で取っておく`;
+  const line=(tag,cls,name,sub,v)=>`<div class="row" style="padding:5px 0 5px 10px;font-size:12.5px;border-top:1px dashed var(--line)"><span class="pill ${cls}" style="min-width:42px;text-align:center">${tag}</span><span class="sp" style="white-space:normal"><b>${name}</b>${sub?`<br><span class="muted" style="font-size:11px">${sub}</span>`:''}</span><b>${v}</b></div>`;
+  const pots=[];let usedAll=0,keepAll=0;
+  if(d.free>0||d.list.some(x=>!x.item))pots.push({ic:'📊',name:'決まっていない分',amt:d.free,list:d.list.filter(x=>!x.item),keep:d.rest,at:rp.find(x=>!x.iid&&x.cat===cat)});
+  d.items.forEach(it=>{const lv=d.live.find(i=>i.id===it.id);pots.push({ic:'📌',name:it.name,amt:Number(it.amount)||0,list:d.list.filter(x=>x.item===it.id),keep:lv?lv.remain:0,at:rp.find(x=>x.iid===it.id)});});
+  let body='';
+  pots.forEach(p=>{const used=p.list.reduce((a,x)=>a+x.amount,0),over=used-p.amt;usedAll+=used;keepAll+=p.keep;
+    body+=`<div style="padding:8px 0 4px"><div class="row"><span>${p.ic}</span><b class="sp">${esc(p.name)}</b><span class="muted" style="font-size:12px">予算</span><b>${fmt(p.amt)}円</b></div>
+      <div class="bar ${over>0?'over':''}" style="height:6px;margin:4px 0 2px"><i style="width:${p.amt?Math.min(100,used/p.amt*100):100}%"></i></div>
+      <div class="muted" style="font-size:11px">使った ${fmt(used)}円 ／ 残り ${fmt(Math.max(0,p.amt-used))}円${over>0?` <span class="out">⚠️ ${fmt(over)}円オーバー（この枠は ${fmt(used)}円）</span>`:''}</div>`
+      +p.list.slice().sort((a,b)=>cmp(a.date,b.date)).map(x=>line('使った','',esc(x.name)+(x.rec?'（固定費）':''),`${md(x.used)}に利用 → ${md(x.date)} ${esc(x.via)}の引き落としで引かれる`,`${fmt(x.amount)}円`)).join('')
+      +(p.keep>0?line('残り','w','まだ使っていない分',keepWhere(p.at),`${fmt(p.keep)}円`):'')+`</div>`;});
+  const head=`<div style="padding:8px 0;border-bottom:1px solid var(--line)"><div class="row"><span>${cn.icon}</span><b class="sp">${esc(cn.name)}の予算（${Number(k.split('-')[1])}月分）</b><b class="${d.frame>d.B?'out':''}">${fmt(d.frame)}円</b></div>
+    <div class="muted" style="font-size:11.5px;margin-top:2px">${rangeLabel(k)}に口座から出ていくお金${d.frame>d.B?`（予算 ${fmt(d.B)}円から <span class="out">${fmt(d.frame-d.B)}円オーバー</span>）`:''}<br>
+    ＝ <b>使った ${fmt(usedAll)}円</b>（それぞれのカードの引き落としで引かれる） ＋ <b>残り ${fmt(keepAll)}円</b>（予算の行で取っておく）</div></div>`;
+  return `<div style="padding:0 6px 6px">${head}${body}</div>`;
 }
 // まとめた予算の行の名前：例「食費の予算（12月分・飲み物＋あまり）」
 // 例「食費の予算 6,000円（12月分）のまだ使っていない分」
@@ -1087,7 +1095,7 @@ function renderChain(){
       const click=key?`openWd['${key}']=!openWd['${key}'];render()`:x.e&&!x.e.bill?clickFor(x.e):'';
       body+=`<div class="fl${x.date<=t?' past':''}${click?' tap':''}" style="flex-wrap:wrap" ${click?`onclick="${click}"`:''}><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}<small>${md(x.date)}</small>${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b></div>
         <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span></div>${chips(x.acc)}</div>`;
-      if(open)body+=`<div class="flbd">${x.g?wdItems(x.g):resBreak(x.r.key,x.r.cat)}</div>`;});
+      if(open)body+=`<div class="flbd">${x.g?wdItems(x.g):resBreak(x.r.key,x.r.cat,x.date,x.acc)}</div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
     h+=`<div class="card cf"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
@@ -1830,15 +1838,27 @@ let syncTimer=null,syncBusy=false,syncMsg='';
 function syncErr(e){return e&&e.message==='Failed to fetch'?'GitHub に接続できませんでした（中継URLを確認してください）':(e&&e.message)||'不明なエラー';}
 // 自動保存：変更のたびに少し待ってからアップロード（この端末を正とする）
 function scheduleSync(){const c=syncCfg();c.localAt=new Date().toISOString();saveSyncCfg(c);if(!c.auto||!syncReady()||!c.gistId)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>{syncTimer=null;syncUpload(true);},4000);}
+// この端末のデータ（表示の設定 ui は除く）の指紋。最後にクラウドと合わせたときと比べて、本当に変更があるかを見る
+function syncSig(){const o=Object.assign({},S);delete o.ui;const str=JSON.stringify(o);let h=5381;for(let i=0;i<str.length;i++)h=((h<<5)+h+str.charCodeAt(i))|0;return String(h>>>0)+':'+str.length;}
+function syncDirty(){const c=syncCfg();return c.sig?syncSig()!==c.sig:!!(c.localAt&&c.lastSync&&c.localAt>c.lastSync);}
+function gistData(j){const f=j.files&&j.files[GIST_FILE];if(!f)throw new Error('この Gist に見通し家計簿のデータがありません');return f;}
 async function syncUpload(silent){
   if(syncBusy)return;const token=syncToken();if(!token){if(!silent)toast('GitHub Token を入れてください');return;}
   const c=syncCfg();syncBusy=true;syncMsg='☁️ 保存中…';if(!silent)render();
   try{
+    // 上書きする前に、ほかの端末がクラウドに新しいデータを保存していないか確かめる（古い端末のデータで最新を消さないため）
+    if(c.gistId){const g=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:{'Authorization':`Bearer ${token}`}});
+      if(g.ok){const j=await g.json();
+        if(j.updated_at&&(!c.remoteAt||j.updated_at>c.remoteAt)){
+          const f=gistData(j);let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url)).text();const r={data:JSON.parse(content),updatedAt:j.updated_at};
+          if(!syncDirty()||confirm('ほかの端末でクラウドに新しいデータが保存されています。\n\nOK：クラウドの最新を読み込む（この端末のまだ保存していない変更は消えます）\nキャンセル：この端末のデータでクラウドを上書きする')){
+            syncApply(r);syncMsg='✅ ほかの端末の新しいデータを読み込みました';syncBusy=false;applyHide();render();toast('ほかの端末の最新データを読み込みました');return;}
+        }}}
     const url=c.gistId?`${syncBase()}/gists/${c.gistId}`:`${syncBase()}/gists`;
     const res=await fetch(url,{method:c.gistId?'PATCH':'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
       body:JSON.stringify({description:'見通し家計簿データ',public:false,files:{[GIST_FILE]:{content:JSON.stringify(Object.assign({savedAt:new Date().toISOString()},S))}}})});
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
-    const j=await res.json();const n=syncCfg();n.gistId=j.id;n.remoteAt=j.updated_at;n.lastSync=new Date().toISOString();saveSyncCfg(n);
+    const j=await res.json();const n=syncCfg();n.gistId=j.id;n.remoteAt=j.updated_at;n.lastSync=new Date().toISOString();n.sig=syncSig();saveSyncCfg(n);
     syncMsg=`✅ クラウドに保存しました（${new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}）`;
   }catch(e){syncMsg='❌ 保存できませんでした：'+syncErr(e);if(!silent)toast('クラウドに保存できませんでした');}
   finally{syncBusy=false;if(tab==='set')render();}
@@ -1855,7 +1875,7 @@ function syncApply(r){
   if(!r.data||r.data.v!==1)throw new Error('データの形式が違います');
   delete r.data.savedAt;S=Object.assign(freshData(),r.data);S.ui=Object.assign({},freshData().ui,r.data.ui||{});migrateData();
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
-  const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;saveSyncCfg(c);
+  const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;c.sig=syncSig();saveSyncCfg(c);
 }
 async function syncDownload(){
   if(!confirm('クラウドのデータでこの端末のデータを置き換えます。よろしいですか？'))return;
@@ -1868,10 +1888,11 @@ async function syncDownload(){
 async function syncCheckOnLoad(){
   const c=syncCfg();if(!c.gistId||!syncReady()||syncBusy||syncTimer)return;
   try{const token=syncToken();const res=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:{'Authorization':`Bearer ${token}`}});if(!res.ok)return;
-    const j=await res.json();const n=syncCfg();if(!n.remoteAt||!(j.updated_at>n.remoteAt)||syncBusy||syncTimer)return;
+    // まだ一度もクラウドと合わせていない端末（remoteAt なし）も、クラウドにデータがあれば確認する
+    const j=await res.json();const n=syncCfg();if(!j.updated_at||(n.remoteAt&&!(j.updated_at>n.remoteAt))||syncBusy||syncTimer)return;
     // 入力中（シートが開いている）なら書きかけを消さないよう、読み込まずに知らせるだけ
     if(document.getElementById('sheet').style.display==='flex'){syncMsg='🔔 クラウドに新しいデータがあります。「クラウドから読込」で最新にできます';toast('クラウドに新しいデータがあります（閉じてから戻ると読み込みます）');return;}
-    const dirty=n.localAt&&n.lastSync&&n.localAt>n.lastSync;
+    const dirty=syncDirty()||!n.remoteAt;
     if(dirty&&!confirm('ほかの端末でクラウドに新しいデータが保存されています。\nこの端末にもまだクラウドに保存していない変更があります。\n\nOK：クラウドの最新を読み込む（この端末の変更は消えます）\nキャンセル：この端末のデータを残す'))
       {syncMsg='🔔 クラウドに新しいデータがあります。「クラウドから読込」で最新にできます';if(tab==='set')render();return;}
     syncApply(await syncFetch());syncMsg='✅ クラウドの最新を自動で読み込みました';
@@ -1879,6 +1900,9 @@ async function syncCheckOnLoad(){
   }catch(e){}
 }
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncCheckOnLoad();});
+// パソコンでは開きっぱなしのことが多いので、画面に戻ったとき（focus）と、開いている間は1分ごとにもクラウドを確かめる
+window.addEventListener('focus',()=>syncCheckOnLoad());
+setInterval(()=>{if(document.visibilityState==='visible')syncCheckOnLoad();},60000);
 function renderSync(){
   const c=syncCfg();const tk=syncToken();
   return `<div class="card" id="syncCard"><h3>☁️ クラウド同期</h3>
