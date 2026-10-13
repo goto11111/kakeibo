@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.11.0';
+const APP_VERSION='v1.11.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -514,7 +514,7 @@ function cashPeriod(s,e){
   L.forEach(x=>{if(x.date<from||x.date>e)return;
     if(x.kind!=='move'&&x.kind!=='save'){const a=accById(x.acc);let ic,lb;
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
-      else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';lb=`${x.r.label||'予算'}（予算）`;}
+      else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';lb=reserveLabel(x.r);}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
       else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=(x.e.memo||c.name)+(x.e.est?'（見込み）':'');}
       r.list.push({date:x.date,ic,lb,acc:a?a.name:'',v:x.delta,kind:x.kind});}
@@ -531,9 +531,22 @@ function cashPeriod(s,e){
 function budgetUse(s,e){
   const byCat={};let all=0;
   // そのカテゴリの支出はすべて（固定費も）数える。目標と🐷貯金から使った分は予算の外
-  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal||(x.pot&&goalById(x.pot)))return;all+=x.amount;byCat[x.cat]=(byCat[x.cat]||0)+x.amount;});
+  // 項目から使った分は、その項目のカテゴリで数える
+  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal||(x.pot&&goalById(x.pot)))return;all+=x.amount;
+    const it=planById(txPlan(x));const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+x.amount;});
   return {byCat,all};
 }
+// 記録がどの予算の項目から使ったものか（'項目id@期'）。項目を選んで記録したものはそのまま。
+// 選ばずに記録しても、メモに項目名が入っていればその期のその項目から使った扱いにする（例：「ドンキ_飲み物」→ 📌飲み物）
+function txPlan(t){
+  if(!t||t.type!=='out'||t.goal||t.rec||t.pot)return null;
+  if(t.plan)return t.plan;
+  const m=t.memo||'';if(!m)return null;
+  const k=periodKeyOf(t.date);let best=null,bl=0;
+  (budgetOf(k).items||[]).forEach(it=>{const n=(it.name||'').trim();if(n.length>=2&&n.length>bl&&m.includes(n)){best=it;bl=n.length;}});
+  return best?best.id+'@'+k:null;
+}
+function planById(pk){if(!pk)return null;const [id,key]=pk.split('@');return (budgetOf(key).items||[]).find(i=>i.id===id)||null;}
 // 予算の内訳（項目）：項目ごとに金額と払い方を決め、記録で選んだ分を「使った」として積み上げる
 function planDate(it,key){
   if(it.day===''||it.day==null)return null; // 日付なし（いつでも）
@@ -543,7 +556,7 @@ function planDate(it,key){
   return s;
 }
 // 予算の項目（内訳）：記録で選んだ分を「使った」として積み上げ、残りを出す
-const planUsed=(it,key)=>S.tx.filter(t=>t.plan===it.id+'@'+key&&t.type==='out').reduce((a,t)=>a+(Number(t.amount)||0),0);
+const planUsed=(it,key)=>S.tx.filter(t=>txPlan(t)===it.id+'@'+key).reduce((a,t)=>a+(Number(t.amount)||0),0);
 function planItems(key){return (budgetOf(key).items||[]).map(it=>{const used=planUsed(it,key),amt=Number(it.amount)||0,remain=Math.max(0,amt-used);
   return Object.assign({},it,{date:planDate(it,key),used,remain,done:remain<=0,key});});}
 function budgetReserve(key){
@@ -553,9 +566,16 @@ function budgetReserve(key){
   const u=budgetUse(s,e);const det={};let pending=[],rest=0,catUsed=0,catPlanned=0;
   catKeys.forEach(k=>{
     const its=items.filter(i=>i.cat===k);const B=Math.max(Number(cats[k])||0,its.reduce((a,i)=>a+(Number(i.amount)||0),0));
-    const U=u.byCat[k]||0;const pend=its.filter(i=>i.remain>0);const P=pend.reduce((a,i)=>a+i.remain,0);
-    const itemUsed=its.reduce((a,i)=>a+i.used,0);
-    const r=Math.max(0,B-U-P);det[k]={B,U,P,rest:r,items:its,other:Math.max(0,U-itemUsed)};pending=pending.concat(pend);rest+=r;catUsed+=U;catPlanned+=U+P+r;
+    const U=u.byCat[k]||0;const itemUsed=its.reduce((a,i)=>a+i.used,0);
+    // このカテゴリでまだ取っておく額は「予算 − 実際に使った額」まで（超えたら0）。
+    // 項目に入れずに使った分は、まず項目にしていない分から減らし、足りなければ項目の残りから減らす
+    // （日付なし → 日付の遅い項目から）。こうしないと、使った分と予算の枠を二重に引いてしまう
+    const R=Math.max(0,B-U);
+    const pend=its.filter(i=>i.remain>0).map(i=>Object.assign({},i,{plan:i.remain}));
+    let over=pend.reduce((a,i)=>a+i.remain,0)-R;
+    pend.slice().sort((a,b)=>(a.date?1:0)-(b.date?1:0)||cmp(b.date||'',a.date||'')).forEach(i=>{if(over<=0)return;const c=Math.min(i.remain,over);i.remain-=c;over-=c;});
+    const live=pend.filter(i=>i.remain>0);const P=live.reduce((a,i)=>a+i.remain,0);
+    const r=Math.max(0,R-P);det[k]={B,U,P,rest:r,items:its,cut:pend.filter(i=>i.remain<i.plan),other:Math.max(0,U-itemUsed)};pending=pending.concat(live);rest+=r;catUsed+=U;catPlanned+=U+P+r;
   });
   const totalRest=Math.max(0,(Number(b.total)||0)-(catPlanned+(u.all-catUsed)));
   const P=pending.reduce((a,i)=>a+i.remain,0);
@@ -578,14 +598,16 @@ function reservePlan(k){
   const t=todayStr();const [s,e]=periodRange(k);if(e<t||reserveSkip(s))return [];
   const r=budgetReserve(k);if(!(r.reserve>0))return [];
   const d0=s>t?s:t;const out=[];
-  const lump=(m,amt,label,cat)=>{if(!(amt>0))return;const c=cardOf(m);
-    if(c)out.push({key:k,date:ds(wdDate(c,pd(d0),0)),amount:amt,acc:cardAcc(c),via:c.name,card:true,cardId:c.id,label,cat});
-    else{const a=accOf(m);if(a)out.push({key:k,date:d0,amount:amt,acc:a.id,via:a.name,label,cat});}};
-  r.pending.forEach(it=>lump(it.method||reserveMethod(),it.remain,it.name,it.cat));
+  const lump=(m,amt,label,cat,used)=>{if(!(amt>0))return;const c=cardOf(m);
+    if(c)out.push({key:k,date:ds(wdDate(c,pd(d0),0)),amount:amt,acc:cardAcc(c),via:c.name,card:true,cardId:c.id,label,cat,used});
+    else{const a=accOf(m);if(a)out.push({key:k,date:d0,amount:amt,acc:a.id,via:a.name,label,cat,used});}};
+  r.pending.forEach(it=>lump(it.method||reserveMethod(),it.remain,it.name,it.cat,(Number(it.amount)||0)-it.remain));
   Object.keys(r.cats).forEach(c=>lump(reserveMethod(),r.cats[c].rest,catById(c).name+'（項目にしていない分）',c));
   lump(reserveMethod(),r.totalRest,'予算総額の残り',null);
   return out;
 }
+// 見通しの予算の行：どの期の予算か（カードだと前の期の分と次の期の分が同じ引き落とし日に並ぶことがある）
+const reserveLabel=r=>`${r.label||'予算'}（${Number(r.key.split('-')[1])}月分の予算${r.used?`・使った ${fmt(r.used)}円を引いた残り`:''}）`;
 function budgetReserves(from,to){
   const t=todayStr();const res=[];if(to<t)return res;
   let k=periodKeyOf(t);
@@ -748,7 +770,7 @@ function entryRow(x){
   if(card&&x.type==='out'){const ps=portions(x,card);sub+=` → ${md(ps[0].date)}引落${ps.length>1?`（${ps.length}回払い）`:''}`;}
   if(x.rec)sub=(x.missing?`⚠️ ${missLabel(x)}・`:'')+(x.win?`${md(x.win.s)}〜${md(x.win.e)}のどこか・`:'')+(x.est?'見込み・':'')+'🔁 固定費・'+sub;
   if(x.pot){const g=goalById(x.pot);sub='🐷 '+(g?g.name:'貯金')+'から・'+sub;}
-  if(x.plan){const [pid,pk]=x.plan.split('@');const it=(budgetOf(pk).items||[]).find(i=>i.id===pid);sub='📌 '+(it?it.name:'予算')+'・'+sub;}
+  const xp=txPlan(x);if(xp){const it=planById(xp);sub='📌 '+(it?it.name:'予算')+(x.plan?'':'（メモから）')+'・'+sub;}
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
@@ -995,7 +1017,7 @@ function renderChain(){
     accs.forEach(a=>{if(a.openingDate>from)items.push({date:a.openingDate,acc:a.id,ic:'🏁',lb:'開始残高',v:Number(a.opening)||0,ord:0});});
     L.forEach(x=>{if(x.date<from||x.date>r.e||x.kind==='save'||(!withB&&x.kind==='reserve')||!bal.hasOwnProperty(x.acc))return;let ic,lb;
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
-      else if(x.kind==='reserve'){ic='📊';lb=(x.r.label||'予算')+'（予算）';}
+      else if(x.kind==='reserve'){ic='📊';lb=reserveLabel(x.r);}
       else if(x.kind==='move'){ic='🔁';const gl=x.e.goal&&goalById(x.e.gid);lb=gl?gl.name+' 積立':'振替';}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
       else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=(x.e.memo||cc.name)+(x.e.est?'（見込み）':'');}
@@ -1074,7 +1096,7 @@ function renderBud(){
       <div class="bar ${u>v?'over':''}"><i style="width:${Math.min(100,u/v*100)}%"></i></div><small>使った ${fmt(u)}円 / 予算 ${fmt(v)}円</small></div><div class="a ${v-u<0?'out':''}">残り<br>${Y(v-u)}</div></div>${d.items.length||d.rest>0?`<div style="padding:0 0 8px 42px">${d.items.map(it=>{const a=Number(it.amount)||0;return `<div class="tap" style="padding:4px 0" onclick="openInput({date:'${todayStr()}',plan:'${it.id}@${curKey}'})">
         <div class="row" style="font-size:12.5px"><span>📌</span><span class="sp">${esc(it.name)} <span class="muted">${esc(mName(it.method||reserveMethod()))}</span></span><b class="${it.used>a?'out':''}">残り ${fmt(a-it.used)}円</b></div>
         <div class="bar ${it.used>a?'over':''}" style="height:5px;margin:3px 0 0"><i style="width:${a?Math.min(100,it.used/a*100):0}%"></i></div>
-        <div class="muted" style="font-size:11px">使った ${fmt(it.used)}円 / ${fmt(a)}円</div></div>`;}).join('')}
+        <div class="muted" style="font-size:11px">使った ${fmt(it.used)}円 / ${fmt(a)}円${(()=>{const x=(d.cut||[]).find(q=>q.id===it.id);return x?`<span class="out">・${c.name}全体が予算に近い・超えたので、取っておくのは ${fmt(x.remain)}円</span>`:'';})()}</div></div>`;}).join('')}
       ${d.other>0?`<div class="row muted" style="font-size:12px;padding-top:3px"><span class="sp">項目に入れずに使った分（固定費など）</span><span>${fmt(d.other)}円</span></div>`:''}
       ${d.rest>0?`<div class="row muted" style="font-size:12px"><span class="sp">項目にしていない予算の残り</span><span>${fmt(d.rest)}円</span></div>`:''}</div>`:''}`;}).join('')}</div>`;
   }
@@ -1083,7 +1105,7 @@ function renderBud(){
       ${reserveSkip(br.s)?'スタートの期なので、予算は引かずに実績だけで数えています。':br.e<todayStr()?'終わった期なので、実績だけで数えています。':
         rp.length?`固定費と同じく、${md(br.s>todayStr()?br.s:todayStr())}にまとめて使ったことにして、引き落とし日に一括で引いています：<br>${rp.map(x=>`・${esc(x.label)} ${fmt(x.amount)}円 → ${md(x.date)} ${esc(x.via)}${x.card?'の引き落とし':'から'}`).join('<br>')}`:''}</div>
       <div class="fld"><label>項目にしていない予算の払い方</label><select onchange="S.settings.reserveMethod=this.value;save();render()">${[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)].map(m=>`<option value="${m}" ${m===rm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
-      <div class="note">予算は固定費と同じ扱いです。期のはじめにその払い方で予算の分を全部使ったことにして、カードならその引き落とし日に一括で引きます。実際に使って記録すると、その分だけ予算の分が減り、記録した分は記録した日のカードの引き落としに入ります。</div></div>`;}
+      <div class="note">予算は固定費と同じ扱いです。期のはじめにその払い方で予算の分を全部使ったことにして、カードならその引き落とし日に一括で引きます。実際に使って記録すると、その分だけ予算の分が減り、記録した分は記録した日のカードの引き落としに入ります。項目を選ばずに記録しても、メモに項目名（例：飲み物）が入っていればその項目から使った扱いになります。カテゴリで予算を超えたら、そのカテゴリの予算はもう引きません。</div></div>`;}
   h+='</div>';
   // 円グラフ
   const [s,e]=periodRange(curKey);
