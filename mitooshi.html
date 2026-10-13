@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.12.2';
+const APP_VERSION='v1.12.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -529,22 +529,22 @@ function cashPeriod(s,e){
   return r;
 }
 function budgetUse(s,e){
-  const byCat={};let all=0;
-  // 予算は手で記録した支出の枠。固定費（別に引いている）・目標・🐷貯金から使った分は予算の外
+  const byCat={},byRec={};let all=0;
+  // そのカテゴリの支出はすべて（固定費も）数える。目標と🐷貯金から使った分は予算の外
   // 項目から使った分は、その項目のカテゴリで数える
-  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal||x.rec||(x.pot&&goalById(x.pot)))return;all+=x.amount;
-    const it=planById(txPlan(x));const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+x.amount;});
-  return {byCat,all};
+  entries(s,e).forEach(x=>{if(x.type!=='out'||x.goal||(x.pot&&goalById(x.pot)))return;all+=x.amount;
+    const it=planById(txPlan(x));const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+x.amount;if(x.rec)byRec[c]=(byRec[c]||0)+x.amount;});
+  return {byCat,all,byRec};
 }
 // 見通し用：その期に口座から実際に出ていく分で数える（カードは引き落とし日、口座・現金は使った日）。
 // たとえば 10/10 にカードで買った飲み物が 11/27 に引き落とされるなら、11/27 を含む期の飲み物の予算から引く
 function budgetUseCash(key){
-  const [s,e]=periodRange(key);const byCat={},byItem={};let all=0;
-  const add=(x,v)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;};
-  const skip=x=>x.type!=='out'||x.goal||x.rec||x.bill||(x.pot&&goalById(x.pot));
+  const [s,e]=periodRange(key);const byCat={},byItem={},byRec={};let all=0;
+  const add=(x,v)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;if(x.rec)byRec[c]=(byRec[c]||0)+v;};
+  const skip=x=>x.type!=='out'||x.goal||x.bill||(x.pot&&goalById(x.pot));
   entries(s,e).forEach(x=>{if(skip(x)||cardOf(x.method))return;add(x,x.amount);});
   charges(s,e).forEach(p=>{if(skip(p.e))return;add(p.e,p.principal+p.fee);});
-  return {byCat,all,byItem};
+  return {byCat,all,byItem,byRec};
 }
 // その記録が key の期の予算のどの項目にあたるか（選んだ項目と同じ項目か、メモに項目名が入っているか）
 function planIn(t,key){
@@ -590,7 +590,9 @@ function budgetReserve(key,cash){
     // このカテゴリでまだ取っておく額は「予算 − 実際に使った額」まで（超えたら0）。
     // 項目に入れずに使った分は、まず項目にしていない分から減らし、足りなければ項目の残りから減らす
     // （日付なし → 日付の遅い項目から）。こうしないと、使った分と予算の枠を二重に引いてしまう
-    const R=Math.max(0,B-U);
+    // 固定費（例：車の任意保険）は項目の枠（例：📌ガソリン）を減らさない。減らすのは項目にしていない分だけ
+    const Ur=(u.byRec||{})[k]||0,nonItem=Math.max(0,B-its.reduce((a,i)=>a+(Number(i.amount)||0),0));
+    const R=Math.max(0,B-(U-Ur)-Math.min(Ur,nonItem));
     const pend=its.filter(i=>i.remain>0).map(i=>Object.assign({},i,{plan:i.remain}));
     let over=pend.reduce((a,i)=>a+i.remain,0)-R;
     pend.slice().sort((a,b)=>(a.date?1:0)-(b.date?1:0)||cmp(b.date||'',a.date||'')).forEach(i=>{if(over<=0)return;const c=Math.min(i.remain,over);i.remain-=c;over-=c;});
@@ -1123,7 +1125,7 @@ function renderBud(){
         <div class="row" style="font-size:12.5px"><span>📌</span><span class="sp">${esc(it.name)} <span class="muted">${esc(mName(it.method||reserveMethod()))}</span></span><b class="${it.used>a?'out':''}">残り ${fmt(a-it.used)}円</b></div>
         <div class="bar ${it.used>a?'over':''}" style="height:5px;margin:3px 0 0"><i style="width:${a?Math.min(100,it.used/a*100):0}%"></i></div>
         <div class="muted" style="font-size:11px">使った ${fmt(it.used)}円 / ${fmt(a)}円${(()=>{const x=(d.cut||[]).find(q=>q.id===it.id);return x?`<span class="out">・${c.name}全体が予算に近い・超えたので、取っておくのは ${fmt(x.remain)}円</span>`:'';})()}</div></div>`;}).join('')}
-      ${d.other>0?`<div class="row muted" style="font-size:12px;padding-top:3px"><span class="sp">項目に入れずに使った分</span><span>${fmt(d.other)}円</span></div>`:''}
+      ${d.other>0?`<div class="row muted" style="font-size:12px;padding-top:3px"><span class="sp">項目に入れずに使った分（固定費など）</span><span>${fmt(d.other)}円</span></div>`:''}
       ${d.rest>0?`<div class="row muted" style="font-size:12px"><span class="sp">項目にしていない予算の残り</span><span>${fmt(d.rest)}円</span></div>`:''}</div>`:''}`;}).join('')}</div>`;
   }
   if(br.has){const rp=reservePlan(curKey);const rm=reserveMethod();const bc=budgetReserve(curKey,true);
@@ -1170,7 +1172,7 @@ function editBudget(){
   const b=budgetOf(curKey);const outs=S.cats.filter(c=>c.kind==='out');
   BI=(b.items||[]).map(x=>Object.assign({},x));
   sheet(`予算（${keyLabel(curKey)}）`,`<div class="fld"><label>予算総額（1か月・任意）</label><input type="number" inputmode="numeric" id="bTotal" value="${b.total||''}" placeholder="例：150000"></div>
-    <div class="note">予算は手で記録する支出の枠です。そのカテゴリで使った額が予算より少ないうちは予算の額を、超えたら使った額を引きます。固定費（別に引いています）と目標は予算の外です。</div>
+    <div class="note">そのカテゴリの支出（固定費も含む）が予算より少ないうちは予算の額を、超えたら使った額を引きます。目標は予算の外です。</div>
     <div class="fld"><label>カテゴリごとの予算（空欄＝決めない）</label>${outs.map(c=>`<div class="row" style="margin:4px 0"><span class="sp">${c.icon} ${esc(c.name)}</span><input style="width:140px" type="number" inputmode="numeric" data-cat="${c.id}" value="${(b.cats||{})[c.id]||''}"></div>`).join('')}</div>
     <div class="fld"><label>📌 予算の内訳（項目・金額・何で払うか）</label><div id="biBox"></div>
       <button class="btn sub sm" onclick="readBi();BI.push({id:uid(),cat:'car',name:'',amount:'',day:'',method:reserveMethod()});renderBi()">＋ 内訳の項目を追加</button>
