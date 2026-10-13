@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.12.1';
+const APP_VERSION='v1.13.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -539,12 +539,14 @@ function budgetUse(s,e){
 // 見通し用：その期に口座から実際に出ていく分で数える（カードは引き落とし日、口座・現金は使った日）。
 // たとえば 10/10 にカードで買った飲み物が 11/27 に引き落とされるなら、11/27 を含む期の飲み物の予算から引く
 function budgetUseCash(key){
-  const [s,e]=periodRange(key);const byCat={},byItem={},byRec={};let all=0;
-  const add=(x,v)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;if(x.rec)byRec[c]=(byRec[c]||0)+v;};
+  const [s,e]=periodRange(key);const byCat={},byItem={},byRec={},lists={};let all=0;
+  // lists：カテゴリごとに、この期に出ていく分の中身（見通しで予算の内訳を出すため）
+  const add=(x,v,date,via)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;if(x.rec)byRec[c]=(byRec[c]||0)+v;
+    (lists[c]||(lists[c]=[])).push({name:x.memo||catById(x.cat).name,amount:v,date,via,rec:!!x.rec,item:it?it.id:null,used:x.date});};
   const skip=x=>x.type!=='out'||x.goal||x.bill||(x.pot&&goalById(x.pot));
-  entries(s,e).forEach(x=>{if(skip(x)||cardOf(x.method))return;add(x,x.amount);});
-  charges(s,e).forEach(p=>{if(skip(p.e))return;add(p.e,p.principal+p.fee);});
-  return {byCat,all,byItem,byRec};
+  entries(s,e).forEach(x=>{if(skip(x)||cardOf(x.method))return;add(x,x.amount,x.date,mName(x.method));});
+  charges(s,e).forEach(p=>{if(skip(p.e))return;add(p.e,p.principal+p.fee,p.date,p.card.name);});
+  return {byCat,all,byItem,byRec,lists};
 }
 // その記録が key の期の予算のどの項目にあたるか（選んだ項目と同じ項目か、メモに項目名が入っているか）
 function planIn(t,key){
@@ -597,7 +599,7 @@ function budgetReserve(key,cash){
     let over=pend.reduce((a,i)=>a+i.remain,0)-R;
     pend.slice().sort((a,b)=>(a.date?1:0)-(b.date?1:0)||cmp(b.date||'',a.date||'')).forEach(i=>{if(over<=0)return;const c=Math.min(i.remain,over);i.remain-=c;over-=c;});
     const live=pend.filter(i=>i.remain>0);const P=live.reduce((a,i)=>a+i.remain,0);
-    const r=Math.max(0,R-P);det[k]={B,U,P,rest:r,items:its,cut:pend.filter(i=>i.remain<i.plan),other:Math.max(0,U-itemUsed)};pending=pending.concat(live);rest+=r;catUsed+=U;catPlanned+=U+P+r;
+    const r=Math.max(0,R-P);det[k]={B,U,P,rest:r,items:its,live,cut:pend.filter(i=>i.remain<i.plan),other:Math.max(0,U-itemUsed),list:(u.lists||{})[k]||[]};pending=pending.concat(live);rest+=r;catUsed+=U;catPlanned+=U+P+r;
   });
   const totalRest=Math.max(0,(Number(b.total)||0)-(catPlanned+(u.all-catUsed)));
   const P=pending.reduce((a,i)=>a+i.remain,0);
@@ -626,16 +628,32 @@ function reservePlan(k){
   const t=todayStr();const [s,e]=periodRange(k);if(e<t||reserveSkip(s))return [];
   const r=budgetReserve(k,true);if(!(r.reserve>0))return [];
   const d0=s>t?s:t;const out=[];
-  const lump=(m,amt,label,cat,used)=>{if(!(amt>0))return;const c=cardOf(m);
-    if(c){const w=reserveWd(c,s,e);if(w)out.push({key:k,date:w,amount:amt,acc:cardAcc(c),via:c.name,card:true,cardId:c.id,label,cat,used});}
-    else{const a=accOf(m);if(a)out.push({key:k,date:d0,amount:amt,acc:a.id,via:a.name,label,cat,used});}};
-  r.pending.forEach(it=>lump(it.method||reserveMethod(),it.remain,it.name,it.cat,(Number(it.amount)||0)-it.remain));
-  Object.keys(r.cats).forEach(c=>lump(reserveMethod(),r.cats[c].rest,catById(c).name+'（項目にしていない分）',c));
+  const lump=(m,amt,label,cat,used,iid)=>{if(!(amt>0))return;const c=cardOf(m);
+    if(c){const w=reserveWd(c,s,e);if(w)out.push({key:k,date:w,amount:amt,acc:cardAcc(c),via:c.name,card:true,cardId:c.id,label,cat,used,iid});}
+    else{const a=accOf(m);if(a)out.push({key:k,date:d0,amount:amt,acc:a.id,via:a.name,label,cat,used,iid});}};
+  r.pending.forEach(it=>lump(it.method||reserveMethod(),it.remain,it.name,it.cat,(Number(it.amount)||0)-it.remain,it.id));
+  Object.keys(r.cats).forEach(c=>lump(reserveMethod(),r.cats[c].rest,catById(c).name+' 予算のあまり',c));
   lump(reserveMethod(),r.totalRest,'予算総額の残り',null);
   return out;
 }
 // 見通しの予算の行：どの期の予算か（カードだと前の期の分と次の期の分が同じ引き落とし日に並ぶことがある）
-const reserveLabel=r=>`${r.label||'予算'}（${Number(r.key.split('-')[1])}月分の予算${r.used?`・この期に出ていく ${fmt(r.used)}円を引いた残り`:''}）`;
+const reserveLabel=r=>!r.iid&&r.cat?`${r.label}（${Number(r.key.split('-')[1])}月分）`:`${r.label||'予算'}（${Number(r.key.split('-')[1])}月分の予算${r.used?`・この期に出ていく ${fmt(r.used)}円を引いた残り`:''}）`;
+// 見通しの予算の行をタップしたときの内訳：そのカテゴリの予算の枠と、その中で何にいくら使う（取っておく）か
+// 例：車・ガソリン 18,000円 ＝ 📌ガソリン 12,000 ＋ 車任意保険（固定費）5,770 ＋ あまり 230
+function resBreak(k,cat){
+  const br=budgetReserve(k,true);const d=br.cats[cat];if(!d)return '';
+  const row=(ic,name,sub,v,cls)=>`<div class="li"><div class="ic">${ic}</div><div class="t"><b>${esc(name)}</b>${sub?`<small>${sub}</small>`:''}</div><div class="a ${cls||''}">${v}</div></div>`;
+  const usedLine=x=>`${x.rec?'固定費・':''}${md(x.used)}に利用 → ${md(x.date)} ${esc(x.via)}`;
+  let h=row('📊',`${catById(cat).name}の予算（${Number(k.split('-')[1])}月分）`,`${rangeLabel(k)}に口座から出ていく分の枠`,`<b>${fmt(d.B)}円</b>`);
+  let sum=0;
+  d.items.forEach(it=>{const lv=d.live.find(i=>i.id===it.id);const keep=lv?lv.remain:0;const out=d.list.filter(x=>x.item===it.id).reduce((a,x)=>a+x.amount,0);const v=out+keep;sum+=v;
+    const cut=(d.cut||[]).find(i=>i.id===it.id);
+    h+=row('📌',it.name,[out?`出ていく ${fmt(out)}円`:'',keep?`取っておく ${fmt(keep)}円`:'',cut?'<span class="out">カテゴリの予算が足りないので減らしています</span>':''].filter(Boolean).join('・')||'使い切り',`−${fmt(v)}円`);});
+  d.list.filter(x=>!x.item).sort((a,b)=>cmp(a.date,b.date)).forEach(x=>{sum+=x.amount;h+=row(x.rec?'🔁':catById(cat).icon,x.name,usedLine(x),`−${fmt(x.amount)}円`);});
+  if(d.rest>0){sum+=d.rest;h+=row('📊','あまり（項目にしていない分）','取っておく',`−${fmt(d.rest)}円`);}
+  if(sum>d.B)h+=row('⚠️','予算オーバー','',`${fmt(sum-d.B)}円`,'out');
+  return h;
+}
 function budgetReserves(from,to){
   const t=todayStr();const res=[];if(to<t)return res;
   let k=periodKeyOf(t);
@@ -1049,7 +1067,7 @@ function renderChain(){
       else if(x.kind==='move'){ic='🔁';const gl=x.e.goal&&goalById(x.e.gid);lb=gl?gl.name+' 積立':'振替';}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
       else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=(x.e.memo||cc.name)+(x.e.est?'（見込み）':'');}
-      items.push({date:x.date,acc:x.acc,ic,lb,v:x.delta,ord:x.delta>0?1:3,g:x.kind==='card'?x.g:null,e:x.kind!=='card'&&x.kind!=='reserve'?x.e:null});});
+      items.push({date:x.date,acc:x.acc,ic,lb,v:x.delta,ord:x.delta>0?1:3,g:x.kind==='card'?x.g:null,r:x.kind==='reserve'&&x.r.cat?x.r:null,e:x.kind!=='card'&&x.kind!=='reserve'?x.e:null});});
     accs.forEach(a=>{let d=from,pv=savedIn(pots,dayBefore(from),a.id);
       while(d<=r.e){const sv=savedIn(pots,d,a.id);if(sv!==pv)items.push({date:d,acc:a.id,ic:'🐷',lb:sv>pv?'貯金へ取り分け':'貯金から',v:pv-sv,ord:2});pv=sv;d=ds(addDays(pd(d),1));}});
     items.sort((a,b)=>cmp(a.date,b.date)||a.ord-b.ord);
@@ -1060,11 +1078,11 @@ function renderChain(){
     items.forEach(x=>{
       if(!nowShown&&x.date>t){nowShown=true;body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');}
       bal[x.acc]+=x.v;const v=bal[x.acc];if(v<0&&x.v<0&&!minD)minD=x.date;
-      const key=x.g?x.g.card.id+'|'+x.g.date:null;const open=key&&openWd[key];
+      const key=x.g?x.g.card.id+'|'+x.g.date:x.r?'r|'+x.r.key+'|'+x.r.cat+'|'+x.date+'|'+(x.r.iid||'rest'):null;const open=key&&openWd[key];
       const click=key?`openWd['${key}']=!openWd['${key}'];render()`:x.e&&!x.e.bill?clickFor(x.e):'';
       body+=`<div class="fl${x.date<=t?' past':''}${click?' tap':''}" style="flex-wrap:wrap" ${click?`onclick="${click}"`:''}><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}<small>${md(x.date)}</small>${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b></div>
         <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span></div>${chips(x.acc)}</div>`;
-      if(open)body+=`<div class="flbd">${wdItems(x.g)}</div>`;});
+      if(open)body+=`<div class="flbd">${x.g?wdItems(x.g):resBreak(x.r.key,x.r.cat)}</div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
     h+=`<div class="card cf"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
