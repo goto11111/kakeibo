@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.20.0';
+const APP_VERSION='v1.21.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -583,6 +583,8 @@ function cashPeriod(s,e){
       const gp=x.kind==='reserve'&&x.r.cat&&r.list.find(y=>y.parts&&y.date===x.date&&y.accId===x.acc&&y.parts[0].key===x.r.key&&y.parts[0].cat===x.r.cat);
       if(gp){gp.v+=x.delta;gp.parts.push(x.r);gp.lb=reserveGroupLabel(gp.parts);}
       else if(x.kind==='reserve'&&x.r.cat)r.list.push({date:x.date,ic:'📊',lb:reserveGroupLabel([x.r]),acc:a?a.name:'',accId:x.acc,v:x.delta,kind:x.kind,parts:[x.r]});
+      else if(x.kind==='out'&&x.e&&x.e.grp){const g2=r.list.find(y=>y.grp===x.e.grp&&y.accId===x.acc);
+        if(g2)g2.v+=x.delta;else r.list.push({date:x.date,ic:'🧾',lb:x.e.memo||'会計',acc:a?a.name:'',accId:x.acc,v:x.delta,kind:x.kind,grp:x.e.grp});}
       else r.list.push({date:x.date,ic,lb,acc:a?a.name:'',v:x.delta,kind:x.kind});}
     if(x.kind==='in')r.inn+=x.delta;
     else if(x.kind==='card'){r.card-=x.delta;r.cards[x.g.card.name]=(r.cards[x.g.card.name]||0)-x.delta;}
@@ -619,6 +621,7 @@ function planIn(t,key){
   if(!t||t.type!=='out'||t.goal||t.rec||t.pot)return null;
   const its=budgetOf(key).items||[];
   if(t.plan)return its.find(i=>i.id===t.plan.split('@')[0])||null;
+  if(t.grp)return null; // 分けた会計の行はメモ（店名）が共通なので、メモからは項目を当てない
   const m=t.memo||'';if(!m)return null;let best=null,bl=0;
   its.forEach(it=>{const n=(it.name||'').trim();if(n.length>=2&&n.length>bl&&m.includes(n)){best=it;bl=n.length;}});
   return best;
@@ -628,6 +631,7 @@ function planIn(t,key){
 function txPlan(t){
   if(!t||t.type!=='out'||t.goal||t.rec||t.pot)return null;
   if(t.plan)return t.plan;
+  if(t.grp)return null;
   const m=t.memo||'';if(!m)return null;
   const k=periodKeyOf(t.date);let best=null,bl=0;
   (budgetOf(k).items||[]).forEach(it=>{const n=(it.name||'').trim();if(n.length>=2&&n.length>bl&&m.includes(n)){best=it;bl=n.length;}});
@@ -895,14 +899,27 @@ function entryRow(x){
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
+// ✂️ 分けた会計（同じ grp の記録）は、払った額そのままの1行にまとめ、その下に内訳を出す
+// 並びは分けた行が先、残りの行（gi=0）が最後（入れた順）
+const giOrd=g=>g||1e9;
+const buyCount=es=>new Set(es.map(e=>e.grp?'g:'+e.grp:e.id)).size;
+function grpLines(ms){return ms.map(y=>{const c=catById(y.cat),it=y.plan?planById(y.plan):null;
+  return `<small style="display:block">${c.icon} ${esc(it?'📌 '+it.name:c.name)}　${fmt(y.amount)}円</small>`;}).join('');}
+function groupedRows(list){const done=new Set();
+  return list.map(x=>{if(!x.grp)return entryRow(x);if(done.has(x.grp))return '';done.add(x.grp);
+    const ms=list.filter(y=>y.grp===x.grp).sort((a,b)=>giOrd(a.gi)-giOrd(b.gi));const tot=ms.reduce((a,y)=>a+(Number(y.amount)||0),0);
+    const card=cardOf(x.method);let sub=mName(x.method);
+    if(card){const ps=portions(Object.assign({},x,{amount:tot}),card);sub+=` → ${md(ps[0].date)}引落${ps.length>1?`（${ps.length}回払い）`:''}`;}
+    return `<div class="li tap" onclick="editTx('${x.id}')"><div class="ic">🧾</div><div class="t"><b>${esc(x.memo||'会計')}</b><small>✂️ ${ms.length}つに分けた会計・${esc(sub)}</small>${grpLines(ms)}</div>
+      <div class="a">-<span class="amt">${fmt(tot)}</span>円</div></div>`;}).join('');}
 function renderDayPanel(day,ents,wds,plans){
   const list=ents.filter(x=>x.date===day);
   let h=`<div class="card" id="dayPanel"><div class="row"><b>${md(day)}${isHol(pd(day))?' <span class="pill r">祝</span>':''}</b><div class="sp"></div>
     <span class="muted" style="margin-right:56px">日付2回タップでも追加</span></div>`;
   if(wds&&wds.length)h+=wds.map(g=>`<div class="li tap" onclick="openWd['${g.card.id}|${g.date}']=!openWd['${g.card.id}|${g.date}'];render()"><div class="ic" style="background:${cardColor(g.card)};color:#fff">💳</div>
-    <div class="t"><b>${esc(g.card.name)} 引き落とし</b><small>${esc((accById(cardAcc(g.card))||{}).name||'口座未設定')}から・${g.items.length}件 ${openWd[g.card.id+'|'+g.date]?'▲':'▼'}</small></div><div class="a out">-<span class="amt">${fmt(g.total)}</span>円</div></div>${openWd[g.card.id+'|'+g.date]?`<div class="flbd">${wdItems(g)}</div>`:''}`).join('');
+    <div class="t"><b>${esc(g.card.name)} 引き落とし</b><small>${esc((accById(cardAcc(g.card))||{}).name||'口座未設定')}から・${buyCount(g.items.map(p=>p.e))}件 ${openWd[g.card.id+'|'+g.date]?'▲':'▼'}</small></div><div class="a out">-<span class="amt">${fmt(g.total)}</span>円</div></div>${openWd[g.card.id+'|'+g.date]?`<div class="flbd">${wdItems(g)}</div>`:''}`).join('');
   if(plans&&plans.length)h+=plans.map(it=>`<div class="li tap" onclick="openInput({date:'${day}',plan:'${it.id}@${it.key}'})"><div class="ic">📌</div><div class="t"><b>${esc(it.name)}（予算の予定）</b><small>${esc(catById(it.cat).name)}・${esc(mName(it.method||reserveMethod()))}・タップで記録</small></div><div class="a muted">${fmt(it.amount)}円</div></div>`).join('');
-  h+=list.length?list.map(entryRow).join(''):(wds&&wds.length||plans&&plans.length?'':'<div class="muted" style="padding:8px 0">記録はまだありません</div>');
+  h+=list.length?groupedRows(list):(wds&&wds.length||plans&&plans.length?'':'<div class="muted" style="padding:8px 0">記録はまだありません</div>');
   h+=`<button class="addbtn" onclick="openInput({date:'${day}'})">＋ この日に記録する</button></div>`;
   return h;
 }
@@ -935,7 +952,47 @@ function openInput(o){
   // 新しく記録するときは金額欄にカーソルを置いて、端末のキーボードを出す
   if(isNew){const a=document.getElementById('inAmt');if(a)a.focus();}
 }
-function editTx(id){const t=S.tx.find(x=>x.id===id);if(t)openInput({edit:t});}
+function editTx(id){const t=S.tx.find(x=>x.id===id);if(!t)return;
+  if(!t.grp){openInput({edit:t});return;}
+  // ✂️ 分けた会計：合計を金額欄に、残りの行（gi=0）を下のカテゴリに、ほかの行を分けた行に戻す
+  const ms=grpOf(t.grp),main=ms.find(x=>!x.gi),base=main||ms[0];
+  const e=Object.assign({},base,{amount:ms.reduce((a,x)=>a+(Number(x.amount)||0),0)});
+  if(!main){delete e.plan;delete e.pot;delete e.ai;}
+  e.parts=ms.filter(x=>x!==main).map(x=>({id:x.id,cat:x.cat,plan:x.plan||null,amountStr:String(x.amount)}));
+  openInput({edit:e});}
+const grpOf=g=>S.tx.filter(t=>t.grp===g).sort((a,b)=>giOrd(a.gi)-giOrd(b.gi));
+// ✂️ 1回の会計を分ける：上の金額はレシートの合計。分けたい分だけ行を足すと、残りは下で選ぶカテゴリになる
+const splitSum=()=>(F.parts||[]).reduce((a,p)=>a+(Number(p.amountStr)||0),0);
+function splitHtml(){
+  if(!F.parts)return `<button class="chip" style="margin-top:8px" onclick="splitOn()">✂️ この会計を分ける（たばこ＋飲み物 など）</button>`;
+  const bk=periodKeyOf(F.date);const its=budgetReserve(bk).has?planItems(bk):[];
+  const cats=S.cats.filter(c=>c.kind==='out');
+  const opts=p=>its.map(it=>`<option value="p:${it.id}@${bk}" ${p.plan===it.id+'@'+bk?'selected':''}>📌 ${esc(it.name)}</option>`).join('')
+    +cats.map(c=>`<option value="c:${c.id}" ${!(p.plan&&p.plan.endsWith('@'+bk))&&p.cat===c.id?'selected':''}>${c.icon} ${esc(c.name)}</option>`).join('');
+  return `<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--line);border-radius:12px;background:var(--card2)">
+    <div class="row"><b style="font-size:13px">✂️ 会計を分ける</b><div class="sp"></div><span class="muted" style="font-size:11px">上の金額＝レシートの合計</span></div>
+    ${F.parts.map((p,i)=>`<div class="row" style="gap:6px;margin-top:6px"><select style="flex:1.4;min-width:0" onchange="splitSet(${i},this.value)">${opts(p)}</select>
+      <input id="part${i}" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="金額" value="${esc(p.amountStr||'')}" oninput="splitAmt(${i},this)" style="flex:1;min-width:0">
+      <button class="x" style="flex:none" onclick="splitDel(${i})">✕</button></div>`).join('')}
+    <button class="chip" style="margin-top:6px" onclick="splitAdd()">＋ 行を足す</button>
+    <div id="splitRest" style="margin-top:6px;font-size:12.5px">${splitRestHtml()}</div></div>`;
+}
+function splitRestHtml(){
+  const tot=Number(F.amountStr)||0,ps=splitSum(),r=tot-ps;
+  if(r<0)return `<span class="out">⚠️ 分けた行の合計 ${fmt(ps)}円 が、合計 ${fmt(tot)}円 を ${fmt(-r)}円 超えています</span>`;
+  return r>0?`残り <b>${fmt(r)}円</b> は、この下で選ぶカテゴリに入ります`:`残り 0円（全部を分けた行に入れています）`;
+}
+function splitOn(){F.parts=[];splitAdd();}
+function splitAdd(){F.parts.push({id:null,cat:F.cat,plan:null,amountStr:''});renderInput();
+  const a=document.getElementById('part'+(F.parts.length-1));if(a)a.focus();}
+function splitDel(i){F.parts.splice(i,1);if(!F.parts.length)F.parts=null;renderInput();}
+function splitSet(i,v){const p=F.parts[i];
+  if(v.startsWith('p:')){const it=planById(v.slice(2));p.plan=v.slice(2);if(it)p.cat=it.cat;}else{p.plan=null;p.cat=v.slice(2);}}
+function splitAmt(i,el){
+  const s=el.value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/\D/g,'').replace(/^0+(?=\d)/,'').slice(0,9);
+  if(el.value!==s)el.value=s;F.parts[i].amountStr=s;
+  const r=document.getElementById('splitRest');if(r)r.innerHTML=splitRestHtml();
+}
 function setF(k,v){
   F[k]=v;if(k==='cat'&&F.plan){const [id,key]=F.plan.split('@');const it=(budgetOf(key).items||[]).find(x=>x.id===id);if(!it||it.cat!==v)F.plan=null;}
   if(k==='type'){
@@ -952,6 +1009,7 @@ function amtInput(el){
   const s=el.value.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/\D/g,'').replace(/^0+(?=\d)/,'').slice(0,9);
   if(el.value!==s)el.value=s;F.amountStr=s;
   const p=document.getElementById('inPrev');if(p)p.innerHTML=cardPreview();
+  const r=document.getElementById('splitRest');if(r&&F.parts)r.innerHTML=splitRestHtml();
 }
 function cardPreview(){
   const c=cardOf(F.method);if(!c||F.type!=='out')return '';
@@ -975,6 +1033,7 @@ function renderInput(){
       <div class="sp"><label>入れる口座</label><select onchange="F.to=this.value">${accOpts(F.to)}</select></div></div>
       <div class="note">銀行から財布へ引き出す、口座間で移すなど。自分のお金の移動なので収支にも予算にも数えません。</div>`;
   }else{
+    if(F.type==='out'){h+=splitHtml();if(F.parts)h+=`<div class="muted" style="margin-top:8px;font-size:12px">↓ 残りの分のカテゴリ・払い方（払い方は全部の行で共通）</div>`;}
     if(F.type==='out'){const bk=periodKeyOf(F.date);const br=budgetReserve(bk);
       if(br.has){const its=planItems(bk);
         h+=`<div class="fld" style="margin:8px 0 0"><label>📊 予算から使う（タップで選ぶ）</label><div class="chips" style="margin:2px 0">
@@ -992,7 +1051,7 @@ function renderInput(){
     }
     h+=`<div class="prev" id="inPrev" style="${cardOf(F.method)&&F.type==='out'?'':'display:none'}">${cardPreview()}</div>`;
   }
-  h+=`<input placeholder="メモ（店名など・任意）" value="${esc(F.memo||'')}" oninput="F.memo=this.value" style="margin-top:6px">
+  h+=`<input placeholder="${F.parts&&F.type==='out'?'店名（分けた行すべてに付きます・任意）':'メモ（店名など・任意）'}" value="${esc(F.memo||'')}" oninput="F.memo=this.value" style="margin-top:6px">
   <button class="btn" style="margin-top:10px" onclick="saveTx()">保存</button>
   ${F.ai&&S.ai.plans.some(p=>p.id===F.ai)?`<button class="btn sub" style="margin-top:10px" onclick="const id=F.ai;closeSheet();openAiPlan(id)">🗺️ AIプランの予定を見る</button>`:''}
   ${F.id?`<button class="btn del" style="margin-top:10px" onclick="delTx()">この記録を削除</button>`:''}`;
@@ -1021,10 +1080,29 @@ function saveTx(){
   if(F.type==='move'){if(!F.from||!F.to||F.from===F.to){toast('別々の口座を選んでください');return;}t.from=F.from;t.to=F.to;}
   else{if(!F.method){toast('支払い方法を選んでください');return;}t.cat=F.cat;t.method=F.method;t.count=cardOf(F.method)&&F.type==='out'?Number(F.count)||1:1;
     if(F.type==='out'){S.ui.lastMethod=F.method;S.ui.lastCat=F.cat;if(F.plan)t.plan=F.plan;else if(F.pot)t.pot=F.pot;}}
-  const i=S.tx.findIndex(x=>x.id===t.id);if(i>=0)S.tx[i]=t;else S.tx.push(t);
+  // 前の記録（分けた会計なら全部の行）を差し替える
+  const old=new Set(F.grp?grpOf(F.grp).map(x=>x.id):[]);old.add(t.id);
+  let list=[t];
+  if(F.type==='out'&&F.parts&&F.parts.length){
+    const ps=F.parts.map(p=>({p,a:Number(p.amountStr)||0}));
+    if(ps.some(x=>x.a<=0)){toast('分けた行の金額を入れてください');return;}
+    const rest=amount-ps.reduce((a,x)=>a+x.a,0);
+    if(rest<0){toast('分けた行の合計が、レシートの合計を超えています');return;}
+    const g=F.grp||uid(),bk=periodKeyOf(t.date);
+    list=ps.map((x,i)=>{const pl=x.p.plan&&x.p.plan.endsWith('@'+bk)&&planById(x.p.plan)?x.p.plan:null;
+      const o={id:x.p.id&&x.p.id!==t.id?x.p.id:uid(),date:t.date,type:'out',amount:x.a,memo:t.memo,cat:pl?planById(pl).cat:x.p.cat,method:t.method,count:t.count,grp:g,gi:i+1};
+      if(pl)o.plan=pl;if(t.src)o.src=t.src;return o;});
+    // 残りが0円なら、残りの行は作らない
+    if(rest>0){t.amount=rest;t.grp=g;t.gi=0;list.unshift(t);}
+  }
+  const i=S.tx.findIndex(x=>x.id===t.id);
+  S.tx=S.tx.filter(x=>!old.has(x.id));S.tx.splice(i>=0?Math.min(i,S.tx.length):S.tx.length,0,...list);
   save();closeSheet();sel=t.date;curKey=periodKeyOf(t.date);render();toast('保存しました');
 }
-function delTx(){if(!confirm('この記録を削除しますか？'))return;S.tx=S.tx.filter(x=>x.id!==F.id);save();closeSheet();render();}
+function delTx(){
+  const n=F.grp?grpOf(F.grp).length:1;
+  if(!confirm(n>1?`この会計（分けた${n}行すべて）を削除しますか？`:'この記録を削除しますか？'))return;
+  S.tx=S.tx.filter(x=>x.id!==F.id&&!(F.grp&&x.grp===F.grp));save();closeSheet();render();}
 function showSheet(){document.getElementById('ov').style.display='block';document.getElementById('sheet').style.display='flex';}
 function closeSheet(){document.getElementById('ov').style.display='none';document.getElementById('sheet').style.display='none';F=null;}
 function sheet(title,body){document.getElementById('sheetIn').innerHTML=`<div class="shd"><b>${title}</b><button class="x" onclick="closeSheet()">✕</button></div>${body}`;showSheet();}
@@ -1088,7 +1166,13 @@ function clearOcc(rid,date){const r=S.recurring.find(x=>x.id===rid);if(r&&r.ex)d
 // カードの請求の中身（タップで開く）
 function wdItems(g){
   const items=g.items.slice().sort((p,q)=>cmp(p.e.date,q.e.date));
-  return items.map(p=>{const c=catById(p.e.cat);const gl=p.e.goal?goalById(p.e.gid)||{}:null;return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':gl?'🎯':c.icon}</div>
+  // ✂️ 分けた会計は、カードの明細と同じ1回の利用としてまとめる
+  const rows=[],by={};items.forEach(p=>{if(!p.e.grp){rows.push(p);return;}const k=p.e.grp+'|'+p.k;if(by[k]){by[k].ps.push(p);return;}by[k]={grp:true,ps:[p]};rows.push(by[k]);});
+  return rows.map(p=>{
+    if(p.grp){const ps=p.ps.sort((a,b)=>giOrd(a.e.gi)-giOrd(b.e.gi)),e=ps[0].e,n=ps[0].n;const v=ps.reduce((a,q)=>a+q.principal+q.fee,0),tot=ps.reduce((a,q)=>a+(Number(q.e.amount)||0),0);
+      return `<div class="li tap" onclick="${clickFor(e)}"><div class="ic">🧾</div><div class="t"><b>${esc(e.memo||'会計')}</b><small>${md(e.date)}に利用・✂️ ${ps.length}つに分けた会計${n>1?`・${ps[0].k+1}/${n}回目`:''}</small>${grpLines(ps.map(q=>Object.assign({},q.e,{amount:n>1?q.principal+q.fee:q.e.amount})))}</div>
+        <div class="a"><span class="amt">${fmt(v)}</span>円${n>1?`<small>総額 ${fmt(tot)}円</small>`:''}</div></div>`;}
+    const c=catById(p.e.cat);const gl=p.e.goal?goalById(p.e.gid)||{}:null;return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':gl?'🎯':c.icon}</div>
     <div class="t"><b>${esc(gl?`${gl.name||'目標'}（${gl.kind==='debt'?'返済':'積立'}）`:p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}${gl?`・このあと残り ${fmt(p.e.after)}円`:''}</small></div>
     <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')
   +(g.budget||[]).map(x=>`<div class="li tap" onclick="curKey='${x.key}';setTab('bud')"><div class="ic">📊</div><div class="t"><b>${esc(x.label)}</b><small>📊 ${keyLabel(x.key)}の予算・まだ使っていない分（全部使った場合）</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('');
@@ -1115,7 +1199,7 @@ function cardCycles(pk){
       const lo=a<ps?ps:a,hi=b>pe?pe:b;const wd=ds(wdDate(c,pd(b),0));
       const used=entries(lo,hi).filter(x=>x.type==='out'&&x.method==='c:'+c.id);
       const v=used.reduce((s,x)=>s+portions(x,c).filter(p=>p.k===0).reduce((u,p)=>u+p.principal+p.fee,0),0);
-      return {lo,hi,b,wd,v,n:used.length,now:inNow&&t>=lo&&t<=hi};
+      return {lo,hi,b,wd,v,n:buyCount(used),now:inNow&&t>=lo&&t<=hi};
     });
     h+=`<div class="cyc"><div class="cyh"><span class="cdot" style="background:${cardColor(c)}"></span><b>${esc(c.name)}</b><span class="muted">${cycleNote(c)}</span></div>
       ${rows.map(r=>`<div class="fl"><div class="t"><b>${md(r.lo)}〜${md(r.hi)}に使った分${r.hi<r.b?`<span class="muted">（締めは${md(r.b)}）</span>`:''}</b>
@@ -1170,6 +1254,9 @@ function renderChain(){
       else if(x.kind==='reserve'){ic='📊';lb=reserveLabel(x.r);}
       else if(x.kind==='move'){ic='🔁';const gl=x.e.goal&&goalById(x.e.gid);lb=gl?gl.name+' 積立':'振替';}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
+      else if(x.kind==='out'&&x.e.grp){ // ✂️ 分けた会計は、口座・財布から出る1回の支払いとして1行にまとめる
+        const gp=items.find(y=>y.grp===x.e.grp&&y.acc===x.acc);if(gp){gp.v+=x.delta;return;}
+        items.push({date:x.date,acc:x.acc,ic:'🧾',lb:x.e.memo||'会計',v:x.delta,ord:3,grp:x.e.grp,e:x.e});return;}
       else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=(x.e.memo||cc.name)+(x.e.est?'（見込み）':'');}
       // 同じ日・同じ口座に落ちる同じカテゴリの予算（📌項目とあまり）は1行にまとめ、タップで内訳を出す
       if(x.kind==='reserve'&&x.r.cat){const gp=items.find(y=>y.r&&y.date===x.date&&y.acc===x.acc&&y.r.key===x.r.key&&y.r.cat===x.r.cat);
@@ -2328,9 +2415,10 @@ function download(name,text,type){const a=document.createElement('a');a.href=URL
 function exportJSON(){download(`mitooshi-backup-${todayStr()}.json`,JSON.stringify(S,null,1),'application/json');}
 function exportCSV(){
   const q=s=>`"${String(s==null?'':s).replace(/"/g,'""')}"`;
-  const rows=[['日付','種類','金額','カテゴリ','支払い方法/口座','回数','メモ']];
+  const rows=[['日付','種類','金額','カテゴリ','支払い方法/口座','回数','メモ','分けた会計の合計']];
+  const gt={};S.tx.forEach(t=>{if(t.grp)gt[t.grp]=(gt[t.grp]||0)+(Number(t.amount)||0);});
   S.tx.slice().sort((a,b)=>cmp(a.date,b.date)).forEach(t=>rows.push([t.date,{out:'支出',in:'収入',move:'振替'}[t.type],t.amount,t.type==='move'?'':catById(t.cat).name,
-    t.type==='move'?`${(accById(t.from)||{}).name}→${(accById(t.to)||{}).name}`:mName(t.method).replace(/^\S+ /,''),t.count||1,t.memo]));
+    t.type==='move'?`${(accById(t.from)||{}).name}→${(accById(t.to)||{}).name}`:mName(t.method).replace(/^\S+ /,''),t.count||1,t.memo,t.grp?gt[t.grp]:'']));
   download(`mitooshi-${todayStr()}.csv`,'﻿'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv');
 }
 function importJSON(inp){
