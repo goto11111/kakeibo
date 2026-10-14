@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.18.2';
+const APP_VERSION='v1.19.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -240,7 +240,7 @@ function freshData(){
     cats:defaultCats(),
     budgets:{plans:[],only:{}},
     tx:[],recurring:[],goals:[],startBills:[],start:null,
-    ai:{usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},
+    ai:{usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:'',spend:'go'}},
     ui:{lastMethod:null,lastCat:'food',hide:false,setupDone:false}};
 }
 function load(){
@@ -267,6 +267,9 @@ function migrateData(){
   if(!S.ui.unifyFixed1){S.ui.unifyFixed1=true;unifyLegacyFixed();}
   [['repay','💸','返済','out'],['saving','🐷','積立','out']].forEach(([id,icon,name,kind])=>{if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});});
   S.ai=Object.assign({usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},S.ai||{});
+  if(!S.ai.form.spend)S.ai.form.spend='go';
+  // この端末に家計管理のAPIクレジット記録があれば、入金・使用のログに追記しておく
+  mergeLegacyAiUsd(legacyAiUsdLocal());
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){toast('保存に失敗しました');}if(typeof scheduleSync==='function'&&!save.quiet)scheduleSync();}
 
@@ -1736,7 +1739,28 @@ const NOVEL_EXPERIENCES=[
   {emoji:'🍞',name:'隣町のパン屋・ベーカリー巡り',amount:1200,desc:'評判の個人ベーカリーを2〜3軒。買ったパンを公園で食べ比べ、お気に入りの一個を探す小さな旅',min:800,moods:['food','active']},
   {emoji:'🧩',name:'ジグソー/プラモに没頭する夜',amount:2000,desc:'手を動かして頭を空っぽに。完成までの過程そのものを楽しむ、画面を見ない時間のリハビリ',min:1000,moods:['indoor','solo','hobby']},
   {emoji:'🌿',name:'道の駅・直売所で旬の食材ハント',amount:1500,desc:'近隣の道の駅で見たことない野菜や手作り総菜を調達。家で図鑑片手に調理する週末プロジェクト',min:800,moods:['food','active','hobby']},
+  // ここから下は、使える額に余裕があるとき用の"思い切った"案
+  {emoji:'🐎',name:'乗馬の体験レッスン',amount:6000,desc:'近郊の乗馬クラブで初騎乗。馬の背の高さと揺れ、言葉なしで通じ合う感覚は一度やると忘れられない',min:5000,moods:['active','special','hobby']},
+  {emoji:'🛶',name:'猪苗代湖でSUP・カヌー体験',amount:6500,desc:'ガイド付きで湖の真ん中へ。磐梯山を水の上から見上げる景色は、岸からとはまるで別物',min:5000,moods:['active','special']},
+  {emoji:'🐮',name:'仙台で牛タン＋夜景ドライブ',amount:8000,desc:'本場の厚切り牛タン定食をがっつり食べて、帰りに青葉山から夜景。下道でも行ける"ちょい遠征"',min:6000,moods:['food','special']},
+  {emoji:'🎢',name:'テーマパークで一日遊び倒す',amount:9000,desc:'那須ハイランドパークあたりで絶叫系を制覇。大人になってから本気で並んで乗ると、意外と童心に返る',min:7000,moods:['active','special']},
+  {emoji:'🍣',name:'カウンター寿司でおまかせ',amount:12000,desc:'回らないお寿司のカウンターで大将におまかせ。ネタの説明を聞きながら食べる一貫一貫が、体験そのもの',min:9000,moods:['food','special']},
+  {emoji:'🪂',name:'パラグライダーのタンデム体験',amount:14000,desc:'インストラクターと二人乗りで空へ。足が地面を離れた瞬間の浮遊感と、上から見る会津の景色はご褒美級',min:11000,moods:['active','special']},
+  {emoji:'🏨',name:'岳温泉・土湯温泉に1泊',amount:20000,desc:'日帰りじゃなく泊まるのがミソ。夕食の後にもう一回温泉、朝風呂まで入って、帰る頃には頭が空っぽに',min:15000,moods:['indoor','special','food']},
+  {emoji:'🚄',name:'新幹線で東京日帰り弾丸',amount:25000,desc:'朝イチの新幹線で東京へ。気になってた展示・食べたかった店・知らない街歩きを1日に詰め込む全力遠征',min:20000,moods:['special','active','food']},
 ];
+// 使い方の度合い：プランごとに「使える額の何割を使うか」の目安（cap：いちばん高いプランの上限）
+const AI_SPEND={
+  go:{label:'🔥 はっちゃける',cap:80000,bands:[[0.6,0.9,'思い切った一発'],[0.3,0.5,'しっかり楽しむ'],[0.15,0.25,'気軽な贅沢'],[0.03,0.1,'小さな冒険']]},
+  normal:{label:'🙂 ほどほど',cap:30000,bands:[[0.3,0.5,'ちょっと贅沢'],[0.15,0.3,'しっかり楽しむ'],[0.05,0.15,'気軽に'],[0,0.05,'ほぼお金をかけない']]},
+  save:{label:'🌱 控えめ',cap:8000,bands:[[0.08,0.15,'たまの贅沢'],[0.03,0.08,'気軽に'],[0.01,0.03,'安く'],[0,0.01,'ほぼ0円']]}};
+function aiBands(budget,spend){
+  const r100=v=>Math.round(v/100)*100;
+  if(budget<=0)return [[0,500,'0円でできる'],[0,500,'0円でできる'],[0,300,'0円でできる'],[0,0,'0円でできる']];
+  // 1回の週末で使う額には上限を置く（使える額がとても多くても、いちばん高いプランが cap を超えないように）
+  const sp=AI_SPEND[spend]||AI_SPEND.go;const eb=Math.min(budget,sp.cap/sp.bands[0][1]);
+  return sp.bands.map(([a,b,l])=>[r100(eb*a),r100(eb*b),l]);
+}
 const MOOD_MAP={'まったりインドア':'indoor','外でアクティブに':'active','一人で静かに':'solo','非日常を味わいたい':'special','美味しいものが食べたい':'food','新しい趣味を始めたい':'hobby'};
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 let aiResult=null;
@@ -1746,10 +1770,23 @@ function aiBudget(){
   let budget,label;
   if(f.basis==='budget'){const b=budgetOf(pk);budget=b.total>0?b.total-flows(pk).out:0;label='今月の予算の残り';}
   else if(f.basis==='custom'){budget=Number(f.custom)||0;label='自分で決めた額';}
-  else{budget=forecast(horizonEnd('0')).free;label=`${md(pe)}までに使っていい額（口座と財布の合計がマイナスにならない上限）`;}
-  return {budget:Math.round(budget),label,dL,pdv:Math.round(budget/dL)};
+  const fc=forecast(horizonEnd('0'));
+  if(f.basis!=='budget'&&f.basis!=='custom'){budget=fc.free;label=`${md(pe)}までに使っていい額（口座と財布の合計がマイナスにならない上限）`;}
+  return {budget:Math.round(budget),label,dL,pdv:Math.round(budget/dL),pe,now:Math.round(fc.use),spend:f.spend||'go'};
 }
-let aiOpen=false;
+let aiOpen=false,aiLogAll=false;
+// APIクレジットの通帳：入金（＋）と使用（−）を日時順に並べ、入金から使った分を引いた残高を各行に出す
+function aiLedger(){
+  const u=S.ai.usd;const rows=[];
+  (u.deposits||[]).forEach(d=>rows.push({id:d.id,ts:String(d.date||''),d:Number(d.usd)||0,dep:true,src:d.src}));
+  (u.uses||[]).forEach(x=>rows.push({id:x.id,ts:String(x.ts||''),d:-(Number(x.usd)||0),src:x.src}));
+  // 家計管理で使用の1件ログを付ける前の分は、明細なしの1行にまとめる
+  const logged=(u.uses||[]).reduce((s,x)=>s+(Number(x.usd)||0),0);const gap=(Number(u.spent)||0)-logged;
+  rows.sort((a,b)=>cmp(a.ts,b.ts)||(b.d-a.d));
+  if(gap>0.00005){const fu=rows.find(r=>!r.dep);const fd=rows.find(r=>r.dep);rows.splice(fu?rows.indexOf(fu):rows.length,0,{id:'gap',ts:fu?fu.ts:(fd?fd.ts:''),d:-gap,gap:true});}
+  let bal=0;rows.forEach(r=>{bal+=r.d;r.bal=bal;});
+  return rows;
+}
 function renderAiCard(){
   const f=S.ai.form;const b=aiBudget();const u=S.ai.usd;const dep=(u.deposits||[]).reduce((s,d)=>s+(Number(d.usd)||0),0);const bal=dep-(Number(u.spent)||0);
   const moods=['','まったりインドア','外でアクティブに','一人で静かに','非日常を味わいたい','美味しいものが食べたい','新しい趣味を始めたい'];
@@ -1757,73 +1794,126 @@ function renderAiCard(){
     <div class="fld"><label>予算の考え方</label><select onchange="S.ai.form.basis=this.value;save();render()">
       ${[['free','この先使える額で考える'],['budget','今月の予算の残りで考える'],['custom','自分で金額を決める']].map(([k,l])=>`<option value="${k}" ${f.basis===k?'selected':''}>${l}</option>`).join('')}</select></div>
     ${f.basis==='custom'?`<div class="fld"><label>使う予定の額</label><input type="number" inputmode="numeric" value="${f.custom||''}" onchange="S.ai.form.custom=this.value;save();render()"></div>`:''}
-    <div class="prev">AIが使う予算：${Y(b.budget)}（残り${b.dL}日）</div>
+    <div class="fld"><label>使い方</label><select onchange="S.ai.form.spend=this.value;save();render()">
+      ${Object.entries(AI_SPEND).map(([k,v])=>`<option value="${k}" ${b.spend===k?'selected':''}>${v.label}</option>`).join('')}</select></div>
+    <div class="prev">AIが使う予算：${Y(b.budget)}（${md(b.pe)}まで残り${b.dL}日）<br><small class="muted">いちばん高いプランの目安：${Y(aiBands(b.budget,b.spend)[0][0])}〜${Y(aiBands(b.budget,b.spend)[0][1])}</small></div>
     <div class="row"><div class="fld sp"><label>📍 場所（任意）</label><input id="aiLoc" value="${esc(f.loc)}" placeholder="例: 須賀川・郡山" oninput="S.ai.form.loc=this.value;save()"></div>
       <div class="fld sp"><label>😊 今の気分</label><select onchange="S.ai.form.mood=this.value;save()">${moods.map(m=>`<option value="${m}" ${f.mood===m?'selected':''}>${m||'おまかせ'}</option>`).join('')}</select></div></div>
     <div class="fld"><label>✍️ 細かい指示（任意・入れるとこちら優先）</label><input value="${esc(f.free)}" placeholder="例: 友達と2人で6時間くらい" oninput="S.ai.form.free=this.value;save()"></div>
     <button class="btn" onclick="generateAI()">✨ 今週末のプランを提案してもらう</button>`;
   if(aiResult){
-    h+=`<div style="margin-top:10px">${aiResult.loading?'<div class="muted">考えています…</div>':`<div class="muted" style="margin-bottom:4px">${aiResult.mode==='ai'?'🤖 AI':'📦 オフライン'}の提案</div>`+
-      aiResult.plans.map(p=>`<div class="li"><div class="ic">${esc(p.emoji||'✨')}</div><div class="t" style="white-space:normal"><b>${esc(p.name)}</b><small style="white-space:normal">${esc(p.desc)}</small></div><div class="a" style="color:var(--warn)">${fmt(Number(p.amount)||0)}円</div></div>`).join('')+
+    h+=`<div style="margin-top:10px">${aiResult.loading?'<div class="muted">考えています…</div>':`<div class="muted" style="margin-bottom:4px">${aiResult.mode==='ai'?'🤖 AI':'📦 オフライン'}の提案（予算 ${Y(aiResult.budget)}）</div>`+
+      aiResult.plans.map(p=>{const a=Number(p.amount)||0;const bud=aiResult.budget;
+        const sub=bud>0?`予算の${Math.round(a/bud*100)}%・使っても残り ${Y(bud-a)}`:'';
+        return `<div class="li"><div class="ic">${esc(p.emoji||'✨')}</div><div class="t" style="white-space:normal"><b>${esc(p.name)}</b><small style="white-space:normal">${esc(p.desc)}</small>${sub?`<small class="muted">${sub}</small>`:''}</div><div class="a" style="color:var(--warn)">${fmt(a)}円</div></div>`;}).join('')+
       `<div class="prev" style="font-weight:400;margin-top:8px">${esc(aiResult.advice||'')}</div><button class="btn sub sm" onclick="generateAI()">🔄 別の提案を見る</button>`}</div>`;
   }
-  h+=`<details style="margin-top:10px"><summary class="muted">💰 APIクレジット残高 $${bal.toFixed(2)}（使用 $${(Number(u.spent)||0).toFixed(4)}）</summary>
-    <div style="margin-top:6px">${(u.deposits||[]).slice().sort((a,c)=>cmp(c.date,a.date)).slice(0,5).map(d=>`<div class="li"><div class="t"><b>${esc(d.date)}</b></div><div class="a in">+$${(Number(d.usd)||0).toFixed(2)}</div></div>`).join('')||'<div class="muted">入金記録なし</div>'}
-    <button class="btn sub sm" style="margin-top:6px" onclick="addAiDeposit()">＋ 入金を記録</button></div></details></details>`;
+  const rows=aiLedger().reverse();const shown=aiLogAll?rows:rows.slice(0,8);
+  const ts=r=>{if(r.gap)return 'それ以前の使用（明細なし）';if(r.dep)return esc(r.ts.slice(0,10));const d=new Date(r.ts);return isNaN(d)?esc(r.ts):`${ds(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;};
+  h+=`<details style="margin-top:10px"><summary class="muted">💰 APIクレジット残高 $${bal.toFixed(2)}（入金 $${dep.toFixed(2)} − 使用 $${(Number(u.spent)||0).toFixed(4)}）</summary>
+    <div style="margin-top:6px">${shown.map(r=>`<div class="li"><div class="t"><b>${r.dep?'＋ 入金':'− 使用'}</b><small>${ts(r)}${r.src==='legacy'?'・家計管理':''}</small></div>
+      <div class="a ${r.dep?'in':'out'}" style="text-align:right">${r.dep?'+':'−'}$${Math.abs(r.d).toFixed(r.dep?2:4)}<br><small class="muted">残 $${r.bal.toFixed(2)}</small></div>
+      ${r.dep?`<button class="btn sub sm" style="width:auto;margin-left:6px" onclick="removeAiDeposit('${esc(r.id)}')">✕</button>`:''}</div>`).join('')||'<div class="muted">記録なし</div>'}
+    ${rows.length>8?`<button class="btn sub sm" onclick="aiLogAll=!aiLogAll;render()">${aiLogAll?'▲ 閉じる':`▼ もっと見る（残り${rows.length-8}件）`}</button>`:''}
+    <div class="row" style="margin-top:6px"><button class="btn sub sm sp" onclick="addAiDeposit()">＋ 入金を記録</button>
+      <button class="btn sub sm sp" onclick="importLegacyAiUsd()">📥 家計管理の記録を追記</button></div></div></details></details>`;
   return h;
 }
 function addAiDeposit(){
   const a=prompt('入金額（ドル）　例: 5');if(a==null)return;const usd=Number(String(a).trim());if(!(usd>0)){toast('正の数を入れてください');return;}
   S.ai.usd.deposits=S.ai.usd.deposits||[];S.ai.usd.deposits.push({id:'d'+Date.now(),date:todayStr(),usd});save();render();
 }
-function buildAiPrompt({budget,basisLabel,dL,pd,txt,loc,moodFree,moodPreset}){
-  const THEME_AXES=['五感を刺激する体験','地元の知らない場所の開拓','一人で没頭できる新しい趣味の入口','体を動かすアクティブ系','静かに心を整える系','学び・知的好奇心系','安く済む小さな冒険','季節を感じる外遊び','ものづくり・クラフト系','食の新規開拓'];
+function removeAiDeposit(id){
+  if(!confirm('この入金記録を削除しますか？'))return;
+  const u=S.ai.usd;u.deposits=(u.deposits||[]).filter(d=>d.id!==id);(u.removed=u.removed||[]).push(id);save();render();
+}
+// 家計管理（kakeibo_ai_usd）の入金・使用の記録を、見通しのログに追記する。何度やっても二重にならない（idで照合）
+function mergeLegacyAiUsd(l){
+  if(!l||typeof l!=='object')return false;
+  const u=S.ai.usd;u.deposits=u.deposits||[];u.uses=u.uses||[];const rm=new Set(u.removed||[]);const before=JSON.stringify(u);
+  (l.deposits||[]).forEach(d=>{if(!d||!d.id||rm.has(d.id))return;const usd=Number(d.usd)||0;
+    // 同じ入金を見通しでも手入力していたら（同じ日・同じ額）追記しない
+    if(u.deposits.some(x=>x.id===d.id||(x.date===d.date&&Number(x.usd)===usd)))return;
+    u.deposits.push({id:d.id,date:d.date,usd,src:'legacy'});});
+  const lIds=new Set();
+  (l.uses||[]).forEach(x=>{if(!x||!x.id)return;lIds.add(x.id);const e=u.uses.find(y=>y.id===x.id);
+    if(e)e.src='legacy';else u.uses.push({id:x.id,ts:x.ts,usd:Number(x.usd)||0,src:'legacy'});});
+  // 使った額 ＝ 家計管理の累計（1件ログが付く前の分も含む）＋ 見通しで使った分
+  const own=u.uses.filter(x=>!lIds.has(x.id)&&x.src!=='legacy').reduce((s,x)=>s+(Number(x.usd)||0),0);
+  u.spent=(Number(l.spent)||0)+own;u.fromLegacy=true;
+  return JSON.stringify(u)!==before;
+}
+function legacyAiUsdLocal(){try{return JSON.parse(localStorage.getItem('kakeibo_ai_usd')||'null');}catch(e){return null;}}
+function importLegacyAiUsd(){
+  const l=legacyAiUsdLocal();if(!l){toast('この端末に家計管理のAPIクレジット記録がありません');return;}
+  if(mergeLegacyAiUsd(l)){save();render();toast('家計管理の記録を追記しました');}else toast('追記する新しい記録はありません');
+}
+function buildAiPrompt({budget,basisLabel,dL,pd,pe,now,spend,txt,loc,moodFree,moodPreset}){
+  const THEME_AXES=['五感を刺激する体験','地元の知らない場所の開拓','一人で没頭できる新しい趣味の入口','体を動かすアクティブ系','静かに心を整える系','学び・知的好奇心系','安く済む小さな冒険','季節を感じる外遊び','ものづくり・クラフト系','食の新規開拓','ちょっと遠出の遠征','ご褒美系の贅沢'];
   const seed=THEME_AXES[Math.floor(Math.random()*THEME_AXES.length)];
-  const locLine=loc?`【希望エリア】${loc}（この近辺で行ける場所を優先。難しければ近隣でも可）`:`【エリア】福島県・須賀川/郡山周辺を基本に`;
+  const locLine=loc?`【希望エリア】${loc}（この近辺で行ける場所を優先。難しければ近隣でも可）`:`【エリア】福島県・須賀川/郡山周辺を基本に（いちばん高いプランは仙台・東京・会津などへの遠征や1泊もアリ）`;
   const moodLine=moodFree?`【細かい指示】「${moodFree}」→ 人数・時間・やりたいこと等の条件は最優先で必ず満たすこと`:(moodPreset?`【今の気分】「${moodPreset}」→ この気分に合うトーンの提案を多めに`:`【気分】特に指定なし。バランスよく`);
-  const prompt=`あなたは「日常に新しい刺激を与える体験キュレーター」です。家計管理アプリ内にいますが、節約の話より"いつもと違う休日"の具体提案がメイン。
+  const bands=aiBands(budget,spend);const sp=AI_SPEND[spend]||AI_SPEND.go;
+  const bandLines=bands.map(([lo,hi,l],i)=>`  - プラン${i+1}：${lo.toLocaleString()}〜${hi.toLocaleString()}円（${l}）`).join('\n');
+  const tone=budget<=0?'使える額がマイナス/0なので、0円〜数百円で"お金をかけない冒険"だけを出す。':
+    spend==='go'?`使い方は「はっちゃける」。この${budget.toLocaleString()}円は${md(pe)}までに使っても家計が回る額なので、貯めこまずに思いっきり使う前提で考える。遠慮した安い案ばかりにしない。"せっかくお金があるならこれやりたかった"という体験を選ぶ。`:
+    spend==='normal'?'使い方は「ほどほど」。余裕の範囲でちゃんと楽しめる案を。':
+    '使い方は「控えめ」。お金はあまり使わずに満足度の高い案を。';
+  return `あなたは「日常に新しい刺激を与える体験キュレーター」です。家計管理アプリ内にいますが、節約の話より"いつもと違う休日"の具体提案がメイン。
 ${locLine}
 ${moodLine}
-【使える予算】${basisLabel}＝${budget.toLocaleString()}円（残り${dL}日）
-【★予算の考え方（重要）★】この${budget.toLocaleString()}円は「残り期間トータルで自由に使える額」。1日あたり${pd.toLocaleString()}円はあくまで目安で上限ではない。「1日${pd.toLocaleString()}円しか使えない」ではなく「残り${dL}日のうちの"ある休日"に、この予算の範囲でどう使うと満たされるか」で考える。1回の休日にまとめて使ってOK。
-【★予算上限★】各プランの amount は ${Math.max(budget,0).toLocaleString()}円 以下。超える提案は出さない。0/マイナスなら0〜数百円の案のみ。
+【お金の状況】口座と財布の今の合計（貯金を除く）：${now.toLocaleString()}円／${basisLabel}：${budget.toLocaleString()}円（${md(pe)}まで残り${dL}日、1日あたり${pd.toLocaleString()}円）
+【★予算の使い方（最重要）★】${tone}
+各プランの amount は下の金額帯に必ず入れる（帯から外れた案は出さない）。金額帯は使える額から出しているので、高い帯のプランはその金額に見合う体験（交通費・宿・体験料・食事をきちんと積み上げた額）にする：
+${bandLines}
 【入力チェック（最優先）】もし【希望エリア】が実在しない地名や場所と無関係な語（例:「パソコン」）なら、その場所は使えないと判断し advice 冒頭で「"${loc}"って場所が見つからなかったから、エリア指定なしで考えるね」と添えて福島・須賀川/郡山周辺として提案。もし【今の気分】または【細かい指示】が意味不明な語（例:「マウス」）なら無視して"おまかせ"扱い（こじつけない）。
-【最近の支出】\n${txt||'なし'}
+【今期の支出】\n${txt||'なし'}
 【提案の方向性】自宅でのゲームや動画視聴など"いつもの過ごし方"だけで完結しない、新鮮で具体的な休日の体験を中心に。特定の人物像や個人の趣味を決めつけず、誰でも気軽に試せる切り口で提案する
 【今回フォーカスしてほしいテーマ軸】「${seed}」を中心に据えつつ、他の方向性も1〜2個混ぜる
 【提案の作り方（重要）】
 - ありきたりな案は外し、まだやったことのなさそうな"風変わりで日常を彩る"体験を。毎回同じにならないよう新鮮な切り口で
 - ★具体的であること★：「どこで・何をして・何を見て/感じて、どんな新しい発見があるか」まで描く
-  - 良い例：「鈍行ぶらり旅：水郡線で常陸大子まで行って、駅前の шамisen…ではなく地元の手打ちそばを食べ、袋田の滝の裏側を歩いて『水のカーテンを内側から見る』非日常を味わう」
+  - 良い例：「鈍行ぶらり旅：水郡線で常陸大子まで行って、地元の手打ちそばを食べ、袋田の滝の裏側を歩いて『水のカーテンを内側から見る』非日常を味わう」
   - 良い例：「朝の郡山中央卸売市場で場内食堂の海鮮丼。普段見ない競りの活気と、朝5時の街の空気で一日の解像度が上がる」
 - 地名・店の種類・行動・得られる感覚をセットで。抽象的な「〜を楽しむ」で終わらせない
-- 予算は自由費残りと1日あたりを意識し現実的に。0円〜数千円中心、1つくらい少し贅沢でもOK
+- 高いプランは desc に内訳の目安（例：交通費6,000円＋体験12,000円＋夕食5,000円）を入れる
 - 「お、ちょっとやってみるか」と思える一押しの一言を desc の最後に
-今週末向けに4プラン。JSON形式のみ返答（前後の説明文・マークダウン無し）:
+- advice は友達口調で、使える額（${budget.toLocaleString()}円）に触れて背中を押す（${sp.label}のノリで）
+今週末向けに4プラン（上の金額帯の順）。JSON形式のみ返答（前後の説明文・マークダウン無し）:
 {"plans":[{"emoji":"🚃","name":"プラン名（端的に）","amount":2000,"desc":"場所・行動・発見まで具体的に1〜2文"}],"advice":"友達口調で背中を押す一言"}`;
-  return prompt;
+}
+// オフライン用：金額帯ごとに、帯の上限以下でいちばん近い案を（上位3つからランダムに）選ぶ
+function localPlans(budget,spend,moodKey){
+  const bands=aiBands(budget,spend);const used=new Set();
+  return bands.map(([lo,hi])=>{
+    let pool=NOVEL_EXPERIENCES.filter(p=>!used.has(p)&&p.amount<=Math.max(hi,500));
+    if(moodKey){const m=pool.filter(p=>p.moods&&p.moods.includes(moodKey));if(m.length)pool=m.concat(pool.filter(p=>!m.includes(p)).filter(p=>p.amount>=lo));}
+    pool.sort((a,c)=>Math.abs((lo+hi)/2-a.amount)-Math.abs((lo+hi)/2-c.amount));
+    const p=shuffle(pool.slice(0,3))[0]||NOVEL_EXPERIENCES.find(x=>!used.has(x));used.add(p);return p;
+  });
 }
 async function generateAI(){
   const f=S.ai.form;const b=aiBudget();const loc=(f.loc||'').trim(),moodFree=(f.free||'').trim(),moodPreset=f.mood||'';
   const pk=periodKeyOf(todayStr());const [ps,pe]=periodRange(pk);
   const txt=entries(ps,pe).filter(x=>x.type==='out').slice(-30).map(x=>`・${x.memo||catById(x.cat).name}(${catById(x.cat).name}): ${x.amount}円${x.rec?' 固定費':''}`).join('\n');
   aiResult={loading:true};render();
-  const local=()=>{const moodKey=MOOD_MAP[moodFree||moodPreset]||'';let pool=NOVEL_EXPERIENCES.filter(p=>p.min<=Math.max(b.budget,0));if(pool.length<4)pool=NOVEL_EXPERIENCES.slice();
-    if(moodKey){const m=pool.filter(p=>p.moods&&p.moods.includes(moodKey)),r=pool.filter(p=>!(p.moods&&p.moods.includes(moodKey)));pool=shuffle(m).concat(shuffle(r));}else shuffle(pool);
-    let advice=b.budget<0?'使える額がマイナスだから、0円の星空観測や廃線さんぽ・図書館あたりで"お金をかけない冒険"を。':b.budget<5000?'残りはタイトめ。でも温泉や純喫茶モーニングなら数百円で非日常。':b.pdv>=4000?'余裕あるね。陶芸かボルダリングみたいな"体を動かす初体験"に振ってみては。':'ペースは良好。リストから1個"やったことないやつ"を選ぶのが今週のミッション。';
+  const local=()=>{const moodKey=MOOD_MAP[moodFree||moodPreset]||'';const plans=localPlans(b.budget,b.spend,moodKey);
+    let advice=b.budget<=0?'使える額がマイナスだから、0円の星空観測や廃線さんぽ・図書館あたりで"お金をかけない冒険"を。':
+      b.spend==='go'?`${fmt(b.budget)}円使っても家計は回るって出てるよ。いちばん上のやつ、思い切っていっちゃおう。`:
+      b.spend==='normal'?'余裕の範囲でちゃんと楽しめるやつを選んでみた。':'お金をあまりかけずに満足できるやつを選んでみた。';
     if(loc)advice=`「${loc}」周辺だとこの辺りかな。`+advice;
-    aiResult={mode:'local',plans:pool.slice(0,4),advice};render();};
+    aiResult={mode:'local',plans,advice,budget:b.budget};render();};
   try{
-    const prompt=buildAiPrompt({budget:b.budget,basisLabel:b.label,dL:b.dL,pd:b.pdv,txt,loc,moodFree,moodPreset});
-    const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:AI_MODEL,max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    const prompt=buildAiPrompt({budget:b.budget,basisLabel:b.label,dL:b.dL,pd:b.pdv,pe:b.pe,now:b.now,spend:b.spend,txt,loc,moodFree,moodPreset});
+    const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:AI_MODEL,max_tokens:1500,messages:[{role:'user',content:prompt}]})});
     const data=await res.json();
     if(data.usage){const u=data.usage;const inTok=(Number(u.input_tokens)||0)+(Number(u.cache_read_input_tokens)||0)+(Number(u.cache_creation_input_tokens)||0);
       const usd=inTok/1e6*AI_PRICE_IN+(Number(u.output_tokens)||0)/1e6*AI_PRICE_OUT;S.ai.usd.spent=(Number(S.ai.usd.spent)||0)+usd;(S.ai.usd.uses=S.ai.usd.uses||[]).push({id:'u'+Date.now(),ts:new Date().toISOString(),usd});save();}
     if(!res.ok||!Array.isArray(data.content))throw new Error('api');
     const parsed=JSON.parse(data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim());
-    const cap=b.budget>0?b.budget:1000;const plans=(parsed.plans||[]).filter(p=>(Number(p.amount)||0)<=cap);
+    const cap=b.budget>0?b.budget:1000;const plans=(parsed.plans||[]).filter(p=>(Number(p.amount)||0)<=cap).sort((a,c)=>(Number(c.amount)||0)-(Number(a.amount)||0));
     if(plans.length<2){local();return;}
-    aiResult={mode:'ai',plans,advice:parsed.advice||''};render();
+    aiResult={mode:'ai',plans,advice:parsed.advice||'',budget:b.budget};render();
   }catch(e){local();}
 }
 
@@ -1939,8 +2029,8 @@ function applyLegacy(data,label){
     if(og){ng.method=goalMethod(og);ng.toAcc=og.toAcc;ng.icon=og.icon;ng.kind=og.kind;ng.replaces=og.replaces;ng.extra=og.extra;}});
   S.goals=S.goals.filter(g=>g.src!=='legacy'&&!(g.src==='preset'&&r.goals.some(n=>n.name===g.name))).concat(r.goals);
   dedupeGoalFixed();unifyLegacyFixed();
-  // AI提案のクレジット記録を引き継ぐ（初回のみ）
-  if(data.kakeibo_ai_usd&&!S.ai.usd.fromLegacy){const u=data.kakeibo_ai_usd;S.ai.usd={spent:Number(u.spent)||0,uses:u.uses||[],deposits:u.deposits||[],fromLegacy:true};}
+  // AI提案のクレジット記録（入金・使用）を追記する
+  mergeLegacyAiUsd(data.kakeibo_ai_usd);
   S.settings.startDay=r.pdBase;S.settings.shift=r.pdAdj;S.settings.nameBy='start';
   S.ui.setupDone=true;S.ui.importedAt=todayStr();save();goToday();
   toast('取り込みました');
