@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.15.2';
+const APP_VERSION='v1.16.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -368,7 +368,7 @@ function entries(from,to){
     const we=win?winEnd(r,d):null;const due=win?(paid||we):d; // 金額を入れる目安の日
     const noDate=win&&!paid&&we<t,noAmt=!!r.vary&&!has&&due<=t;
     const oh=!has&&otRate(r)?recOtH(r,d):0;
-    out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date,key:d,type:r.type,amount:has?ex.amount:est+otNet(r,otPay(r,d)),
+    out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date,key:d,type:r.type,amount:has?ex.amount:recNet(r,d,otPay(r,d)),
       cat:r.cat,method:r.method,count:1,memo:r.name+(oh?`（残業${oh}h）`:''),est:!!r.vary&&!has,missing:noDate||noAmt,noDate,noAmt,
       win:win&&!paid?{s:d,e:we}:null,paid:!!paid});
   });});
@@ -385,8 +385,20 @@ const hasParts=r=>r.type==='in'&&Array.isArray(r.parts)&&r.parts.length>0;
 const partsSum=(ps,k)=>k==='ded'?dedAt(ps,partsSum(ps,'pay')):(ps||[]).filter(p=>p.k===k).reduce((s,p)=>s+(Number(p.a)||0),0);
 // 雇用保険のように「総支給×料率（‰）」で毎回決まる控除は、その回の総支給（残業代を含む）から計算する
 const RATE_RE=/雇用保険/;
-const partAmt=(p,pay)=>p.r?Math.round(pay*Number(p.r)/1000):Number(p.a)||0;
-const dedAt=(ps,pay)=>(ps||[]).filter(p=>p.k==='ded').reduce((s,p)=>s+partAmt(p,pay),0);
+// 食事代のように「締め日で区切った期間の平日の日数×単価」で決まる控除は、給料日ごとに日数を数える
+const DAYS_RE=/食事|弁当|昼食/;
+// 給料日 d 以前で最後の締め日までの1か月（前の締め日の翌日〜締め日）
+function closeRange(close,d){const b=pd(d);let y=b.getFullYear(),m=b.getMonth();
+  const cd=(yy,mm)=>new Date(yy,mm,close==='end'?lastDay(yy,mm):Math.min(Number(close)||15,lastDay(yy,mm)));
+  let e=cd(y,m);if(e>b){m--;if(m<0){m=11;y--;}e=cd(y,m);}
+  let pm=m-1,py=y;if(pm<0){pm=11;py--;}return {s:ds(addDays(cd(py,pm),1)),e:ds(e)};}
+function workDays(s,e,hol){let n=0;for(let x=pd(s);x<=pd(e);x=addDays(x,1)){const w=x.getDay();if(w&&w!==6&&!(hol&&isHol(x)))n++;}return n;}
+const dayCnt=(p,d)=>{const g=closeRange(p.dp.close,d);return workDays(g.s,g.e,p.dp.hol!==false);};
+const partAmt=(p,pay,d)=>p.r?Math.round(pay*Number(p.r)/1000):p.dp&&d?dayCnt(p,d)*(Number(p.dp.per)||0):Number(p.a)||0;
+const dedAt=(ps,pay,d)=>(ps||[]).filter(p=>p.k==='ded').reduce((s,p)=>s+partAmt(p,pay,d),0);
+// その回の手取り（残業代 g を含む）。内訳があればその回の総支給・控除で計算する
+function recNet(r,d,g){if(!hasParts(r)||r.vary)return (r.vary?recEst(r):Number(r.amount)||0)+otNet(r,g);
+  const pay=partsSum(r.parts,'pay')+(g||0);return pay-dedAt(r.parts,pay,d);}
 const otRate=r=>r.type==='in'?Number(r.otRate)||0:0;
 function recOtH(r,d){const ex=(r.ex||{})[d];return ex&&ex.ot!=null?Number(ex.ot)||0:Number(r.otH)||0;}
 const otPay=(r,d)=>Math.round(otRate(r)*recOtH(r,d));
@@ -395,7 +407,7 @@ function otNet(r,g){if(!g||!hasParts(r))return g;const pay=partsSum(r.parts,'pay
 // 控除が見直される時期：額はわからないので、その月の給料で「変わっているかも」と知らせるだけ（控除の項目名で判定）
 const PART_REV=[
   {re:/住民税/,m:6,msg:'住民税は6月の給料から新しい年度の額になります'},
-  {re:/健康保険|厚生年金|介護保険/,m:10,msg:'健康保険・厚生年金は9月に見直され、多くの会社は10月の給料から変わります（9月の給料から変わる会社もあります）'},
+  {re:/健康保険|厚生年金|介護保険|子ども子育て/,m:10,msg:'健康保険・厚生年金は9月に見直され、多くの会社は10月の給料から変わります（9月の給料から変わる会社もあります）'},
   {re:/雇用保険/,m:4,msg:'雇用保険は4月から料率が変わることがあります'}];
 function payRevs(r,from,to){
   const res=[];if(!hasParts(r))return res;
@@ -406,7 +418,9 @@ function payRevs(r,from,to){
 // 給料日の2週間前から、給料日のあと1か月まで出す（「確認した」で消える）
 function payRevNotices(){const t=pd(todayStr());const out=[];
   S.recurring.forEach(r=>out.push(...payRevs(r,ds(addDays(t,-31)),ds(addDays(t,14)))));return out.sort((a,b)=>cmp(a.d,b.d));}
-const revNote=(r,d)=>payRevs(r,d,d).map(x=>`<div class="note">🧾 ${md(d)}の給料から${x.names.map(esc).join('・')}が変わっているかも。${x.msg}。明細を見て違っていたら設定の内訳を直してください。</div>`).join('');
+const daysNote=(r,d)=>hasParts(r)?r.parts.filter(p=>p.k==='ded'&&p.dp).map(p=>{const g=closeRange(p.dp.close,d),n=dayCnt(p,d);
+  return `<div class="note">🍱 ${esc(p.n)}：${md(g.s)}〜${md(g.e)}の${p.dp.hol!==false?'平日（土日祝を除く）':'平日（土日を除く）'} ${n}日 × ${fmt(p.dp.per)}円 ＝ ${fmt(n*p.dp.per)}円</div>`;}).join(''):'';
+const revNote=(r,d)=>daysNote(r,d)+payRevs(r,d,d).map(x=>`<div class="note">🧾 ${md(d)}の給料から${x.names.map(esc).join('・')}が変わっているかも。${x.msg}。明細を見て違っていたら設定の内訳を直してください。</div>`).join('');
 function chkRev(rid,key){const r=S.recurring.find(x=>x.id===rid);if(!r)return;r.chk=r.chk||{};r.chk[key]=true;save();render();}
 // 金額が変わる固定費（ガス・電気など）：まだ金額を入れていない回は、直近3回の実際の金額（平均か最大）で見込む。
 // 実際の金額がまだ1回もなければ、設定の金額を見込みにする
@@ -997,8 +1011,8 @@ function sheet(title,body){document.getElementById('sheetIn').innerHTML=`<div cl
 function openRecOcc(rid,date){
   const r=S.recurring.find(x=>x.id===rid);if(!r)return;const ex=(r.ex||{})[date]||{};
   // 残業を時間で入れる給料：この回の残業時間と、明細が来たら実際に入った額
-  if(otRate(r)&&!recWin(r)){const base=r.vary?recEst(r):Number(r.amount)||0,has=ex.amount!=null;
-    window._occOt={base,rate:otRate(r),def:Number(r.otH)||0,r};
+  if(otRate(r)&&!recWin(r)){const base=recNet(r,date,0),has=ex.amount!=null;
+    window._occOt={base,rate:otRate(r),def:Number(r.otH)||0,r,date};
     sheet(`${esc(r.name)}（${md(date)}）`,`<div class="fld"><label>この回の残業（時間）</label><input type="text" inputmode="decimal" id="occOt" value="${ex.ot!=null?ex.ot:''}" placeholder="ふだんの見込み ${Number(r.otH)||0}時間" oninput="occOtCalc()"></div>
       <div class="note" id="occOtNote"></div>
       <div class="fld" style="margin-top:8px"><label>実際に入った額（明細が来たら・任意）</label><input type="text" inputmode="numeric" id="occAmt" value="${has?ex.amount:''}" placeholder="入れるとこの額で計算"></div>
@@ -1026,7 +1040,7 @@ function openRecOcc(rid,date){
 }
 const numIn=v=>String(v).replace(/[０-９．]/g,c=>c==='．'?'.':String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^\d.]/g,'');
 function occOtCalc(){const o=window._occOt,el=document.getElementById('occOtNote');if(!o||!el)return;
-  const raw=numIn(document.getElementById('occOt').value),h=raw===''?o.def:Number(raw)||0,ot=Math.round(o.rate*h),net=otNet(o.r,ot);
+  const raw=numIn(document.getElementById('occOt').value),h=raw===''?o.def:Number(raw)||0,ot=Math.round(o.rate*h),net=recNet(o.r,o.date,ot)-o.base;
   el.innerHTML=`見込み：${fmt(o.base)}円 ＋ 残業 ${h}時間（${fmt(ot)}円${net!==ot?`、雇用保険など −${fmt(ot-net)}円`:''}） ＝ <b>${fmt(o.base+net)}円</b>`;}
 function saveOcc(rid,date,skip){
   const r=S.recurring.find(x=>x.id===rid);r.ex=r.ex||{};
@@ -1411,12 +1425,14 @@ function editRec(id,ty){
 }
 // 給与明細の内訳の入力欄
 function renderParts(){const el=document.getElementById('rParts');if(!el)return;const P=window._parts;
-  const sec=(k,t,ph)=>`<div class="muted" style="margin-top:6px">${t}</div>`+P.map((p,i)=>p.k!==k?'':`<div class="row" style="gap:6px;margin-top:4px"><input class="sp" style="min-width:0" value="${esc(p.n||'')}" placeholder="${ph}" oninput="window._parts[${i}].n=this.value" onchange="renderParts()"><input class="sp" style="min-width:0" type="number" inputmode="numeric" id="pa${i}" value="${p.a||''}" placeholder="0" ${p.r?'readonly':''} oninput="window._parts[${i}].a=Number(this.value)||0;partsTotal()"><button class="btn sm sub" style="width:auto" onclick="window._parts.splice(${i},1);renderParts()">✕</button></div>`
-      +(k==='ded'&&(p.r||RATE_RE.test(p.n||''))?`<div class="row" style="gap:6px;margin:2px 0 0 4px;align-items:center"><label style="display:flex;gap:6px;align-items:center" class="muted"><input type="checkbox" style="width:auto" ${p.r?'checked':''} onchange="partRate(${i},this.checked)"> 総支給×</label><input style="width:64px;min-width:0" type="text" inputmode="decimal" value="${p.r||''}" placeholder="‰" ${p.r?'':'disabled'} oninput="window._parts[${i}].r=Number(numIn(this.value))||0;partsTotal()"><span class="muted">‰で毎回計算</span></div>`:'')).join('')
+  const sec=(k,t,ph)=>`<div class="muted" style="margin-top:6px">${t}</div>`+P.map((p,i)=>p.k!==k?'':`<div class="row" style="gap:6px;margin-top:4px"><input class="sp" style="min-width:0" value="${esc(p.n||'')}" placeholder="${ph}" oninput="window._parts[${i}].n=this.value" onchange="renderParts()"><input class="sp" style="min-width:0" type="number" inputmode="numeric" id="pa${i}" value="${p.a||''}" placeholder="0" ${p.r||p.dp?'readonly':''} oninput="window._parts[${i}].a=Number(this.value)||0;partsTotal()"><button class="btn sm sub" style="width:auto" onclick="window._parts.splice(${i},1);renderParts()">✕</button></div>`
+      +(k==='ded'&&(p.r||RATE_RE.test(p.n||''))?`<div class="row" style="gap:6px;margin:2px 0 0 4px;align-items:center"><label style="display:flex;gap:6px;align-items:center" class="muted"><input type="checkbox" style="width:auto" ${p.r?'checked':''} onchange="partRate(${i},this.checked)"> 総支給×</label><input style="width:64px;min-width:0" type="text" inputmode="decimal" value="${p.r||''}" placeholder="‰" ${p.r?'':'disabled'} oninput="window._parts[${i}].r=Number(numIn(this.value))||0;partsTotal()"><span class="muted">‰で毎回計算</span></div>`:'')
+      +(k==='ded'&&!p.r&&(p.dp||DAYS_RE.test(p.n||''))?`<div style="margin:2px 0 0 4px"><label style="display:flex;gap:6px;align-items:center" class="muted"><input type="checkbox" style="width:auto" ${p.dp?'checked':''} onchange="partDays(${i},this.checked)"> 平日の日数×単価で毎回計算</label>${p.dp?`<div class="row" style="gap:6px;align-items:center;margin-top:2px;flex-wrap:wrap;white-space:nowrap"><span class="muted">1日</span><input style="width:70px;min-width:0" type="text" inputmode="numeric" value="${p.dp.per||''}" oninput="window._parts[${i}].dp.per=Number(numIn(this.value))||0;partsTotal()"><span class="muted">円・</span><select style="width:auto" onchange="window._parts[${i}].dp.close=this.value==='end'?'end':Number(this.value);partsTotal()">${dayOpts(p.dp.close,true)}</select><span class="muted">締め</span><select style="width:auto" onchange="window._parts[${i}].dp.hol=this.value==='1';partsTotal()"><option value="1" ${p.dp.hol!==false?'selected':''}>土日祝を除く</option><option value="0" ${p.dp.hol===false?'selected':''}>土日を除く</option></select></div><div class="muted" id="pd${i}" style="font-size:12px"></div>`:''}</div>`:'')).join('')
     +`<button class="btn sm sub" style="margin-top:4px;width:auto" onclick="addPart('${k}')">＋ ${t}を追加</button>`;
   el.innerHTML=(P.length?'':`<button class="btn sm sub" style="margin-top:6px;width:auto" onclick="partsTemplate()">明細の項目を入れる</button>`)
     +(P.length?sec('pay','支給','例：基本給、通勤手当')+sec('ded','控除','例：健康保険、住民税')+'<div id="rPartsSum" style="margin-top:6px"></div>':'');
   if(!P.length)document.getElementById('rAmt').readOnly=false;partsTotal();}
+function partDays(i,on){const p=window._parts[i];if(on)p.dp={per:300,close:15,hol:true};else delete p.dp;renderParts();}
 // 料率で計算に切り替えるとき、今の額÷総支給から料率（‰）を出しておく
 function partRate(i,on){const p=window._parts[i],pay=partsSum(window._parts,'pay');
   p.r=on?(p.a>0&&pay>0?Math.round(p.a/pay*10000)/10:5.5):0;renderParts();}
@@ -1424,8 +1440,13 @@ function addPart(k){window._parts.push({n:'',a:0,k});renderParts();}
 function partsTemplate(){const a=Number(document.getElementById('rAmt').value)||0;
   window._parts=[{n:'基本給',a,k:'pay'},{n:'通勤手当',a:0,k:'pay'},...['健康保険','厚生年金','雇用保険','所得税','住民税'].map(n=>({n,a:0,k:'ded'}))];renderParts();}
 function partsTotal(){const P=window._parts,el=document.getElementById('rPartsSum');if(!el||!P.length)return;
-  const pay=partsSum(P,'pay'),ded=partsSum(P,'ded');
-  P.forEach((p,i)=>{if(p.r){p.a=partAmt(p,pay);const x=document.getElementById('pa'+i);if(x)x.value=p.a;}});el.innerHTML=`総支給 ${fmt(pay)}円 − 控除 ${fmt(ded)}円 ＝ <b>手取り ${fmt(pay-ded)}円</b>`;
+  const pay=partsSum(P,'pay');
+  // 日数で決まる控除は、今日以降で最初の締め日の分を目安に出す（実際の各回は給料日ごとに数える）
+  const nx=ds(addDays(pd(todayStr()),31));
+  P.forEach((p,i)=>{if(p.r||p.dp){if(p.dp){const g=closeRange(p.dp.close,nx),n=dayCnt(p,nx);p.a=n*(Number(p.dp.per)||0);
+      const t=document.getElementById('pd'+i);if(t)t.textContent=`例：${md(g.s)}〜${md(g.e)}は ${n}日 → ${fmt(p.a)}円（給料日ごとにその前の締めまでの分を数えます）`;}
+    else p.a=partAmt(p,pay);const x=document.getElementById('pa'+i);if(x){x.value=p.a;x.readOnly=true;}}});
+  const ded=partsSum(P,'ded');el.innerHTML=`総支給 ${fmt(pay)}円 − 控除 ${fmt(ded)}円 ＝ <b>手取り ${fmt(pay-ded)}円</b>`;
   const a=document.getElementById('rAmt');a.value=pay-ded;a.readOnly=true;}
 function recType(t){
   window._recT=t;document.getElementById('rPayBox').style.display=t==='in'?'block':'none';if(t!=='in')document.getElementById('rAmt').readOnly=false;else partsTotal();document.querySelectorAll('#rType button').forEach((b,i)=>b.classList.toggle('on',(i===0)===(t==='out')));
@@ -1440,14 +1461,14 @@ function saveRec(id){
   const v=x=>document.getElementById(x).value;
   const o={name:v('rName').trim(),type:window._recT,amount:Number(v('rAmt'))||0,cat:v('rCat'),method:v('rMethod'),every:v('rEvery'),
     day:v('rDay')==='end'?'end':Number(v('rDay')),month:Number(v('rMon'))||1,mInt:Number(v('rMInt'))||2,adjust:v('rAdj'),n:Math.max(1,Number(v('rN'))||10),start:v('rStart')||todayStr(),end:v('rEnd')||'',vary:document.getElementById('rVary').checked,est:v('rEst'),win:document.getElementById('rWin').checked,dayTo:v('rDayTo')==='end'?'end':Number(v('rDayTo'))};
-  if(o.type==='in'){const ps=(window._parts||[]).map(p=>Object.assign({n:String(p.n||'').trim(),a:Number(p.a)||0,k:p.k},p.r?{r:Number(p.r)}:{})).filter(p=>p.n||p.a);
+  if(o.type==='in'){const ps=(window._parts||[]).map(p=>Object.assign({n:String(p.n||'').trim(),a:Number(p.a)||0,k:p.k},p.r?{r:Number(p.r)}:{},p.dp?{dp:Object.assign({},p.dp)}:{})).filter(p=>p.n||p.a);
     o.parts=ps;if(ps.length)o.amount=partsSum(ps,'pay')-partsSum(ps,'ded');o.otRate=Number(v('rOtRate'))||0;o.otH=Number(v('rOtH'))||0;}
   else{o.parts=[];o.otRate=0;o.otH=0;}
   if(!o.name||o.amount<=0){toast(o.parts.length?'手取りが0円以下です':'名前と金額を入れてください');return;}
   if(o.end&&o.end<o.start){toast('終わりの日が始まりより前です');return;}
   if(id){const r=S.recurring.find(x=>x.id===id);
     // 見直しの知らせが出ている項目の額を直したら、その知らせは確認済みにする
-    payRevNotices().filter(x=>x.r===r).forEach(x=>{const amt=ps=>ps.filter(p=>x.names.includes(p.n)).map(p=>p.n+':'+p.a+':'+(p.r||'')).join();
+    payRevNotices().filter(x=>x.r===r).forEach(x=>{const amt=ps=>ps.filter(p=>x.names.includes(p.n)).map(p=>p.n+':'+p.a+':'+(p.r||'')+':'+JSON.stringify(p.dp||'')).join();
       if(amt(r.parts)!==amt(o.parts))(r.chk=r.chk||{})[x.key]=true;});
     Object.assign(r,o);}else S.recurring.push(Object.assign({id:uid(),ex:{}},o));
   S.ui.setupDone=true;save();closeSheet();render();
