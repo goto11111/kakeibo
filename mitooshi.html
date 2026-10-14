@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.19.0';
+const APP_VERSION='v1.20.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -268,6 +268,7 @@ function migrateData(){
   [['repay','💸','返済','out'],['saving','🐷','積立','out']].forEach(([id,icon,name,kind])=>{if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});});
   S.ai=Object.assign({usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},S.ai||{});
   if(!S.ai.form.spend)S.ai.form.spend='go';
+  S.ai.plans=S.ai.plans||[];S.ai.hist=S.ai.hist||[];
   // この端末に家計管理のAPIクレジット記録があれば、入金・使用のログに追記しておく
   mergeLegacyAiUsd(legacyAiUsdLocal());
 }
@@ -889,6 +890,7 @@ function entryRow(x){
   if(card&&x.type==='out'){const ps=portions(x,card);sub+=` → ${md(ps[0].date)}引落${ps.length>1?`（${ps.length}回払い）`:''}`;}
   if(x.rec)sub=(x.missing?`⚠️ ${missLabel(x)}・`:'')+(x.win?`${md(x.win.s)}〜${md(x.win.e)}のどこか・`:'')+(x.est?'見込み・':'')+'🔁 固定費・'+sub;
   if(x.pot){const g=goalById(x.pot);sub='🐷 '+(g?g.name:'貯金')+'から・'+sub;}
+  if(x.ai)sub='🤖 AIプラン・'+sub;
   const xp=txPlan(x);if(xp){const it=planById(xp);sub='📌 '+(it?it.name:'予算')+(x.plan?'':'（メモから）')+'・'+sub;}
   return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
@@ -992,6 +994,7 @@ function renderInput(){
   }
   h+=`<input placeholder="メモ（店名など・任意）" value="${esc(F.memo||'')}" oninput="F.memo=this.value" style="margin-top:6px">
   <button class="btn" style="margin-top:10px" onclick="saveTx()">保存</button>
+  ${F.ai&&S.ai.plans.some(p=>p.id===F.ai)?`<button class="btn sub" style="margin-top:10px" onclick="const id=F.ai;closeSheet();openAiPlan(id)">🗺️ AIプランの予定を見る</button>`:''}
   ${F.id?`<button class="btn del" style="margin-top:10px" onclick="delTx()">この記録を削除</button>`:''}`;
   document.getElementById('sheetIn').innerHTML=h;
 }
@@ -1014,6 +1017,7 @@ function saveTx(){
   if(!F.date){toast('日付を入れてください');return;}
   const t={id:F.id||uid(),date:F.date,type:F.type,amount,memo:(F.memo||'').trim()};
   if(F.src)t.src=F.src;
+  if(F.ai)t.ai=F.ai;
   if(F.type==='move'){if(!F.from||!F.to||F.from===F.to){toast('別々の口座を選んでください');return;}t.from=F.from;t.to=F.to;}
   else{if(!F.method){toast('支払い方法を選んでください');return;}t.cat=F.cat;t.method=F.method;t.count=cardOf(F.method)&&F.type==='out'?Number(F.count)||1:1;
     if(F.type==='out'){S.ui.lastMethod=F.method;S.ui.lastCat=F.cat;if(F.plan)t.plan=F.plan;else if(F.pot)t.pot=F.pot;}}
@@ -1805,9 +1809,11 @@ function renderAiCard(){
     h+=`<div style="margin-top:10px">${aiResult.loading?'<div class="muted">考えています…</div>':`<div class="muted" style="margin-bottom:4px">${aiResult.mode==='ai'?'🤖 AI':'📦 オフライン'}の提案（予算 ${Y(aiResult.budget)}）</div>`+
       aiResult.plans.map(p=>{const a=Number(p.amount)||0;const bud=aiResult.budget;
         const sub=bud>0?`予算の${Math.round(a/bud*100)}%・使っても残り ${Y(bud-a)}`:'';
-        return `<div class="li"><div class="ic">${esc(p.emoji||'✨')}</div><div class="t" style="white-space:normal"><b>${esc(p.name)}</b><small style="white-space:normal">${esc(p.desc)}</small>${sub?`<small class="muted">${sub}</small>`:''}</div><div class="a" style="color:var(--warn)">${fmt(a)}円</div></div>`;}).join('')+
+        const kept=S.ai.plans.some(x=>x.id===p.id);
+        return `<div class="li tap" onclick="openAiPlan('${p.id}')"><div class="ic">${esc(p.emoji||'✨')}</div><div class="t" style="white-space:normal"><b>${esc(p.name)}</b><small style="white-space:normal">${esc(p.desc)}</small>${sub?`<small class="muted">${sub}</small>`:''}<small style="color:var(--accent,#2f6b45)">${kept?'⭐ とっておき済み・':''}タップで当日の予定を組む・カレンダーに入れる ›</small></div><div class="a" style="color:var(--warn)">${fmt(a)}円</div></div>`;}).join('')+
       `<div class="prev" style="font-weight:400;margin-top:8px">${esc(aiResult.advice||'')}</div><button class="btn sub sm" onclick="generateAI()">🔄 別の提案を見る</button>`}</div>`;
   }
+  h+=renderAiSaved();
   const rows=aiLedger().reverse();const shown=aiLogAll?rows:rows.slice(0,8);
   const ts=r=>{if(r.gap)return 'それ以前の使用（明細なし）';if(r.dep)return esc(r.ts.slice(0,10));const d=new Date(r.ts);return isNaN(d)?esc(r.ts):`${ds(d)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;};
   h+=`<details style="margin-top:10px"><summary class="muted">💰 APIクレジット残高 $${bal.toFixed(2)}（入金 $${dep.toFixed(2)} − 使用 $${(Number(u.spent)||0).toFixed(4)}）</summary>
@@ -1862,6 +1868,7 @@ function buildAiPrompt({budget,basisLabel,dL,pd,pe,now,spend,txt,loc,moodFree,mo
   return `あなたは「日常に新しい刺激を与える体験キュレーター」です。家計管理アプリ内にいますが、節約の話より"いつもと違う休日"の具体提案がメイン。
 ${locLine}
 ${moodLine}
+【日付】今日は${dLabel(todayStr())}。今週末は${dLabel(nextWeekend())}ごろ。季節に合った案に${aiMemory()}
 【お金の状況】口座と財布の今の合計（貯金を除く）：${now.toLocaleString()}円／${basisLabel}：${budget.toLocaleString()}円（${md(pe)}まで残り${dL}日、1日あたり${pd.toLocaleString()}円）
 【★予算の使い方（最重要）★】${tone}
 各プランの amount は下の金額帯に必ず入れる（帯から外れた案は出さない）。金額帯は使える額から出しているので、高い帯のプランはその金額に見合う体験（交通費・宿・体験料・食事をきちんと積み上げた額）にする：
@@ -1902,19 +1909,180 @@ async function generateAI(){
       b.spend==='go'?`${fmt(b.budget)}円使っても家計は回るって出てるよ。いちばん上のやつ、思い切っていっちゃおう。`:
       b.spend==='normal'?'余裕の範囲でちゃんと楽しめるやつを選んでみた。':'お金をあまりかけずに満足できるやつを選んでみた。';
     if(loc)advice=`「${loc}」周辺だとこの辺りかな。`+advice;
-    aiResult={mode:'local',plans,advice,budget:b.budget};render();};
+    aiResult={mode:'local',plans:plans.map(p=>Object.assign({},p,{id:uid()})),advice,budget:b.budget};render();};
   try{
     const prompt=buildAiPrompt({budget:b.budget,basisLabel:b.label,dL:b.dL,pd:b.pdv,pe:b.pe,now:b.now,spend:b.spend,txt,loc,moodFree,moodPreset});
-    const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:AI_MODEL,max_tokens:1500,messages:[{role:'user',content:prompt}]})});
-    const data=await res.json();
-    if(data.usage){const u=data.usage;const inTok=(Number(u.input_tokens)||0)+(Number(u.cache_read_input_tokens)||0)+(Number(u.cache_creation_input_tokens)||0);
-      const usd=inTok/1e6*AI_PRICE_IN+(Number(u.output_tokens)||0)/1e6*AI_PRICE_OUT;S.ai.usd.spent=(Number(S.ai.usd.spent)||0)+usd;(S.ai.usd.uses=S.ai.usd.uses||[]).push({id:'u'+Date.now(),ts:new Date().toISOString(),usd});save();}
-    if(!res.ok||!Array.isArray(data.content))throw new Error('api');
-    const parsed=JSON.parse(data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim());
+    const parsed=await aiCall(prompt,1500);
     const cap=b.budget>0?b.budget:1000;const plans=(parsed.plans||[]).filter(p=>(Number(p.amount)||0)<=cap).sort((a,c)=>(Number(c.amount)||0)-(Number(a.amount)||0));
     if(plans.length<2){local();return;}
+    plans.forEach(p=>{p.id=uid();p.amount=Number(p.amount)||0;});
+    S.ai.hist=(S.ai.hist||[]).concat(plans.map(p=>p.name)).slice(-40);save();
     aiResult={mode:'ai',plans,advice:parsed.advice||'',budget:b.budget};render();
   }catch(e){local();}
+}
+
+// ── 🗺️ AIプラン：提案 → 当日の予定を組む → カレンダーに入れる → 行ったら評価（次の提案に活かす）──
+// S.ai.plans: {id,emoji,name,amount,desc,created,status:'keep'|'sched'|'done',date,txId,itin,rate,actual,note}
+async function aiCall(prompt,max){
+  const res=await fetch(AI_PROXY,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:AI_MODEL,max_tokens:max||1500,messages:[{role:'user',content:prompt}]})});
+  const data=await res.json();
+  if(data.usage){const u=data.usage;const inTok=(Number(u.input_tokens)||0)+(Number(u.cache_read_input_tokens)||0)+(Number(u.cache_creation_input_tokens)||0);
+    const usd=inTok/1e6*AI_PRICE_IN+(Number(u.output_tokens)||0)/1e6*AI_PRICE_OUT;S.ai.usd.spent=(Number(S.ai.usd.spent)||0)+usd;(S.ai.usd.uses=S.ai.usd.uses||[]).push({id:'u'+Date.now(),ts:new Date().toISOString(),usd});save();}
+  if(!res.ok||!Array.isArray(data.content))throw new Error('api');
+  const t=data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
+  return JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1));
+}
+const dLabel=s=>{const d=pd(s);return `${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+// 次の土曜（今日が土日なら今日）
+function nextWeekend(){const d=new Date();const w=d.getDay();if(w===0||w===6)return todayStr();return ds(addDays(d,6-w));}
+function aiPlanById(id){return S.ai.plans.find(p=>p.id===id)||(aiResult&&aiResult.plans||[]).find(p=>p.id===id);}
+function aiKeep(p){if(!S.ai.plans.some(x=>x.id===p.id)){p.created=todayStr();p.status=p.status||'keep';S.ai.plans.push(p);}return p;}
+function aiPlanTx(p){return p&&p.txId?S.tx.find(t=>t.id===p.txId):null;}
+// 予定のプランの記録が消されていたら「とっておき」に戻す
+function aiPlanStatus(p){const tx=aiPlanTx(p);if(p.status==='sched'&&!tx){p.status='keep';p.txId=null;}if(tx)p.date=tx.date;return p.status;}
+// 過去の提案・評価（次の提案のプロンプトに入れる）
+function aiMemory(){
+  const ps=S.ai.plans||[];const nm=a=>a.map(p=>p.name).slice(-8).join('、');
+  const good=ps.filter(p=>p.rate==='good'),meh=ps.filter(p=>p.rate==='meh'),sched=ps.filter(p=>aiPlanStatus(p)==='sched');
+  const recent=(S.ai.hist||[]).slice(-24);
+  let s='';
+  if(good.length)s+=`\n【実際に行って良かった体験】${nm(good)} → この方向性は好み。似た系統の"別の"体験を混ぜる`;
+  if(meh.length)s+=`\n【行ってみていまいちだった体験】${nm(meh)} → 似た系統は避ける`;
+  if(sched.length)s+=`\n【もう予定に入れている】${nm(sched)} → 同じものは出さない`;
+  if(recent.length)s+=`\n【最近出した案（同じ案・言い換えは出さない）】${recent.join('、')}`;
+  return s;
+}
+function aiPlanRow(p){
+  const st=aiPlanStatus(p);const tag=st==='sched'?`📅 ${dLabel(p.date)}`:st==='done'?(p.rate==='good'?'😊 よかった':p.rate==='meh'?'😐 いまいち':'✅ 行った'):'⭐ とっておき';
+  const due=st==='sched'&&p.date<=todayStr();
+  return `<div class="li tap" onclick="openAiPlan('${p.id}')"><div class="ic">${esc(p.emoji||'✨')}</div><div class="t"><b>${esc(p.name)}</b><small>${tag}${p.itin?'・🗺️ 予定あり':''}${due?'・<span class="warn">行ってきた？タップで記録</span>':''}</small></div>
+    <div class="a">${fmt(st==='done'&&p.actual!=null?p.actual:Number(p.amount)||0)}円</div></div>`;
+}
+function renderAiSaved(){
+  const ps=(S.ai.plans||[]).slice();if(!ps.length)return '';
+  const o={sched:0,keep:1,done:2};ps.forEach(aiPlanStatus);
+  ps.sort((a,b)=>o[a.status]-o[b.status]||(a.status==='sched'?cmp(a.date,b.date):cmp(b.date||b.created||'',a.date||a.created||'')));
+  const act=ps.filter(p=>p.status!=='done'),done=ps.filter(p=>p.status==='done');
+  return `<div style="margin-top:12px"><b>📋 AIプランの予定・とっておき</b>${act.map(aiPlanRow).join('')||'<div class="muted">なし</div>'}
+    ${done.length?`<details><summary class="muted" style="padding:6px 0">行ったプラン（${done.length}件）</summary>${done.map(aiPlanRow).join('')}</details>`:''}</div>`;
+}
+let aiItinBusy=false;
+function openAiPlan(id){
+  const p=aiPlanById(id);if(!p)return;const st=S.ai.plans.includes(p)?aiPlanStatus(p):'new';const tx=aiPlanTx(p);
+  const b=aiBudget();const amt=tx?tx.amount:(p.itin&&Number(p.itin.total))||Number(p.amount)||0;
+  const date=tx?tx.date:(p.date||nextWeekend());const method=tx?tx.method:defaultMethod('out');
+  const methods=[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)];
+  const it=p.itin;
+  let h=`<div class="prev" style="font-weight:400">${esc(p.desc||'')}</div>
+    <div class="muted" style="margin:6px 0">目安 ${fmt(Number(p.amount)||0)}円${b.budget>0?`（使える額 ${fmt(b.budget)}円の${Math.round((Number(p.amount)||0)/b.budget*100)}%）`:''}</div>`;
+  // 当日の予定（タイムスケジュール）
+  h+=`<h3 style="margin:12px 0 4px">🗺️ 当日の予定</h3>`;
+  if(it){
+    h+=`${it.title?`<div><b>${esc(it.title)}</b>${it.mode==='local'?' <small class="muted">（オフラインのたたき台）</small>':''}</div>`:''}
+      ${(it.steps||[]).map(s=>`<div class="li"><div class="ic" style="font-size:12px;width:46px">${esc(s.time||'')}</div><div class="t" style="white-space:normal"><b>${esc(s.title||'')}</b><small style="white-space:normal">${esc(s.detail||'')}</small></div><div class="a">${Number(s.cost)?fmt(Number(s.cost))+'円':''}</div></div>`).join('')}
+      <div class="row" style="padding:6px 0"><b class="sp">合計の目安</b><b>${fmt(Number(it.total)||0)}円</b></div>
+      ${it.bring&&it.bring.length?`<div class="note">🎒 持ち物：${esc(it.bring.join('・'))}</div>`:''}
+      ${it.rain?`<div class="note">☔ 雨なら：${esc(it.rain)}</div>`:''}
+      ${it.tips?`<div class="note">💡 ${esc(it.tips)}</div>`:''}
+      <button class="btn sub sm" style="margin-top:6px" onclick="copyAiItin('${p.id}')">📋 予定を文字でコピー（友達に送る用）</button>`;
+  }
+  h+=`<div class="fld" style="margin-top:8px"><label>条件（任意）：出発時間・人数・行きたい所など</label><input id="aiItinReq" value="${esc(p.req||'')}" placeholder="例: 9時に須賀川を車で出発、2人、夕方には帰る"></div>
+    <button class="btn ${it?'sub':''}" onclick="genAiItin('${p.id}')" ${aiItinBusy?'disabled':''}>${aiItinBusy?'組んでいます…':it?'🔄 予定を組み直す':'🗺️ 当日の予定を組んでもらう'}</button>`;
+  // カレンダーに入れる
+  if(st!=='done'){
+    const after=b.budget-(tx?0:amt);
+    h+=`<h3 style="margin:14px 0 4px">📅 ${tx?'カレンダーの予定':'カレンダーに入れる'}</h3>
+      <div class="row"><span class="muted">日付</span><input type="date" id="aiDate" value="${date}" style="width:auto"></div>
+      <div class="fld"><label>使う予定の額（円）</label><input type="text" inputmode="numeric" id="aiAmt" value="${amt}"></div>
+      <div class="fld"><label>払い方</label><select id="aiMethod">${methods.map(m=>`<option value="${m}" ${m===method?'selected':''}>${esc(mName(m))}</option>`).join('')}</select></div>
+      ${tx?'':`<div class="note">入れると、カレンダーと見通しに支出の予定として入ります。口座・財布ならこの日に、カードならその引き落とし日に口座から出ていく計算です（使える額 ${fmt(b.budget)}円 のうちこのプランを使うと残り ${fmt(after)}円）。</div>`}
+      <button class="btn" style="margin-top:8px" onclick="schedAiPlan('${p.id}')">${tx?'予定を更新':'📅 この日に予定を入れる'}</button>
+      ${tx?`<button class="btn sub" style="margin-top:8px" onclick="unschedAiPlan('${p.id}')">予定から外す（とっておきに戻す）</button>`:''}`;
+  }
+  // 行ったあと：実際の額と評価
+  if(st==='sched'&&p.date<=todayStr()||st==='done'){
+    h+=`<h3 style="margin:14px 0 4px">✅ 行ってきた？</h3>
+      <div class="fld"><label>実際に使った額（円）</label><input type="text" inputmode="numeric" id="aiActual" value="${p.actual!=null?p.actual:(tx?tx.amount:'')}"></div>
+      <div class="fld"><label>ひとことメモ（任意）</label><input id="aiNote" value="${esc(p.note||'')}" placeholder="例: 景色は最高、混んでた"></div>
+      <div class="grid2"><button class="btn ${p.rate==='good'?'':'sub'}" onclick="rateAiPlan('${p.id}','good')">😊 よかった</button><button class="btn ${p.rate==='meh'?'':'sub'}" onclick="rateAiPlan('${p.id}','meh')">😐 いまいち</button></div>
+      <div class="note">評価は次の提案に活かします（よかった系統は似た別の体験を、いまいちな系統は避ける）。実際の額はカレンダーの記録にも反映します。</div>`;
+  }
+  h+=`<div class="grid2" style="margin-top:12px">${st==='new'?`<button class="btn sub" onclick="keepAiPlan('${p.id}')">⭐ とっておく</button>`:'<span></span>'}
+    ${st!=='new'?`<button class="btn del" onclick="delAiPlan('${p.id}')">このプランを消す</button>`:''}</div>`;
+  sheet(`${esc(p.emoji||'✨')} ${esc(p.name)}`,h);
+}
+function aiPlanReq(p){const el=document.getElementById('aiItinReq');if(el)p.req=el.value.trim();}
+function keepAiPlan(id){const p=aiPlanById(id);if(!p)return;aiKeep(p);save();render();openAiPlan(id);toast('とっておきに入れました');}
+function delAiPlan(id){
+  const p=aiPlanById(id);if(!p)return;const tx=aiPlanTx(p);
+  if(!confirm(tx&&p.status==='sched'?'このプランを消します。カレンダーの予定（記録）も消えます。よろしいですか？':'このプランを消しますか？'))return;
+  if(tx&&p.status==='sched')S.tx=S.tx.filter(t=>t.id!==tx.id);else if(tx)delete tx.ai;
+  S.ai.plans=S.ai.plans.filter(x=>x.id!==id);save();closeSheet();render();
+}
+function schedAiPlan(id){
+  const p=aiPlanById(id);if(!p)return;aiPlanReq(p);
+  const date=document.getElementById('aiDate').value;const amount=Number(String(document.getElementById('aiAmt').value).replace(/[^\d]/g,''))||0;const method=document.getElementById('aiMethod').value;
+  if(!date){toast('日付を入れてください');return;}if(amount<=0){toast('額を入れてください');return;}
+  aiKeep(p);let tx=aiPlanTx(p);
+  const cat=S.cats.some(c=>c.id==='hobby')?'hobby':(S.cats.find(c=>c.kind==='out')||{}).id;
+  if(!tx){tx={id:uid(),type:'out',cat,count:1,memo:'🤖 '+p.name,ai:p.id};S.tx.push(tx);}
+  Object.assign(tx,{date,amount,method,count:cardOf(method)?(Number(tx.count)||1):1});
+  p.txId=tx.id;p.date=date;p.status='sched';
+  save();closeSheet();sel=date;curKey=periodKeyOf(date);render();toast(`${dLabel(date)}に入れました`);
+}
+function unschedAiPlan(id){
+  const p=aiPlanById(id);if(!p)return;const tx=aiPlanTx(p);if(tx)S.tx=S.tx.filter(t=>t.id!==tx.id);
+  p.txId=null;p.status='keep';save();render();openAiPlan(id);toast('予定から外しました');
+}
+function rateAiPlan(id,rate){
+  const p=aiPlanById(id);if(!p)return;aiKeep(p);
+  const a=String(document.getElementById('aiActual').value||'').replace(/[^\d]/g,'');const note=(document.getElementById('aiNote').value||'').trim();
+  p.rate=p.rate===rate?null:rate;p.note=note;p.status='done';
+  if(a!==''){p.actual=Number(a);const tx=aiPlanTx(p);if(tx&&p.actual>0)tx.amount=p.actual;}
+  save();render();openAiPlan(id);toast('記録しました');
+}
+function copyAiItin(id){
+  const p=aiPlanById(id);if(!p||!p.itin)return;const it=p.itin;
+  const txt=[`${p.emoji||''} ${it.title||p.name}${p.date?`（${dLabel(p.date)}）`:''}`,...(it.steps||[]).map(s=>`${s.time||''} ${s.title||''}${s.detail?' … '+s.detail:''}${Number(s.cost)?`（${fmt(Number(s.cost))}円）`:''}`),
+    `合計の目安 ${fmt(Number(it.total)||0)}円`,it.bring&&it.bring.length?'持ち物：'+it.bring.join('・'):'',it.rain?'雨なら：'+it.rain:''].filter(Boolean).join('\n');
+  (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>toast('コピーしました')).catch(()=>{prompt('コピーしてください',txt);});
+}
+// オフライン用のたたき台（AIにつながらないとき）
+function localItin(p,loc){
+  const a=Number(p.amount)||0;const far=a>=15000;
+  const steps=[{time:far?'8:00':'10:00',title:'出発',detail:`${loc||'家'}から向かう（移動時間と交通費を先に調べておく）`,cost:far?Math.round(a*0.3/100)*100:0},
+    {time:far?'10:30':'11:00',title:p.name,detail:p.desc,cost:Math.round(a*(far?0.45:0.6)/100)*100},
+    {time:'12:30',title:'昼ごはん',detail:'近くの地元のお店で（チェーン店は避けてみる）',cost:Math.round(a*(far?0.15:0.25)/100)*100},
+    {time:'14:30',title:'周りをぶらぶら',detail:'近くの道の駅・カフェ・気になった所に寄り道',cost:0},
+    {time:far?'17:00':'16:00',title:'帰る',detail:'帰りにお土産か晩ごはん',cost:0}];
+  const used=steps.reduce((s,x)=>s+x.cost,0);steps[2].cost+=Math.max(0,a-used);
+  return {mode:'local',title:p.name+'の1日',steps,total:a,bring:['飲み物','モバイルバッテリー'],rain:'屋内の施設（博物館・温泉・カフェ）に切り替える',tips:'営業時間・定休日・予約の要否は出かける前に確認してね'};
+}
+async function genAiItin(id){
+  const p=aiPlanById(id);if(!p)return;aiPlanReq(p);const f=S.ai.form;const b=aiBudget();
+  const de=document.getElementById('aiDate');const date=(de&&de.value)||p.date||nextWeekend();
+  const loc=(f.loc||'').trim()||'福島県須賀川市・郡山市周辺';const cond=[f.free,p.req].filter(x=>x&&x.trim()).join('／');
+  aiItinBusy=true;openAiPlan(id);
+  const prompt=`あなたは日帰り・小旅行の行程プランナーです。次の休日プランを、当日そのまま動けるタイムスケジュールにしてください。
+【プラン】${p.name}：${p.desc}（目安 ${Number(p.amount)||0}円）
+【日付】${date}（${WD[pd(date).getDay()]}曜日）。この時期の季節・日の入りの時間・混み具合を考える
+【出発地】${loc}
+【条件】${cond||'特になし（ひとり想定）'}
+【お金】合計はおおよそ ${Number(p.amount)||0}円。使える額 ${fmt(Math.max(b.budget,0))}円 は超えない。交通費（ガソリン・高速・電車）・入場/体験料・食事を各ステップの cost に分けて入れ、total はその合計
+【作り方】
+- 実在する場所・施設・エリア名を具体的に。移動手段と所要時間も detail に書く
+- 5〜8ステップ。出発から帰宅まで。食事の時間も入れる
+- 予約が要りそうなもの・営業時間や定休日の確認が要るものは tips でひとこと
+- rain は雨の日に同じ予算でできる代わりの過ごし方を1文で
+JSON形式のみ返答（前後の説明文・マークダウン無し）:
+{"title":"この日のタイトル","steps":[{"time":"9:00","title":"出発","detail":"どこからどう行くか・何をするか","cost":0}],"total":0,"bring":["持ち物"],"rain":"雨の日の代案","tips":"注意点や一押し"}`;
+  try{
+    const it=await aiCall(prompt,2000);
+    it.steps=(it.steps||[]).filter(s=>s&&s.title);if(!it.steps.length)throw new Error('empty');
+    const sum=it.steps.reduce((s,x)=>s+(Number(x.cost)||0),0);it.total=sum||Number(it.total)||Number(p.amount)||0;it.mode='ai';
+    p.itin=it;
+  }catch(e){p.itin=localItin(p,(f.loc||'').trim());toast('AIにつながらないので、たたき台を出しました');}
+  aiKeep(p);if(!p.date)p.date=date;aiItinBusy=false;save();render();openAiPlan(id);
 }
 
 // ── 既存「家計管理」(kakeibo.html) からの取り込み（読み取りのみ）──
