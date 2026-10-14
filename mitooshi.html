@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.18.1';
+const APP_VERSION='v1.18.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1155,6 +1155,10 @@ function renderChain(){
     const items=[];
     accs.forEach(a=>{if(a.openingDate>from)items.push({date:a.openingDate,acc:a.id,ic:'🏁',lb:'開始残高',v:Number(a.opening)||0,ord:0});});
     L.forEach(x=>{if(x.date<from||x.date>r.e||x.kind==='save'||(!withB&&x.kind==='reserve')||!bal.hasOwnProperty(x.acc))return;let ic,lb;
+      // 振替（口座間の移動・積立）は、出る側と入る側をまとめて1行にする
+      if(x.kind==='move'&&bal.hasOwnProperty(x.e.from)&&bal.hasOwnProperty(x.e.to)){if(x.delta>0)return;
+        const gl=x.e.goal&&goalById(x.e.gid);
+        items.push({date:x.date,acc:x.e.from,to:x.e.to,toV:x.e.amount,ic:'🔁',lb:gl?gl.name+' 積立':'振替'+(x.e.memo?' '+x.e.memo:''),v:-x.e.amount,ord:2,mv:true,gid:gl?gl.id:null,e:x.e});return;}
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
       else if(x.kind==='reserve'){ic='📊';lb=reserveLabel(x.r);}
       else if(x.kind==='move'){ic='🔁';const gl=x.e.goal&&goalById(x.e.gid);lb=gl?gl.name+' 積立':'振替';}
@@ -1166,19 +1170,26 @@ function renderChain(){
         items.push({date:x.date,acc:x.acc,ic,lb:reserveGroupLabel([x.r]),v:x.delta,ord:3,r:x.r,parts:[x.r]});return;}
       items.push({date:x.date,acc:x.acc,ic,lb,v:x.delta,ord:x.delta>0?1:3,g:x.kind==='card'?x.g:null,r:null,e:x.kind!=='card'&&x.kind!=='reserve'?x.e:null});});
     accs.forEach(a=>{let d=from,pv=savedIn(pots,dayBefore(from),a.id);
-      while(d<=r.e){const sv=savedIn(pots,d,a.id);if(sv!==pv)items.push({date:d,acc:a.id,ic:'🐷',lb:sv>pv?'貯金へ取り分け':'貯金から',v:pv-sv,ord:2});pv=sv;d=ds(addDays(pd(d),1));}});
+      while(d<=r.e){const sv=savedIn(pots,d,a.id);if(sv!==pv){let v=pv-sv;
+        // 積立の振替でそのまま貯金に入る分は、振替の行にまとめる（入る側の使えるお金は変わらない）
+        if(v<0)items.forEach(m=>{if(v<0&&m.mv&&m.gid&&m.date===d&&m.to===a.id&&m.toV>0&&pots.some(p=>p.g.id===m.gid)){const k=Math.min(m.toV,-v);m.toV-=k;m.pot=(m.pot||0)+k;v+=k;}});
+        if(v)items.push({date:d,acc:a.id,ic:'🐷',lb:v<0?'貯金へ取り分け':'貯金から',v,ord:2});}
+        pv=sv;d=ds(addDays(pd(d),1));}});
     items.sort((a,b)=>cmp(a.date,b.date)||a.ord-b.ord);
-    const chips=hit=>`<div class="accchips">${accs.map(a=>{const on=a.id===hit,v=bal[a.id];return `<span class="${on?'pill'+(v<0?' r':''):'ac'+(v<0?' out':'')}">${accIc(a)}${esc(a.name)} ${fmt(v)}</span>`;}).join('')}</div>`;
+    const chips=hit=>`<div class="accchips">${accs.map(a=>{const on=Array.isArray(hit)?hit.includes(a.id):a.id===hit,v=bal[a.id];return `<span class="${on?'pill'+(v<0?' r':''):'ac'+(v<0?' out':'')}">${accIc(a)}${esc(a.name)} ${fmt(v)}</span>`;}).join('')}</div>`;
     const edge=(ic,b,cls)=>`<div class="fl ${cls}" style="flex-wrap:wrap"><div class="ic">${ic}</div><div class="t">${b}</div>${chips()}</div>`;
     let body=edge('🏁',`<b>${from===S.start?`スタート時（${md(S.start)}）`:'前の期から'}</b>`,'edge');
     let nowShown=!r.now,minD=null;
     items.forEach(x=>{
       if(!nowShown&&x.date>t){nowShown=true;body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');}
       bal[x.acc]+=x.v;const v=bal[x.acc];if(v<0&&x.v<0&&!minD)minD=x.date;
+      if(x.mv)bal[x.to]+=x.toV;
       const key=x.g?x.g.card.id+'|'+x.g.date:x.r?'r|'+x.r.key+'|'+x.r.cat+'|'+x.date+'|'+x.acc:null;const open=key&&openWd[key];
       const click=key?`openWd['${key}']=!openWd['${key}'];render()`:x.e&&!x.e.bill?clickFor(x.e):'';
-      body+=`<div class="fl${x.date<=t?' past':''}${click?' tap':''}" style="flex-wrap:wrap" ${click?`onclick="${click}"`:''}><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}<small>${md(x.date)}</small>${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b></div>
-        <div class="bal"><span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span></div>${chips(x.acc)}</div>`;
+      const ta=x.mv&&accById(x.to);
+      const route=x.mv?`<small style="display:block;margin-left:0">${esc(accById(x.acc).name)} → ${x.pot&&!x.toV?'🐷':''}${esc(ta?ta.name:'')}${x.pot&&!x.toV?'の貯金':x.pot?`（うち🐷貯金 ${fmt(x.pot)}）`:''}</small>`:'';
+      body+=`<div class="fl${x.date<=t?' past':''}${click?' tap':''}" style="flex-wrap:wrap" ${click?`onclick="${click}"`:''}><div class="ic">${x.ic}</div><div class="t"><b>${esc(x.lb)}<small>${md(x.date)}</small>${key?` <span class="muted">${open?'▲':'▼'}</span>`:''}</b>${route}</div>
+        <div class="bal">${x.mv?`<span class="muted">🔁<span class="amt">${fmt(Math.abs(x.v))}円</span></span>`:`<span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span>`}</div>${chips(x.mv?[x.acc,x.to]:x.acc)}</div>`;
       if(open)body+=`<div class="flbd">${x.g?wdItems(x.g):resBreak(x.r.key,x.r.cat,x.date,x.acc)}</div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
