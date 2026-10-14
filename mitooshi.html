@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.15.0';
+const APP_VERSION='v1.15.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -386,6 +386,22 @@ const partsSum=(ps,k)=>(ps||[]).filter(p=>p.k===k).reduce((s,p)=>s+(Number(p.a)|
 const otRate=r=>r.type==='in'?Number(r.otRate)||0:0;
 function recOtH(r,d){const ex=(r.ex||{})[d];return ex&&ex.ot!=null?Number(ex.ot)||0:Number(r.otH)||0;}
 const otPay=(r,d)=>Math.round(otRate(r)*recOtH(r,d));
+// 控除が見直される時期：額はわからないので、その月の給料で「変わっているかも」と知らせるだけ（控除の項目名で判定）
+const PART_REV=[
+  {re:/住民税/,m:6,msg:'住民税は6月の給料から新しい年度の額になります'},
+  {re:/健康保険|厚生年金|介護保険/,m:10,msg:'健康保険・厚生年金は9月に見直され、多くの会社は10月の給料から変わります（9月の給料から変わる会社もあります）'},
+  {re:/雇用保険/,m:4,msg:'雇用保険は4月から料率が変わることがあります'}];
+function payRevs(r,from,to){
+  const res=[];if(!hasParts(r))return res;
+  recDates(r,from,to).forEach(d=>{const m=pd(d).getMonth()+1;PART_REV.forEach((v,i)=>{if(v.m!==m)return;
+    const ps=r.parts.filter(p=>p.k==='ded'&&v.re.test(p.n));const key=d+':'+i;
+    if(ps.length&&!(r.chk||{})[key])res.push({r,d,key,names:ps.map(p=>p.n),msg:v.msg});});});
+  return res;}
+// 給料日の2週間前から、給料日のあと1か月まで出す（「確認した」で消える）
+function payRevNotices(){const t=pd(todayStr());const out=[];
+  S.recurring.forEach(r=>out.push(...payRevs(r,ds(addDays(t,-31)),ds(addDays(t,14)))));return out.sort((a,b)=>cmp(a.d,b.d));}
+const revNote=(r,d)=>payRevs(r,d,d).map(x=>`<div class="note">🧾 ${md(d)}の給料から${x.names.map(esc).join('・')}が変わっているかも。${x.msg}。明細を見て違っていたら設定の内訳を直してください。</div>`).join('');
+function chkRev(rid,key){const r=S.recurring.find(x=>x.id===rid);if(!r)return;r.chk=r.chk||{};r.chk[key]=true;save();render();}
 // 金額が変わる固定費（ガス・電気など）：まだ金額を入れていない回は、直近3回の実際の金額（平均か最大）で見込む。
 // 実際の金額がまだ1回もなければ、設定の金額を見込みにする
 function recActuals(r){return Object.keys(r.ex||{}).filter(d=>r.ex[d]&&!r.ex[d].skip&&r.ex[d].amount!=null).sort().map(d=>({date:d,amount:Number(r.ex[d].amount)||0}));}
@@ -769,6 +785,8 @@ function renderCal(){
   pend.sort((a,b)=>cmp(a.key,b.key));
   const pendLabel=x=>x.missing?missLabel(x):x.win&&x.est?'日付・金額が未定':x.win?'日付が未定':'金額が未定';
   if(pend.length)top+=`<div class="banner"><b>📝 まだ確定していない固定費</b>（見込みで計算に入れています。確定するとカレンダーに載ります）${pend.map(x=>`<div class="row tap" style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08)" onclick="openRecOcc('${x.rid}','${x.key}')"><span class="sp">${x.win?`${md(x.win.s)}〜${md(x.win.e)}`:md(x.date)} ${esc(x.memo)}<br><small>${x.missing?'⚠️ ':''}${pendLabel(x)}</small></span><span>${x.est?'見込み ':''}${fmt(x.amount)}円 ›</span></div>`).join('')}</div>`;
+  const revs=payRevNotices();
+  if(revs.length)top+=`<div class="banner"><b>🧾 給料の明細を確認</b>（控除の額が変わっているかもしれません）${revs.map(x=>`<div class="row" style="padding:5px 0;border-top:1px solid rgba(0,0,0,.08);gap:6px"><span class="sp tap" onclick="editRec('${x.r.id}')">${md(x.d)} ${esc(x.r.name)}：${x.names.map(esc).join('・')}<br><small>${x.msg}。違っていたらタップして内訳を直す</small></span><button class="btn sm sub" style="width:auto" onclick="chkRev('${x.r.id}','${x.key}')">確認した</button></div>`).join('')}</div>`;
   const fc=forecast(horizonEnd(fcH));const nw=nextWithdraw();
   const cp=cashPeriod(s,e),cpNow=cp&&t>=S.start?cashPeriod(S.start,t):null;
   const leftHtml=b.total>0
@@ -978,7 +996,7 @@ function openRecOcc(rid,date){
     sheet(`${esc(r.name)}（${md(date)}）`,`<div class="fld"><label>この回の残業（時間）</label><input type="text" inputmode="decimal" id="occOt" value="${ex.ot!=null?ex.ot:''}" placeholder="ふだんの見込み ${Number(r.otH)||0}時間" oninput="occOtCalc()"></div>
       <div class="note" id="occOtNote"></div>
       <div class="fld" style="margin-top:8px"><label>実際に入った額（明細が来たら・任意）</label><input type="text" inputmode="numeric" id="occAmt" value="${has?ex.amount:''}" placeholder="入れるとこの額で計算"></div>
-      <div class="note">残業は「1時間あたり ${fmt(otRate(r))}円 × 時間」を手取り ${fmt(base)}円 に足して見込みます。空欄ならふだんの見込み（${Number(r.otH)||0}時間）。実際に入った額を入れると、残業の時間に関係なくその額になります。</div>
+      ${revNote(r,date)}<div class="note">残業は「1時間あたり ${fmt(otRate(r))}円 × 時間」を手取り ${fmt(base)}円 に足して見込みます。空欄ならふだんの見込み（${Number(r.otH)||0}時間）。実際に入った額を入れると、残業の時間に関係なくその額になります。</div>
       <div class="grid2" style="margin-top:10px"><button class="btn" onclick="saveOcc('${rid}','${date}',false)">保存</button><button class="btn sub" onclick="saveOcc('${rid}','${date}',true)">この回はスキップ</button></div>
       ${has||ex.skip||ex.ot!=null?`<button class="btn sub" style="margin-top:8px" onclick="clearOcc('${rid}','${date}')">見込みに戻す</button>`:''}
       <button class="btn sub" style="margin-top:8px" onclick="editRec('${rid}')">定期収入の設定を開く</button>`);
@@ -996,7 +1014,7 @@ function openRecOcc(rid,date){
       <button class="btn sub" style="margin-top:8px" onclick="editRec('${rid}')">固定費の設定を開く</button>`);
     if(r.vary&&!has&&!win){const a=document.getElementById('occAmt');if(a)a.focus();}return;}
   sheet(`${esc(r.name)}（${md(date)}）`,`<div class="fld"><label>この回の金額</label><input type="number" inputmode="numeric" id="occAmt" value="${ex.amount!=null?ex.amount:r.amount}"></div>
-    <div class="note">変更はこの回だけに反映されます。毎回の金額を変えるときは固定費の設定から。</div>
+    <div class="note">変更はこの回だけに反映されます。毎回の金額を変えるときは${r.type==='in'?'定期収入':'固定費'}の設定から。</div>${revNote(r,date)}
     <div class="grid2" style="margin-top:10px"><button class="btn" onclick="saveOcc('${rid}','${date}',false)">この回だけ変更</button><button class="btn sub" onclick="saveOcc('${rid}','${date}',true)">この回はスキップ</button></div>
     <button class="btn sub" style="margin-top:8px" onclick="editRec('${rid}')">固定費の設定を開く</button>`);
 }
@@ -1416,7 +1434,11 @@ function saveRec(id){
   else{o.parts=[];o.otRate=0;o.otH=0;}
   if(!o.name||o.amount<=0){toast(o.parts.length?'手取りが0円以下です':'名前と金額を入れてください');return;}
   if(o.end&&o.end<o.start){toast('終わりの日が始まりより前です');return;}
-  if(id){const r=S.recurring.find(x=>x.id===id);Object.assign(r,o);}else S.recurring.push(Object.assign({id:uid(),ex:{}},o));
+  if(id){const r=S.recurring.find(x=>x.id===id);
+    // 見直しの知らせが出ている項目の額を直したら、その知らせは確認済みにする
+    payRevNotices().filter(x=>x.r===r).forEach(x=>{const amt=ps=>ps.filter(p=>x.names.includes(p.n)).map(p=>p.n+':'+p.a).join();
+      if(amt(r.parts)!==amt(o.parts))(r.chk=r.chk||{})[x.key]=true;});
+    Object.assign(r,o);}else S.recurring.push(Object.assign({id:uid(),ex:{}},o));
   S.ui.setupDone=true;save();closeSheet();render();
 }
 function delRec(id){if(!confirm('削除しますか？（これまでの分も消えます。止めたいだけなら「いつまで」を入れてください）'))return;S.recurring=S.recurring.filter(r=>r.id!==id);save();closeSheet();render();}
