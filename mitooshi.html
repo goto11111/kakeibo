@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.21.0';
+const APP_VERSION='v1.22.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -579,7 +579,7 @@ function cashPeriod(s,e){
       if(x.kind==='card'){ic='💳';lb=x.g.card.name+' 引き落とし';}
       else if(x.kind==='reserve'){ic=x.r.label&&x.r.label!=='予定外の予算'?'📌':'📊';lb=reserveLabel(x.r);}
       else if(x.e&&x.e.goal){ic='🎯';lb=(goalById(x.e.gid)||{}).name||'目標';}
-      else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=(x.e.memo||c.name)+(x.e.est?'（見込み）':'');}
+      else{const c=catById(x.e.cat);ic=x.kind==='in'?'💴':c.icon;lb=(x.e.memo||c.name)+(x.e.item?'・'+x.e.item:'')+(x.e.est?'（見込み）':'');}
       const gp=x.kind==='reserve'&&x.r.cat&&r.list.find(y=>y.parts&&y.date===x.date&&y.accId===x.acc&&y.parts[0].key===x.r.key&&y.parts[0].cat===x.r.cat);
       if(gp){gp.v+=x.delta;gp.parts.push(x.r);gp.lb=reserveGroupLabel(gp.parts);}
       else if(x.kind==='reserve'&&x.r.cat)r.list.push({date:x.date,ic:'📊',lb:reserveGroupLabel([x.r]),acc:a?a.name:'',accId:x.acc,v:x.delta,kind:x.kind,parts:[x.r]});
@@ -610,19 +610,21 @@ function budgetUseCash(key){
   const [s,e]=periodRange(key);const byCat={},byItem={},byRec={},lists={};let all=0;
   // lists：カテゴリごとに、この期に出ていく分の中身（見通しで予算の内訳を出すため）
   const add=(x,v,date,via)=>{all+=v;const it=planIn(x,key);const c=it&&it.cat?it.cat:x.cat;byCat[c]=(byCat[c]||0)+v;if(it)byItem[it.id]=(byItem[it.id]||0)+v;if(x.rec)byRec[c]=(byRec[c]||0)+v;
-    (lists[c]||(lists[c]=[])).push({name:x.memo||catById(x.cat).name,amount:v,date,via,rec:!!x.rec,item:it?it.id:null,used:x.date});};
+    (lists[c]||(lists[c]=[])).push({name:(x.memo||catById(x.cat).name)+(x.item?'・'+x.item:''),amount:v,date,via,rec:!!x.rec,item:it?it.id:null,used:x.date});};
   const skip=x=>x.type!=='out'||x.goal||x.bill||(x.pot&&goalById(x.pot));
   entries(s,e).forEach(x=>{if(skip(x)||cardOf(x.method))return;add(x,x.amount,x.date,mName(x.method));});
   charges(s,e).forEach(p=>{if(skip(p.e))return;add(p.e,p.principal+p.fee,p.date,p.card.name);});
   return {byCat,all,byItem,byRec,lists};
 }
+// 予算の項目を当てる文字：メモ（払った店・サイト）と中身（買ったもの）。
+// 分けた会計の行は店名が全部の行で共通なので、その行の中身だけで当てる
+const planText=t=>t.grp?(t.item||''):[t.memo,t.item].filter(Boolean).join(' ');
 // その記録が key の期の予算のどの項目にあたるか（選んだ項目と同じ項目か、メモに項目名が入っているか）
 function planIn(t,key){
   if(!t||t.type!=='out'||t.goal||t.rec||t.pot)return null;
   const its=budgetOf(key).items||[];
   if(t.plan)return its.find(i=>i.id===t.plan.split('@')[0])||null;
-  if(t.grp)return null; // 分けた会計の行はメモ（店名）が共通なので、メモからは項目を当てない
-  const m=t.memo||'';if(!m)return null;let best=null,bl=0;
+  const m=planText(t);if(!m)return null;let best=null,bl=0;
   its.forEach(it=>{const n=(it.name||'').trim();if(n.length>=2&&n.length>bl&&m.includes(n)){best=it;bl=n.length;}});
   return best;
 }
@@ -631,8 +633,7 @@ function planIn(t,key){
 function txPlan(t){
   if(!t||t.type!=='out'||t.goal||t.rec||t.pot)return null;
   if(t.plan)return t.plan;
-  if(t.grp)return null;
-  const m=t.memo||'';if(!m)return null;
+  const m=planText(t);if(!m)return null;
   const k=periodKeyOf(t.date);let best=null,bl=0;
   (budgetOf(k).items||[]).forEach(it=>{const n=(it.name||'').trim();if(n.length>=2&&n.length>bl&&m.includes(n)){best=it;bl=n.length;}});
   return best?best.id+'@'+k:null;
@@ -896,7 +897,7 @@ function entryRow(x){
   if(x.pot){const g=goalById(x.pot);sub='🐷 '+(g?g.name:'貯金')+'から・'+sub;}
   if(x.ai)sub='🤖 AIプラン・'+sub;
   const xp=txPlan(x);if(xp){const it=planById(xp);sub='📌 '+(it?it.name:'予算')+(x.plan?'':'（メモから）')+'・'+sub;}
-  return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b><small>${esc(c.name)}・${esc(sub)}</small></div>
+  return `<div class="li tap" onclick="${clickFor(x)}"><div class="ic">${c.icon}</div><div class="t"><b>${esc(x.memo||c.name)}${x.win?'（未払い）':''}</b>${x.item?`<small>🛍️ ${esc(x.item)}</small>`:''}<small>${esc(c.name)}・${esc(sub)}</small></div>
     <div class="a ${x.type==='in'?'in':''}">${x.type==='in'?'+':'-'}<span class="amt">${fmt(x.amount)}</span>円</div></div>`;
 }
 // ✂️ 分けた会計（同じ grp の記録）は、払った額そのままの1行にまとめ、その下に内訳を出す
@@ -904,7 +905,7 @@ function entryRow(x){
 const giOrd=g=>g||1e9;
 const buyCount=es=>new Set(es.map(e=>e.grp?'g:'+e.grp:e.id)).size;
 function grpLines(ms){return ms.map(y=>{const c=catById(y.cat),it=y.plan?planById(y.plan):null;
-  return `<small style="display:block">${c.icon} ${esc(it?'📌 '+it.name:c.name)}　${fmt(y.amount)}円</small>`;}).join('');}
+  return `<small style="display:block">${c.icon} ${esc(it?'📌 '+it.name:c.name)}${y.item?`（${esc(y.item)}）`:''}　${fmt(y.amount)}円</small>`;}).join('');}
 function groupedRows(list){const done=new Set();
   return list.map(x=>{if(!x.grp)return entryRow(x);if(done.has(x.grp))return '';done.add(x.grp);
     const ms=list.filter(y=>y.grp===x.grp).sort((a,b)=>giOrd(a.gi)-giOrd(b.gi));const tot=ms.reduce((a,y)=>a+(Number(y.amount)||0),0);
@@ -958,7 +959,8 @@ function editTx(id){const t=S.tx.find(x=>x.id===id);if(!t)return;
   const ms=grpOf(t.grp),main=ms.find(x=>!x.gi),base=main||ms[0];
   const e=Object.assign({},base,{amount:ms.reduce((a,x)=>a+(Number(x.amount)||0),0)});
   if(!main){delete e.plan;delete e.pot;delete e.ai;}
-  e.parts=ms.filter(x=>x!==main).map(x=>({id:x.id,cat:x.cat,plan:x.plan||null,amountStr:String(x.amount)}));
+  if(!main)delete e.item;
+  e.parts=ms.filter(x=>x!==main).map(x=>({id:x.id,cat:x.cat,plan:x.plan||null,amountStr:String(x.amount),item:x.item||''}));
   openInput({edit:e});}
 const grpOf=g=>S.tx.filter(t=>t.grp===g).sort((a,b)=>giOrd(a.gi)-giOrd(b.gi));
 // ✂️ 1回の会計を分ける：上の金額はレシートの合計。分けたい分だけ行を足すと、残りは下で選ぶカテゴリになる
@@ -973,7 +975,8 @@ function splitHtml(){
     <div class="row"><b style="font-size:13px">✂️ 会計を分ける</b><div class="sp"></div><span class="muted" style="font-size:11px">上の金額＝レシートの合計</span></div>
     ${F.parts.map((p,i)=>`<div class="row" style="gap:6px;margin-top:6px"><select style="flex:1.4;min-width:0" onchange="splitSet(${i},this.value)">${opts(p)}</select>
       <input id="part${i}" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="金額" value="${esc(p.amountStr||'')}" oninput="splitAmt(${i},this)" style="flex:1;min-width:0">
-      <button class="x" style="flex:none" onclick="splitDel(${i})">✕</button></div>`).join('')}
+      <button class="x" style="flex:none" onclick="splitDel(${i})">✕</button></div>
+      <input placeholder="🛍️ 中身（例：メビウス・任意）" value="${esc(p.item||'')}" oninput="F.parts[${i}].item=this.value" style="margin-top:4px;font-size:13px">`).join('')}
     <button class="chip" style="margin-top:6px" onclick="splitAdd()">＋ 行を足す</button>
     <div id="splitRest" style="margin-top:6px;font-size:12.5px">${splitRestHtml()}</div></div>`;
 }
@@ -983,7 +986,7 @@ function splitRestHtml(){
   return r>0?`残り <b>${fmt(r)}円</b> は、この下で選ぶカテゴリに入ります`:`残り 0円（全部を分けた行に入れています）`;
 }
 function splitOn(){F.parts=[];splitAdd();}
-function splitAdd(){F.parts.push({id:null,cat:F.cat,plan:null,amountStr:''});renderInput();
+function splitAdd(){F.parts.push({id:null,cat:F.cat,plan:null,amountStr:'',item:''});renderInput();
   const a=document.getElementById('part'+(F.parts.length-1));if(a)a.focus();}
 function splitDel(i){F.parts.splice(i,1);if(!F.parts.length)F.parts=null;renderInput();}
 function splitSet(i,v){const p=F.parts[i];
@@ -1051,7 +1054,9 @@ function renderInput(){
     }
     h+=`<div class="prev" id="inPrev" style="${cardOf(F.method)&&F.type==='out'?'':'display:none'}">${cardPreview()}</div>`;
   }
-  h+=`<input placeholder="${F.parts&&F.type==='out'?'店名（分けた行すべてに付きます・任意）':'メモ（店名など・任意）'}" value="${esc(F.memo||'')}" oninput="F.memo=this.value" style="margin-top:6px">
+  const sp=F.parts&&F.type==='out';
+  h+=`<input placeholder="${sp?'🏪 店・サイト（分けた行すべてに付きます・任意）':F.type==='out'?'🏪 店・サイト（任意）':'メモ（任意）'}" value="${esc(F.memo||'')}" oninput="F.memo=this.value" style="margin-top:6px">
+  ${F.type==='move'?'':`<input placeholder="🛍️ ${sp?'残りの分の中身':F.type==='in'?'内容':'中身・買ったもの'}（任意）" value="${esc(F.item||'')}" oninput="F.item=this.value" style="margin-top:6px">`}
   <button class="btn" style="margin-top:10px" onclick="saveTx()">保存</button>
   ${F.ai&&S.ai.plans.some(p=>p.id===F.ai)?`<button class="btn sub" style="margin-top:10px" onclick="const id=F.ai;closeSheet();openAiPlan(id)">🗺️ AIプランの予定を見る</button>`:''}
   ${F.id?`<button class="btn del" style="margin-top:10px" onclick="delTx()">この記録を削除</button>`:''}`;
@@ -1067,7 +1072,7 @@ function pickPot(id){
 function pickPlan(pk){
   if(F.plan===pk){F.plan=null;renderInput();return;}
   const [id,key]=pk.split('@');const it=(budgetOf(key).items||[]).find(x=>x.id===id);if(!it)return;
-  F.plan=pk;F.pot=null;F.cat=it.cat;if(!F.memo)F.memo=it.name;
+  F.plan=pk;F.pot=null;F.cat=it.cat;if(!F.memo&&!F.item)F.item=it.name; // 項目の名前は中身の欄に入れる（店・サイトの欄は空けておく）
   if(it.method&&(cardOf(it.method)||accOf(it.method)))F.method=it.method;F.count=1;renderInput();
 }
 function saveTx(){
@@ -1075,6 +1080,7 @@ function saveTx(){
   if(amount<=0){toast('金額を入力してください');return;}
   if(!F.date){toast('日付を入れてください');return;}
   const t={id:F.id||uid(),date:F.date,type:F.type,amount,memo:(F.memo||'').trim()};
+  const item=(F.item||'').trim();if(item&&F.type!=='move')t.item=item;
   if(F.src)t.src=F.src;
   if(F.ai)t.ai=F.ai;
   if(F.type==='move'){if(!F.from||!F.to||F.from===F.to){toast('別々の口座を選んでください');return;}t.from=F.from;t.to=F.to;}
@@ -1091,6 +1097,7 @@ function saveTx(){
     const g=F.grp||uid(),bk=periodKeyOf(t.date);
     list=ps.map((x,i)=>{const pl=x.p.plan&&x.p.plan.endsWith('@'+bk)&&planById(x.p.plan)?x.p.plan:null;
       const o={id:x.p.id&&x.p.id!==t.id?x.p.id:uid(),date:t.date,type:'out',amount:x.a,memo:t.memo,cat:pl?planById(pl).cat:x.p.cat,method:t.method,count:t.count,grp:g,gi:i+1};
+      const it=(x.p.item||'').trim();if(it)o.item=it;
       if(pl)o.plan=pl;if(t.src)o.src=t.src;return o;});
     // 残りが0円なら、残りの行は作らない
     if(rest>0){t.amount=rest;t.grp=g;t.gi=0;list.unshift(t);}
@@ -1173,7 +1180,7 @@ function wdItems(g){
       return `<div class="li tap" onclick="${clickFor(e)}"><div class="ic">🧾</div><div class="t"><b>${esc(e.memo||'会計')}</b><small>${md(e.date)}に利用・✂️ ${ps.length}つに分けた会計${n>1?`・${ps[0].k+1}/${n}回目`:''}</small>${grpLines(ps.map(q=>Object.assign({},q.e,{amount:n>1?q.principal+q.fee:q.e.amount})))}</div>
         <div class="a"><span class="amt">${fmt(v)}</span>円${n>1?`<small>総額 ${fmt(tot)}円</small>`:''}</div></div>`;}
     const c=catById(p.e.cat);const gl=p.e.goal?goalById(p.e.gid)||{}:null;return `<div class="li tap" onclick="${clickFor(p.e)}"><div class="ic">${p.e.bill?'🧾':gl?'🎯':c.icon}</div>
-    <div class="t"><b>${esc(gl?`${gl.name||'目標'}（${gl.kind==='debt'?'返済':'積立'}）`:p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}${gl?`・このあと残り ${fmt(p.e.after)}円`:''}</small></div>
+    <div class="t"><b>${esc(gl?`${gl.name||'目標'}（${gl.kind==='debt'?'返済':'積立'}）`:p.e.memo||c.name)}</b><small>${p.e.bill?`${md(S.start||p.date)}より前に使った分・`:`${md(p.e.date)}に利用・`}${p.e.item?`🛍️ ${esc(p.e.item)}・`:''}${esc(c.name)}${p.n>1?`・${p.k+1}/${p.n}回目`:''}${p.e.rec?'・固定費':''}${gl?`・このあと残り ${fmt(p.e.after)}円`:''}</small></div>
     <div class="a"><span class="amt">${fmt(p.principal+p.fee)}</span>円${p.n>1?`<small>総額 ${fmt(p.e.amount)}円</small>`:''}</div></div>`;}).join('')
   +(g.budget||[]).map(x=>`<div class="li tap" onclick="curKey='${x.key}';setTab('bud')"><div class="ic">📊</div><div class="t"><b>${esc(x.label)}</b><small>📊 ${keyLabel(x.key)}の予算・まだ使っていない分（全部使った場合）</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('');
 }
@@ -1257,7 +1264,7 @@ function renderChain(){
       else if(x.kind==='out'&&x.e.grp){ // ✂️ 分けた会計は、口座・財布から出る1回の支払いとして1行にまとめる
         const gp=items.find(y=>y.grp===x.e.grp&&y.acc===x.acc);if(gp){gp.v+=x.delta;return;}
         items.push({date:x.date,acc:x.acc,ic:'🧾',lb:x.e.memo||'会計',v:x.delta,ord:3,grp:x.e.grp,e:x.e});return;}
-      else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=(x.e.memo||cc.name)+(x.e.est?'（見込み）':'');}
+      else{const cc=catById(x.e.cat);ic=x.kind==='in'?'💴':cc.icon;lb=(x.e.memo||cc.name)+(x.e.item?'・'+x.e.item:'')+(x.e.est?'（見込み）':'');}
       // 同じ日・同じ口座に落ちる同じカテゴリの予算（📌項目とあまり）は1行にまとめ、タップで内訳を出す
       if(x.kind==='reserve'&&x.r.cat){const gp=items.find(y=>y.r&&y.date===x.date&&y.acc===x.acc&&y.r.key===x.r.key&&y.r.cat===x.r.cat);
         if(gp){gp.v+=x.delta;gp.parts.push(x.r);gp.lb=reserveGroupLabel(gp.parts);return;}
@@ -1384,7 +1391,7 @@ function drillList(cat,s,e){
   let list;
   if(chartKind==='out')list=flows(curKey).items.filter(x=>x.cat===cat).map(x=>({date:x.date,amount:x.amount,e:x.e,p:x.p}));
   else list=entries(s,e).filter(x=>x.type==='in'&&x.cat===cat).map(x=>({date:x.date,amount:x.amount,e:x}));
-  return `<div style="padding-left:20px">${list.sort((a,b)=>cmp(b.date,a.date)).map(x=>`<div class="li tap" onclick="${clickFor(x.e)}"><div class="t"><b>${esc(x.e.memo||catById(cat).name)}</b>
+  return `<div style="padding-left:20px">${list.sort((a,b)=>cmp(b.date,a.date)).map(x=>`<div class="li tap" onclick="${clickFor(x.e)}"><div class="t"><b>${esc(x.e.memo||catById(cat).name)}${x.e.item?`・${esc(x.e.item)}`:''}</b>
     <small>${md(x.date)}${x.p?`（${md(x.e.date)}に利用）`:''}・${esc(mName(x.e.method))}</small></div><div class="a"><span class="amt">${fmt(x.amount)}</span>円</div></div>`).join('')}</div>`;
 }
 let BI=[];
@@ -1989,7 +1996,7 @@ function localPlans(budget,spend,moodKey){
 async function generateAI(){
   const f=S.ai.form;const b=aiBudget();const loc=(f.loc||'').trim(),moodFree=(f.free||'').trim(),moodPreset=f.mood||'';
   const pk=periodKeyOf(todayStr());const [ps,pe]=periodRange(pk);
-  const txt=entries(ps,pe).filter(x=>x.type==='out').slice(-30).map(x=>`・${x.memo||catById(x.cat).name}(${catById(x.cat).name}): ${x.amount}円${x.rec?' 固定費':''}`).join('\n');
+  const txt=entries(ps,pe).filter(x=>x.type==='out').slice(-30).map(x=>`・${x.memo||catById(x.cat).name}${x.item?'「'+x.item+'」':''}(${catById(x.cat).name}): ${x.amount}円${x.rec?' 固定費':''}`).join('\n');
   aiResult={loading:true};render();
   const local=()=>{const moodKey=MOOD_MAP[moodFree||moodPreset]||'';const plans=localPlans(b.budget,b.spend,moodKey);
     let advice=b.budget<=0?'使える額がマイナスだから、0円の星空観測や廃線さんぽ・図書館あたりで"お金をかけない冒険"を。':
@@ -2415,10 +2422,10 @@ function download(name,text,type){const a=document.createElement('a');a.href=URL
 function exportJSON(){download(`mitooshi-backup-${todayStr()}.json`,JSON.stringify(S,null,1),'application/json');}
 function exportCSV(){
   const q=s=>`"${String(s==null?'':s).replace(/"/g,'""')}"`;
-  const rows=[['日付','種類','金額','カテゴリ','支払い方法/口座','回数','メモ','分けた会計の合計']];
+  const rows=[['日付','種類','金額','カテゴリ','支払い方法/口座','回数','メモ（店・サイト）','中身','分けた会計の合計']];
   const gt={};S.tx.forEach(t=>{if(t.grp)gt[t.grp]=(gt[t.grp]||0)+(Number(t.amount)||0);});
   S.tx.slice().sort((a,b)=>cmp(a.date,b.date)).forEach(t=>rows.push([t.date,{out:'支出',in:'収入',move:'振替'}[t.type],t.amount,t.type==='move'?'':catById(t.cat).name,
-    t.type==='move'?`${(accById(t.from)||{}).name}→${(accById(t.to)||{}).name}`:mName(t.method).replace(/^\S+ /,''),t.count||1,t.memo,t.grp?gt[t.grp]:'']));
+    t.type==='move'?`${(accById(t.from)||{}).name}→${(accById(t.to)||{}).name}`:mName(t.method).replace(/^\S+ /,''),t.count||1,t.memo,t.item||'',t.grp?gt[t.grp]:'']));
   download(`mitooshi-${todayStr()}.csv`,'﻿'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv');
 }
 function importJSON(inp){
