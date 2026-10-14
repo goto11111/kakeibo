@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.18.0';
+const APP_VERSION='v1.18.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1026,12 +1026,13 @@ function sheet(title,body){document.getElementById('sheetIn').innerHTML=`<div cl
 function openRecOcc(rid,date){
   const r=S.recurring.find(x=>x.id===rid);if(!r)return;const ex=(r.ex||{})[date]||{};
   // 残業を時間で入れる給料：この回の残業時間と、明細が来たら実際に入った額
-  if(otRate(r)&&!recWin(r)){const base=recNet(r,date,0),has=ex.amount!=null;
+  // 収入（給料）は、残業の1時間あたりがまだなくても、ここで入れられるようにする
+  if(r.type==='in'&&!recWin(r)){const base=recNet(r,date,0),has=ex.amount!=null;
     window._occOt={base,rate:otRate(r),def:Number(r.otH)||0,r,date};
-    sheet(`${esc(r.name)}（${md(date)}）`,`<div class="fld"><label>この回の残業（時間）</label><input type="text" inputmode="decimal" id="occOt" value="${ex.ot!=null?ex.ot:''}" placeholder="ふだんの見込み ${Number(r.otH)||0}時間" oninput="occOtCalc()"></div>
+    sheet(`${esc(r.name)}（${md(date)}）`,`${otRate(r)?'':`<div class="fld"><label>残業 1時間あたり（円・給料の設定に保存）</label><input type="text" inputmode="numeric" id="occRate" placeholder="例：1500" oninput="occOtCalc()"></div>`}<div class="fld"><label>この回の残業（時間）</label><input type="text" inputmode="decimal" id="occOt" value="${ex.ot!=null?ex.ot:''}" placeholder="ふだんの見込み ${Number(r.otH)||0}時間" oninput="occOtCalc()"></div>
       <div class="note" id="occOtNote"></div>
       <div class="fld" style="margin-top:8px"><label>実際に入った額（明細が来たら・任意）</label><input type="text" inputmode="numeric" id="occAmt" value="${has?ex.amount:''}" placeholder="入れるとこの額で計算"></div>
-      ${revNote(r,date)}<div class="note">残業は「1時間あたり ${fmt(otRate(r))}円 × 時間」を手取り ${fmt(base)}円 に足して見込みます。空欄ならふだんの見込み（${Number(r.otH)||0}時間）。実際に入った額を入れると、残業の時間に関係なくその額になります。</div>
+      ${revNote(r,date)}<div class="note">残業は「1時間あたり${otRate(r)?` ${fmt(otRate(r))}円`:''} × 時間」を手取り ${fmt(base)}円 に足して見込みます。空欄ならふだんの見込み（${Number(r.otH)||0}時間）。実際に入った額を入れると、残業の時間に関係なくその額になります。</div>
       <div class="grid2" style="margin-top:10px"><button class="btn" onclick="saveOcc('${rid}','${date}',false)">保存</button><button class="btn sub" onclick="saveOcc('${rid}','${date}',true)">この回はスキップ</button></div>
       ${has||ex.skip||ex.ot!=null?`<button class="btn sub" style="margin-top:8px" onclick="clearOcc('${rid}','${date}')">見込みに戻す</button>`:''}
       <button class="btn sub" style="margin-top:8px" onclick="editRec('${rid}')">定期収入の設定を開く</button>`);
@@ -1055,12 +1056,16 @@ function openRecOcc(rid,date){
 }
 const numIn=v=>String(v).replace(/[０-９．]/g,c=>c==='．'?'.':String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^\d.]/g,'');
 function occOtCalc(){const o=window._occOt,el=document.getElementById('occOtNote');if(!o||!el)return;
-  const raw=numIn(document.getElementById('occOt').value),h=raw===''?o.def:Number(raw)||0,ot=Math.round(o.rate*h),net=recNet(o.r,o.date,ot)-o.base;
+  const re=document.getElementById('occRate'),rate=re?Number(numIn(re.value))||0:o.rate;
+  const raw=numIn(document.getElementById('occOt').value),h=raw===''?o.def:Number(raw)||0,ot=Math.round(rate*h),net=recNet(o.r,o.date,ot)-o.base;
   el.innerHTML=`見込み：${fmt(o.base)}円 ＋ 残業 ${h}時間（${fmt(ot)}円${net!==ot?`、雇用保険・所得税など −${fmt(ot-net)}円`:''}） ＝ <b>${fmt(o.base+net)}円</b>`;}
 function saveOcc(rid,date,skip){
   const r=S.recurring.find(x=>x.id===rid);r.ex=r.ex||{};
   if(skip)r.ex[date]={skip:true};
-  else if(otRate(r)&&!recWin(r)){const h=numIn(document.getElementById('occOt').value),a=numIn(document.getElementById('occAmt').value).replace(/\./g,'');
+  else if(r.type==='in'&&!recWin(r)){const re=document.getElementById('occRate'),rt=re?Number(numIn(re.value))||0:otRate(r);
+    const h=numIn(document.getElementById('occOt').value),a=numIn(document.getElementById('occAmt').value).replace(/\./g,'');
+    if(Number(h)>0&&!rt&&a===''){toast('残業の1時間あたりを入れてください');return;}
+    if(re&&rt)r.otRate=rt;
     const o={};if(h!=='')o.ot=Number(h)||0;if(a!=='')o.amount=Number(a);
     if(Object.keys(o).length)r.ex[date]=o;else delete r.ex[date];}
   else if(r.vary||recWin(r)){const raw=String(document.getElementById('occAmt').value).replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/[^\d]/g,'');
