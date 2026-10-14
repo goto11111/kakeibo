@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.17.0';
+const APP_VERSION='v1.18.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -368,7 +368,11 @@ function entries(from,to){
     const we=win?winEnd(r,d):null;const due=win?(paid||we):d; // 金額を入れる目安の日
     const noDate=win&&!paid&&we<t,noAmt=!!r.vary&&!has&&due<=t;
     const oh=!has&&otRate(r)?recOtH(r,d):0;
-    out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date,key:d,type:r.type,amount:has?ex.amount:recNet(r,d,otPay(r,d)),
+    // 給料の振り分け：決まった額を別の口座に入れ、残りを入金先へ（控除ではないので手取りは変わらない）
+    let amt=has?ex.amount:recNet(r,d,otPay(r,d));
+    if(r.type==='in')(r.split||[]).forEach((x,i)=>{const a=Math.min(Number(x.a)||0,amt);if(a<=0||!accById(x.acc))return;amt-=a;
+      out.push({id:'r:'+r.id+':'+d+':s'+i,rid:r.id,rec:true,date,key:d,type:'in',amount:a,cat:r.cat,method:'a:'+x.acc,count:1,memo:`${r.name}（${accById(x.acc).name}へ振り分け）`,split:true});});
+    out.push({id:'r:'+r.id+':'+d,rid:r.id,rec:true,date,key:d,type:r.type,amount:amt,
       cat:r.cat,method:r.method,count:1,memo:r.name+(oh?`（残業${oh}h）`:''),est:!!r.vary&&!has,missing:noDate||noAmt,noDate,noAmt,
       win:win&&!paid?{s:d,e:we}:null,paid:!!paid});
   });});
@@ -1326,7 +1330,7 @@ function renderSummary(){
   h+=sec('🏦 口座・財布','editAcc()')+(S.accounts.map(a=>row(a.type==='wallet'?'👛':'🏦',esc(a.name),`${md(a.openingDate)}の残高`,Y(Number(a.opening)||0),`editAcc('${a.id}')`)).join('')||none);
   h+=sec('💳 カード','editCard()')+(S.cards.map(c=>row(`<span class="cdot" style="display:inline-block;width:8px;height:22px;border-radius:3px;background:${cardColor(c)}"></span>`,esc(c.name),`${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}`,null,`editCard('${c.id}')`)).join('')||none);
   const rin=S.recurring.filter(r=>r.type==='in'),rout=S.recurring.filter(r=>r.type==='out');
-  h+=sec('💴 定期収入',"editRec('','in')")+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}${hasParts(r)?`<br>総支給 ${fmt(partsSum(r.parts,'pay'))}円・控除 ${fmt(partsSum(r.parts,'ded'))}円`:''}${otRate(r)?`<br>残業 ${fmt(otRate(r))}円/時間${r.otH?`・ふだん${r.otH}時間`:''}`:''}`,`<span class="in">+${fmt(r.amount)}円${r.otH&&otRate(r)?`<small>＋残業</small>`:''}</span>`,`editRec('${r.id}')`)).join('')||none);
+  h+=sec('💴 定期収入',"editRec('','in')")+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}${hasParts(r)?`<br>総支給 ${fmt(partsSum(r.parts,'pay'))}円・控除 ${fmt(partsSum(r.parts,'ded'))}円`:''}${(r.split||[]).filter(x=>accById(x.acc)).map(x=>`<br>うち ${fmt(x.a)}円を${esc(accById(x.acc).name)}へ`).join('')}${otRate(r)?`<br>残業 ${fmt(otRate(r))}円/時間${r.otH?`・ふだん${r.otH}時間`:''}`:''}`,`<span class="in">+${fmt(r.amount)}円${r.otH&&otRate(r)?`<small>＋残業</small>`:''}</span>`,`editRec('${r.id}')`)).join('')||none);
   h+=sec('🔁 固定費',"editRec('','out')")+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${recWin(r)?everyLabel(r).replace(/(\d+日|末日)/,winLabel(r)):everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,r.vary?`<small>見込み</small>-${fmt(recEst(r))}円`:`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||none);
   const b=budgetOf(pk);const bc=Object.keys(b.cats||{}).filter(k=>Number(b.cats[k])>0);
   h+=sec('📊 予算',"setTab('bud');editBudget()")+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):none);
@@ -1418,6 +1422,7 @@ function editRec(id,ty){
     <div id="rPayBox" style="display:${r.type==='in'?'block':'none'};border:1px solid rgba(0,0,0,.1);border-radius:10px;padding:8px 10px;margin-bottom:10px">
       <b>🧾 給与明細の内訳（任意）</b><div id="rParts"></div>
       <div class="row" style="margin-top:6px"><div class="fld sp"><label>残業 1時間あたり（円）</label><input id="rOtRate" type="number" inputmode="decimal" value="${r.otRate||''}" placeholder="例：1500"></div><div class="fld sp"><label>ふだんの残業（時間/回）</label><input id="rOtH" type="number" inputmode="decimal" value="${r.otH||''}" placeholder="0"></div></div>
+      <div style="margin-top:8px"><b>🏦 振り分け（給料の一部を別の口座へ）</b><div id="rSplit"></div><div class="note">控除ではないので手取りは変わりません。給料日に、ここで決めた額をその口座に入れ、残りを「入金先」に入れます。</div></div>
       <div class="note">内訳を入れると「金額」は支給の合計−控除の合計（手取り）になります。残業の1時間あたりを入れると、カレンダーで給料の回をタップして、その回の残業時間を入れられます（時間×1時間あたりを足して見込む）。</div></div>
     <div class="fld"><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="rVary" ${r.vary?'checked':''} onchange="document.getElementById('rEstRow').style.display=this.checked?'block':'none'" style="width:auto"> 毎回金額が変わる（ガス・電気・水道など）</label>
       <div id="rEstRow" style="display:${r.vary?'block':'none'}"><select id="rEst">${[['avg','直近3回の平均で見込む'],['max','直近3回の最大で見込む（多めに見る）']].map(([k,l])=>`<option value="${k}" ${(r.est||'avg')===k?'selected':''}>${l}</option>`).join('')}</select>
@@ -1432,8 +1437,14 @@ function editRec(id,ty){
     <div class="row"><div class="fld sp"><label>いつから（毎週・◯日ごとはこの日が基準）</label><input id="rStart" type="date" value="${r.start}"></div><div class="fld sp"><label>いつまで（任意）</label><input id="rEnd" type="date" value="${r.end||''}"></div></div>
     <button class="btn" style="margin-top:6px" onclick="saveRec('${id||''}')">保存</button>${id?`<button class="btn del" style="margin-top:8px" onclick="delRec('${id}')">削除</button>`:''}`);
   window._recT=r.type;window._recMO=methodOpts;window._recCO=catOpts;
-  window._parts=(r.parts||[]).map(p=>Object.assign({},p));recEvery();renderParts();
+  window._parts=(r.parts||[]).map(p=>Object.assign({},p));window._split=(r.split||[]).map(x=>Object.assign({},x));recEvery();renderParts();renderSplit();
 }
+// 給料の振り分けの入力欄
+function renderSplit(){const el=document.getElementById('rSplit');if(!el)return;const L=window._split;
+  el.innerHTML=L.map((x,i)=>`<div class="row" style="gap:6px;margin-top:4px"><select class="sp" style="min-width:0" onchange="window._split[${i}].acc=this.value">${S.accounts.map(a=>`<option value="${a.id}" ${a.id===x.acc?'selected':''}>${esc(a.name)}</option>`).join('')}</select><input class="sp" style="min-width:0" type="number" inputmode="numeric" value="${x.a||''}" placeholder="金額" oninput="window._split[${i}].a=Number(this.value)||0"><button class="btn sm sub" style="width:auto" onclick="window._split.splice(${i},1);renderSplit()">✕</button></div>`).join('')
+    +`<button class="btn sm sub" style="margin-top:4px;width:auto" onclick="addSplit()">＋ 振り分けを追加</button>`;}
+function addSplit(){const m=document.getElementById('rMethod').value.replace(/^a:/,'');
+  window._split.push({acc:(S.accounts.find(a=>a.id!==m&&a.type==='bank')||S.accounts.find(a=>a.id!==m)||S.accounts[0]||{}).id,a:0});renderSplit();}
 // 給与明細の内訳の入力欄
 function renderParts(){const el=document.getElementById('rParts');if(!el)return;const P=window._parts;
   const sec=(k,t,ph)=>`<div class="muted" style="margin-top:6px">${t}</div>`+P.map((p,i)=>p.k!==k?'':`<div class="row" style="gap:6px;margin-top:4px"><input class="sp" style="min-width:0" value="${esc(p.n||'')}" placeholder="${ph}" oninput="window._parts[${i}].n=this.value" onchange="renderParts()"><input class="sp" style="min-width:0" type="number" inputmode="numeric" id="pa${i}" value="${p.a||''}" placeholder="0" ${p.r||p.dp||p.tx?'readonly':''} oninput="window._parts[${i}].a=Number(this.value)||0;partsTotal()"><button class="btn sm sub" style="width:auto" onclick="window._parts.splice(${i},1);renderParts()">✕</button></div>`
@@ -1477,8 +1488,9 @@ function saveRec(id){
   const o={name:v('rName').trim(),type:window._recT,amount:Number(v('rAmt'))||0,cat:v('rCat'),method:v('rMethod'),every:v('rEvery'),
     day:v('rDay')==='end'?'end':Number(v('rDay')),month:Number(v('rMon'))||1,mInt:Number(v('rMInt'))||2,adjust:v('rAdj'),n:Math.max(1,Number(v('rN'))||10),start:v('rStart')||todayStr(),end:v('rEnd')||'',vary:document.getElementById('rVary').checked,est:v('rEst'),win:document.getElementById('rWin').checked,dayTo:v('rDayTo')==='end'?'end':Number(v('rDayTo'))};
   if(o.type==='in'){const ps=(window._parts||[]).map(p=>Object.assign({n:String(p.n||'').trim(),a:Number(p.a)||0,k:p.k},p.r?{r:Number(p.r)}:{},p.dp?{dp:Object.assign({},p.dp)}:{},p.tx?{tx:Object.assign({},p.tx)}:{})).filter(p=>p.n||p.a);
+    o.split=(window._split||[]).filter(x=>x.acc&&Number(x.a)>0).map(x=>({acc:x.acc,a:Number(x.a)}));
     o.parts=ps;if(ps.length)o.amount=partsSum(ps,'pay')-partsSum(ps,'ded');o.otRate=Number(v('rOtRate'))||0;o.otH=Number(v('rOtH'))||0;}
-  else{o.parts=[];o.otRate=0;o.otH=0;}
+  else{o.parts=[];o.otRate=0;o.otH=0;o.split=[];}
   if(!o.name||o.amount<=0){toast(o.parts.length?'手取りが0円以下です':'名前と金額を入れてください');return;}
   if(o.end&&o.end<o.start){toast('終わりの日が始まりより前です');return;}
   if(id){const r=S.recurring.find(x=>x.id===id);
