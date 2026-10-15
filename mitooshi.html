@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.23.0';
+const APP_VERSION='v1.24.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1236,12 +1236,10 @@ function yRow(o,cid,btn){const x=o.x;const c=catById(x.cat);
 // 元のカードから切り替える：固定費は切り替える日のあとの回から（それまでの回は元のカードのまま残す）
 function yMove(cid,k){
   const c=cardById(cid);if(!c||!c.yOld)return;const to='c:'+cid,fr='c:'+c.yOld;const cut=yCut(c);const [ty,id]=[k.slice(0,1),k.slice(2)];
+  // 固定費は固定費の設定で「ある日から先だけ」変える（日付と払い方を入れた状態で開く）
+  if(ty==='r'){const r=recById(id);if(!r)return;const nd=recDates(r,ds(addDays(pd(cut),1)),ds(addDays(pd(cut),400)))[0];editRec(id,null,{from:nd||ds(addDays(pd(cut),1)),method:to});return;}
   if(!confirm(`${md(ds(addDays(pd(cut),1)))}から先の分を「${c.name}」払いに切り替えます。よろしいですか？`))return;
-  if(ty==='r'){const r=S.recurring.find(x=>x.id===id);if(!r)return;
-    if(!r.start||r.start>cut)r.method=to;
-    else{const n=JSON.parse(JSON.stringify(r));n.id=uid();n.anchor=r.anchor||r.start;n.start=ds(addDays(pd(cut),1));n.method=to;
-      if(n.end&&n.end<n.start)return;r.end=cut;S.recurring.splice(S.recurring.indexOf(r)+1,0,n);}}
-  else if(ty==='g'){const g=goalById(id);if(g)g.method=to;}
+  if(ty==='g'){const g=goalById(id);if(g)g.method=to;}
   else S.tx.forEach(t=>{if((ty==='x'?t.grp===id:t.id===id)&&t.method===fr&&t.date>cut)t.method=to;});
   save();render();toast('切り替えました');
 }
@@ -1261,9 +1259,9 @@ function cardGoals(){
     if(y.old){const og=yGroups(y.oldList),dg=yGroups(y.movedList).filter(o=>o.x.rec||o.x.goal);
       const left=og.length+y.oldIts.length;
       mv=`<h3 style="margin:14px 0 4px">🔁 ${esc(y.old.name)} → ${esc(c.name)} の移し替え</h3>
-        ${left?`<div class="note">まだ${esc(y.old.name)}のままの支払いが <b>${left}件</b>（${md(ds(addDays(pd(y.cut),1)))}から先で ${fmt(y.oldSched)}円）。全部移すと、残り ${fmt(y.allRemain)}円・<b>月あたり ${fmt(y.allPer)}円</b> になります。カード会社やお店で払い方を変えたら「移した」を押してください</div>`
+        ${left?`<div class="note">まだ${esc(y.old.name)}のままの支払いが <b>${left}件</b>（${md(ds(addDays(pd(y.cut),1)))}から先で ${fmt(y.oldSched)}円）。全部移すと、残り ${fmt(y.allRemain)}円・<b>月あたり ${fmt(y.allPer)}円</b> になります。カード会社やお店で払い方を変えたら、固定費は「設定で変える」（次の回から${esc(c.name)}払いにした状態で固定費の設定が開きます）、それ以外は「移した」を押してください</div>`
           :`<div class="note in">✅ ${esc(y.old.name)}のままの支払いはもうありません</div>`}
-        ${og.map(o=>yRow(o,c.id,'移した')).join('')}
+        ${og.map(o=>yRow(o,c.id,o.x.rec?'設定で変える':'移した')).join('')}
         ${y.oldIts.map(i=>`<div class="li tap" onclick="setTab('bud')"><div class="ic">📌</div><div class="t"><b>${esc(i.name)}</b><small>予算の項目・月 ${fmt(i.amount)}円・📊予算で払い方を変える ›</small></div></div>`).join('')}
         ${dg.length?`<details style="margin-top:6px"><summary class="muted">${esc(c.name)}に移した固定費・目標（${dg.length}件）</summary>${dg.map(o=>yRow(o,c.id,'')).join('')}</details>`:''}`;}
     return `<div class="card"><h3 style="border-left:4px solid ${col};padding-left:6px">🏅 ${esc(c.name)} 年間利用 ${fmt(y.goal)}円</h3>
@@ -1524,9 +1522,10 @@ function renderSummary(){
   h+=sec('📆 月のはじまり')+row('📆',`毎月${st.startDay==='end'?'末日':st.startDay+'日'}から`,`土日祝は${st.shift==='prev'?'前の平日':st.shift==='next'?'次の平日':'ずらさない'}・今期 ${rangeLabel(pk)}・カードは${st.basis==='withdraw'?'引き落とし日':'使った日'}で数える`,null,'editMonth()');
   h+=sec('🏦 口座・財布','editAcc()')+(S.accounts.map(a=>row(a.type==='wallet'?'👛':'🏦',esc(a.name),`${md(a.openingDate)}の残高`,Y(Number(a.opening)||0),`editAcc('${a.id}')`)).join('')||none);
   h+=sec('💳 カード','editCard()')+(S.cards.map(c=>row(`<span class="cdot" style="display:inline-block;width:8px;height:22px;border-radius:3px;background:${cardColor(c)}"></span>`,esc(c.name),`${cardRule(c)}・${esc((accById(c.accountId)||{}).name||'口座未設定')}`,null,`editCard('${c.id}')`)).join('')||none);
-  const rin=S.recurring.filter(r=>r.type==='in'),rout=S.recurring.filter(r=>r.type==='out');
-  h+=sec('💴 定期収入',"editRec('','in')")+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}${hasParts(r)?`<br>総支給 ${fmt(partsSum(r.parts,'pay'))}円・控除 ${fmt(partsSum(r.parts,'ded'))}円`:''}${(r.split||[]).filter(x=>accById(x.acc)).map(x=>`<br>うち ${fmt(x.a)}円を${esc(accById(x.acc).name)}へ`).join('')}${otRate(r)?`<br>残業 ${fmt(otRate(r))}円/時間${r.otH?`・ふだん${r.otH}時間`:''}`:''}`,`<span class="in">+${fmt(r.amount)}円${r.otH&&otRate(r)?`<small>＋残業</small>`:''}</span>`,`editRec('${r.id}')`)).join('')||none);
-  h+=sec('🔁 固定費',"editRec('','out')")+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${recWin(r)?everyLabel(r).replace(/(\d+日|末日)/,winLabel(r)):everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}`,r.vary?`<small>見込み</small>-${fmt(recEst(r))}円`:`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||none);
+  const cur=S.recurring.filter(r=>!recNext(r)),rin=cur.filter(r=>r.type==='in'),rout=cur.filter(r=>r.type==='out');
+  const chg=r=>{const p=recPrev(r);return p?`<br>📜 ${md(r.start)}から切り替え（前：${recVerLabel(p).replace(/^.*?：/,'')}）`:'';};
+  h+=sec('💴 定期収入',"editRec('','in')")+(rin.map(r=>row('💴',esc(r.name),`${everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}${chg(r)}${hasParts(r)?`<br>総支給 ${fmt(partsSum(r.parts,'pay'))}円・控除 ${fmt(partsSum(r.parts,'ded'))}円`:''}${(r.split||[]).filter(x=>accById(x.acc)).map(x=>`<br>うち ${fmt(x.a)}円を${esc(accById(x.acc).name)}へ`).join('')}${otRate(r)?`<br>残業 ${fmt(otRate(r))}円/時間${r.otH?`・ふだん${r.otH}時間`:''}`:''}`,`<span class="in">+${fmt(r.amount)}円${r.otH&&otRate(r)?`<small>＋残業</small>`:''}</span>`,`editRec('${r.id}')`)).join('')||none);
+  h+=sec('🔁 固定費',"editRec('','out')")+(rout.map(r=>row(catById(r.cat).icon,esc(r.name),`${recWin(r)?everyLabel(r).replace(/(\d+日|末日)/,winLabel(r)):everyLabel(r)}・${esc(mName(r.method))}${r.end?`・〜${md(r.end)}`:''}${chg(r)}`,r.vary?`<small>見込み</small>-${fmt(recEst(r))}円`:`-${fmt(r.amount)}円`,`editRec('${r.id}')`)).join('')||none);
   const b=budgetOf(pk);const bc=Object.keys(b.cats||{}).filter(k=>Number(b.cats[k])>0);
   h+=sec('📊 予算',"setTab('bud');editBudget()")+(b.total>0||bc.length?(b.total>0?row('📊','予算総額','',`${fmt(b.total)}円`,"setTab('bud');editBudget()"):'')+bc.map(k=>row(catById(k).icon,esc(catById(k).name),'',`${fmt(b.cats[k])}円`,"setTab('bud');editBudget()")).join(''):none);
   const ag=(S.goals||[]).filter(g=>goalStatus(g).remain>0);
@@ -1614,7 +1613,7 @@ function importLegacyCards(){
   add.forEach(x=>S.cards.push(cardFromLegacy(x,S.cards.length,acc)));
   save();render();toast(add.length?`${add.length}枚追加しました`:'追加するカードはありません');
 }
-function editRec(id,ty){
+function editRec(id,ty,pre){
   const r=id?S.recurring.find(x=>x.id===id):{name:'',type:ty||'out',amount:0,cat:ty==='in'?((S.cats.find(c=>c.kind==='in')||{}).id||'house'):'house',method:defaultMethod(ty||'out'),every:'month',day:25,n:10,adjust:'none',start:todayStr(),end:''};
   const methodOpts=t=>(t==='in'?S.accounts.map(a=>'a:'+a.id):[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)]).map(m=>`<option value="${m}" ${m===r.method?'selected':''}>${esc(mName(m))}</option>`).join('');
   const catOpts=t=>S.cats.filter(c=>c.kind===(t==='in'?'in':'out')).map(c=>`<option value="${c.id}" ${c.id===r.cat?'selected':''}>${c.icon} ${esc(c.name)}</option>`).join('');
@@ -1635,11 +1634,29 @@ function editRec(id,ty){
     <div class="note" id="rWinNote">見通しでは、いちばん早い日（何日から）に出ていく扱いで計算します。払ったら、カレンダーでその回をタップして実際に払った日を入れてください。期間が過ぎても入れていない回はカレンダーの上に出ます。「何日まで」に「何日から」より前の日を選ぶと、翌月のその日までになります。</div>
     <div class="fld" id="rMIntRow"><label>何か月ごと（「いつから」の日の月が1回目）</label><select id="rMInt">${[2,3,4,6].map(n=>`<option value="${n}" ${Number(r.mInt||2)===n?'selected':''}>${n}か月ごと</option>`).join('')}</select></div>
     <div class="fld" id="rNRow"><label>何日ごと</label><input id="rN" type="number" value="${r.n||10}"></div>
-    <div class="row"><div class="fld sp"><label>いつから（毎週・◯日ごとはこの日が基準）</label><input id="rStart" type="date" value="${r.start}"></div><div class="fld sp"><label>いつまで（任意）</label><input id="rEnd" type="date" value="${r.end||''}"></div></div>
+    <div class="row"><div class="fld sp" id="rStartWrap"><label>いつから（毎週・◯日ごとはこの日が基準）</label><input id="rStart" type="date" value="${r.start}"></div><div class="fld sp"><label>いつまで（任意）</label><input id="rEnd" type="date" value="${r.end||''}"></div></div>
+    ${id?recHist(r):''}
+    ${id&&!recNext(r)?`<div style="border:1px solid rgba(0,0,0,.1);border-radius:10px;padding:8px 10px;margin-top:8px"><b>🗓️ この変更をいつから</b>
+      <div class="seg" id="rWhen" style="margin-top:6px"><button class="on" onclick="recWhen('all')">全部の回（さかのぼって直す）</button><button onclick="recWhen('from')">ある日から先だけ</button></div>
+      <div id="rFromRow" style="display:none"><div class="fld"><label>この日以降の回から新しい設定</label><input id="rFrom" type="date" value="${recNextDate(r)}"></div>
+      <div class="note">それより前の回は今の設定のまま残ります（金額・払い方・日にちなど、何を変えてもOK）。カードや金額が変わったときに使ってください。取り消すときは、新しい設定を開いて「削除」すると前の設定に戻ります。</div></div></div>`:''}
     <button class="btn" style="margin-top:6px" onclick="saveRec('${id||''}')">保存</button>${id?`<button class="btn del" style="margin-top:8px" onclick="delRec('${id}')">削除</button>`:''}`);
-  window._recT=r.type;window._recMO=methodOpts;window._recCO=catOpts;
+  window._recT=r.type;window._recMO=methodOpts;window._recCO=catOpts;window._recWhen='all';
   window._parts=(r.parts||[]).map(p=>Object.assign({},p));window._split=(r.split||[]).map(x=>Object.assign({},x));recEvery();renderParts();renderSplit();
+  if(pre&&id&&!recNext(r)){recWhen('from');if(pre.from)document.getElementById('rFrom').value=pre.from;if(pre.method)document.getElementById('rMethod').value=pre.method;}
 }
+// 固定費の設定の切り替え（◯日から変える）：前の設定は「いつまで」で止め、新しい設定を別の固定費として続ける（prev/next でつなぐ）
+const recById=id=>S.recurring.find(x=>x.id===id);
+const recNext=r=>r&&r.next?recById(r.next):null;
+const recPrev=r=>r&&r.prev?recById(r.prev):null;
+function recNextDate(r){const t=pd(todayStr());const d=recDates(r,ds(addDays(t,1)),ds(addDays(t,400)))[0];
+  return d&&(!r.start||d>r.start)?d:ds(addDays(t,1));}
+const recVerLabel=r=>`${r.start?md(r.start):''}〜${r.end?md(r.end):''}：${esc(mName(r.method))}・${r.vary?'見込み '+fmt(recEst(r)):fmt(r.amount)}円`;
+function recHist(r){const L=[];let p=recPrev(r);for(let g=0;g<20&&p;g++){L.push(p);p=recPrev(p);}const n=recNext(r);
+  if(!L.length&&!n)return '';
+  return `<div class="note" style="margin-top:6px">📜 設定の切り替え${n?`<div class="tap" style="color:var(--pri);font-weight:700" onclick="closeSheet();editRec('${n.id}')">→ ${md(n.start)}からの新しい設定を開く ›</div>`:''}${L.map(p=>`<div class="tap" onclick="closeSheet();editRec('${p.id}')">${recVerLabel(p)} ›</div>`).join('')}</div>`;}
+function recWhen(m){window._recWhen=m;document.querySelectorAll('#rWhen button').forEach((b,i)=>b.classList.toggle('on',(i===1)===(m==='from')));
+  document.getElementById('rFromRow').style.display=m==='from'?'block':'none';document.getElementById('rStartWrap').style.display=m==='from'?'none':'block';}
 // 給料の振り分けの入力欄
 function renderSplit(){const el=document.getElementById('rSplit');if(!el)return;const L=window._split;
   el.innerHTML=L.map((x,i)=>`<div class="row" style="gap:6px;margin-top:4px"><select class="sp" style="min-width:0" onchange="window._split[${i}].acc=this.value">${S.accounts.map(a=>`<option value="${a.id}" ${a.id===x.acc?'selected':''}>${esc(a.name)}</option>`).join('')}</select><input class="sp" style="min-width:0" type="number" inputmode="numeric" value="${x.a||''}" placeholder="金額" oninput="window._split[${i}].a=Number(this.value)||0"><button class="btn sm sub" style="width:auto" onclick="window._split.splice(${i},1);renderSplit()">✕</button></div>`).join('')
@@ -1694,6 +1711,18 @@ function saveRec(id){
   else{o.parts=[];o.otRate=0;o.otH=0;o.split=[];}
   if(!o.name||o.amount<=0){toast(o.parts.length?'手取りが0円以下です':'名前と金額を入れてください');return;}
   if(o.end&&o.end<o.start){toast('終わりの日が始まりより前です');return;}
+  if(id&&window._recWhen==='from'){const r=recById(id);const F=v('rFrom');
+    if(!F){toast('いつから変えるかを入れてください');return;}
+    if(r.end&&F>r.end){toast('「いつまで」より後の日は選べません');return;}
+    if(o.end&&o.end<F){toast('終わりの日が変える日より前です');return;}
+    if(r.start&&F>r.start){
+      const n=Object.assign(JSON.parse(JSON.stringify(r)),o,{id:uid(),start:F,prev:r.id});delete n.next;
+      // くり返し方が同じなら、◯か月ごと・◯日ごとの並びは前の設定のまま続ける
+      if(n.every===r.every&&Number(n.mInt||2)===Number(r.mInt||2)&&Number(n.n||10)===Number(r.n||10))n.anchor=r.anchor||r.start;else delete n.anchor;
+      r.end=ds(addDays(pd(F),-1));r.next=n.id;S.recurring.splice(S.recurring.indexOf(r)+1,0,n);
+      S.ui.setupDone=true;save();closeSheet();render();toast(`${md(F)}から新しい設定にしました`);return;}
+    o.start=F;
+  }
   if(id){const r=S.recurring.find(x=>x.id===id);
     // 見直しの知らせが出ている項目の額を直したら、その知らせは確認済みにする
     payRevNotices().filter(x=>x.r===r).forEach(x=>{const amt=ps=>ps.filter(p=>x.names.includes(p.n)).map(p=>p.n+':'+p.a+':'+(p.r||'')+':'+JSON.stringify(p.dp||'')+JSON.stringify(p.tx||'')).join();
@@ -1701,7 +1730,12 @@ function saveRec(id){
     Object.assign(r,o);}else S.recurring.push(Object.assign({id:uid(),ex:{}},o));
   S.ui.setupDone=true;save();closeSheet();render();
 }
-function delRec(id){if(!confirm('削除しますか？（これまでの分も消えます。止めたいだけなら「いつまで」を入れてください）'))return;S.recurring=S.recurring.filter(r=>r.id!==id);save();closeSheet();render();}
+function delRec(id){const r=recById(id);const p=recPrev(r),n=recNext(r);
+  if(p&&p.next===id&&!n){if(!confirm(`${md(r.start)}からの切り替えを取り消して、前の設定（${recVerLabel(p).replace(/<[^>]+>/g,'')}）に戻しますか？`))return;
+    p.end=r.end||'';delete p.next;}
+  else{if(!confirm('削除しますか？（これまでの分も消えます。止めたいだけなら「いつまで」を入れてください）'))return;
+    if(p&&p.next===id){if(n){p.next=n.id;n.prev=p.id;}else delete p.next;}else if(n)delete n.prev;}
+  S.recurring=S.recurring.filter(x=>x.id!==id);save();closeSheet();render();}
 function editCat(id){
   const c=id?catById(id):{icon:'🏷️',name:'',kind:'out'};
   sheet(id?'カテゴリを編集':'カテゴリを追加',`<div class="row"><div class="fld" style="width:70px"><label>絵文字</label><input id="kIcon" value="${esc(c.icon)}"></div><div class="fld sp"><label>名前</label><input id="kName" value="${esc(c.name)}"></div></div>
