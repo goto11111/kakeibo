@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.24.0';
+const APP_VERSION='v1.24.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -443,7 +443,9 @@ const revNote=(r,d)=>daysNote(r,d)+payRevs(r,d,d).map(x=>`<div class="note">🧾
 function chkRev(rid,key){const r=S.recurring.find(x=>x.id===rid);if(!r)return;r.chk=r.chk||{};r.chk[key]=true;save();render();}
 // 金額が変わる固定費（ガス・電気など）：まだ金額を入れていない回は、直近3回の実際の金額（平均か最大）で見込む。
 // 実際の金額がまだ1回もなければ、設定の金額を見込みにする
-function recActuals(r){return Object.keys(r.ex||{}).filter(d=>r.ex[d]&&!r.ex[d].skip&&r.ex[d].amount!=null).sort().map(d=>({date:d,amount:Number(r.ex[d].amount)||0}));}
+// 「ある日から先だけ」で金額を変えた設定は、前の設定のときの実際の金額を見込みに使わない（変えた金額を見込みにする）
+function recActuals(r){const p=r.prev?recPrev(r):null;const cut=p&&Number(p.amount)!==Number(r.amount)?r.start:'';
+  return Object.keys(r.ex||{}).filter(d=>d>=cut&&r.ex[d]&&!r.ex[d].skip&&r.ex[d].amount!=null).sort().map(d=>({date:d,amount:Number(r.ex[d].amount)||0}));}
 function recEst(r){
   const a=recActuals(r).slice(-3).map(x=>x.amount);if(!a.length)return Number(r.amount)||0;
   return r.est==='max'?Math.max(...a):Math.round(a.reduce((s,v)=>s+v,0)/a.length);
