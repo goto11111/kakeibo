@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.24.1';
+const APP_VERSION='v1.25.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1212,43 +1212,16 @@ function cardYear(c){
   const goal=Number(c.yGoal)||0,remain=Math.max(0,goal-used-sched);
   const base=t<from?from:t;const days=Math.max(0,Math.round((pd(to)-pd(base))/864e5)+(t<from?1:0));
   const months=days/(365/12);const per=r=>months>0?Math.ceil(r/months):r;
-  // 移す元のカード：切り替える日（今日か数え始めの前日の遅いほう）より先で、まだ元のカード払いのもの
-  const old=c.yOld&&cardById(c.yOld)?cardById(c.yOld):null;const cut=yCut(c);
-  const oldList=old?ents.filter(x=>x.method==='c:'+old.id&&x.date>cut&&!hit(x)):[];
-  const oldSched=sum(oldList);
   // 予算の📌項目でこのカード払いにしている分（今の期の予算から、毎月の目安として）
   const bi=(budgetOf(periodKeyOf(t)).items||[]).filter(i=>Number(i.amount)>0);
-  const its=bi.filter(i=>i.method==='c:'+c.id),oldIts=old?bi.filter(i=>i.method==='c:'+old.id):[];
-  return {from,to,used,sched,goal,remain,days,months,perMonth:per(remain),old,cut,oldList,oldSched,oldIts,
-    allRemain:Math.max(0,remain-oldSched),allPer:per(Math.max(0,remain-oldSched)),
-    movedList:all.filter(x=>x.date>t&&!hit(x)),
+  const its=bi.filter(i=>i.method==='c:'+c.id);
+  return {from,to,used,sched,goal,remain,days,months,perMonth:per(remain),
     skipped:sum(skipped),skippedN:buyCount(skipped),its,itsSum:its.reduce((s,i)=>s+Number(i.amount),0),started:t>=from,ended:t>to};
-}
-const yCut=c=>{const t=todayStr(),b=c.yFrom?ds(addDays(pd(c.yFrom),-1)):t;return b>t?b:t;};
-// 先の支払いを、固定費・目標・記録ごとにまとめる（一覧用）
-function yGroups(list){const g={};
-  list.forEach(x=>{const k=x.rec?'r:'+x.rid:x.goal?'g:'+x.gid:x.grp?'x:'+x.grp:'t:'+x.id;
-    const o=g[k]||(g[k]={k,x,n:0,sum:0,next:x.date});o.n++;o.sum+=Number(x.amount)||0;if(x.date<o.next)o.next=x.date;});
-  return Object.values(g).sort((a,b)=>cmp(a.next,b.next));}
-function yRow(o,cid,btn){const x=o.x;const c=catById(x.cat);
-  const name=x.rec?((S.recurring.find(r=>r.id===x.rid)||{}).name||x.memo):x.goal?((goalById(x.gid)||{}).name||'目標'):(x.memo||c.name);
-  const sub=x.rec?`🔁 固定費・次は${md(o.next)}・1年で${o.n}回 ${fmt(o.sum)}円`:x.goal?`🎯 目標の支払い・次は${md(o.next)}・${o.n}回 ${fmt(o.sum)}円`:`📝 ${md(o.next)}の予定`;
-  return `<div class="li"><div class="ic">${x.goal?'🎯':c.icon}</div><div class="t"><b style="white-space:normal">${esc(name)}</b><small style="white-space:normal">${sub}</small></div>
-    ${btn?`<button class="btn sm" style="width:auto;white-space:nowrap" onclick="yMove('${cid}','${o.k}')">${btn}</button>`:`<div class="a"><span class="amt">${fmt(o.x.amount)}</span>円</div>`}</div>`;}
-// 元のカードから切り替える：固定費は切り替える日のあとの回から（それまでの回は元のカードのまま残す）
-function yMove(cid,k){
-  const c=cardById(cid);if(!c||!c.yOld)return;const to='c:'+cid,fr='c:'+c.yOld;const cut=yCut(c);const [ty,id]=[k.slice(0,1),k.slice(2)];
-  // 固定費は固定費の設定で「ある日から先だけ」変える（日付と払い方を入れた状態で開く）
-  if(ty==='r'){const r=recById(id);if(!r)return;const nd=recDates(r,ds(addDays(pd(cut),1)),ds(addDays(pd(cut),400)))[0];editRec(id,null,{from:nd||ds(addDays(pd(cut),1)),method:to});return;}
-  if(!confirm(`${md(ds(addDays(pd(cut),1)))}から先の分を「${c.name}」払いに切り替えます。よろしいですか？`))return;
-  if(ty==='g'){const g=goalById(id);if(g)g.method=to;}
-  else S.tx.forEach(t=>{if((ty==='x'?t.grp===id:t.id===id)&&t.method===fr&&t.date>cut)t.method=to;});
-  save();render();toast('切り替えました');
 }
 function cardGoals(){
   const cs=S.cards.filter(c=>Number(c.yGoal)>0);if(!cs.length)return '';
   return cs.map(c=>{const y=cardYear(c);const col=cardColor(c);
-    const pu=Math.min(100,y.used/y.goal*100),pss=Math.min(100-pu,y.sched/y.goal*100),po=Math.min(100-pu-pss,y.oldSched/y.goal*100);
+    const pu=Math.min(100,y.used/y.goal*100),pss=Math.min(100-pu,y.sched/y.goal*100);
     const done=y.used>=y.goal,will=!done&&y.used+y.sched>=y.goal;
     const mo=Math.round(y.months*10)/10;
     const head=done?`<div class="mid in">🎉 達成！</div>`
@@ -1256,21 +1229,11 @@ function cardGoals(){
       :`<div class="row" style="align-items:flex-end"><div><div class="muted">目標まで残り</div><div class="big">${Y(y.remain)}</div></div><div class="sp"></div>
         <div style="text-align:right"><div class="muted">${y.ended?'期間は終わりました':`月あたりあと（残り${mo}か月）`}</div><div class="mid warn">${y.ended?'—':Y(y.perMonth)}</div></div></div>`;
     const rest=y.itsSum&&!done&&!will&&!y.ended?`<div class="note">📌 予算でこのカード払いにしている項目（${y.its.map(i=>esc(i.name)).join('・')}）が月 ${fmt(y.itsSum)}円 → それ以外で月 <b>${fmt(Math.max(0,y.perMonth-y.itsSum))}円</b> 使えば届きます</div>`:'';
-    // 移し替えのチェック
-    let mv='';
-    if(y.old){const og=yGroups(y.oldList),dg=yGroups(y.movedList).filter(o=>o.x.rec||o.x.goal);
-      const left=og.length+y.oldIts.length;
-      mv=`<h3 style="margin:14px 0 4px">🔁 ${esc(y.old.name)} → ${esc(c.name)} の移し替え</h3>
-        ${left?`<div class="note">まだ${esc(y.old.name)}のままの支払いが <b>${left}件</b>（${md(ds(addDays(pd(y.cut),1)))}から先で ${fmt(y.oldSched)}円）。全部移すと、残り ${fmt(y.allRemain)}円・<b>月あたり ${fmt(y.allPer)}円</b> になります。カード会社やお店で払い方を変えたら、固定費は「設定で変える」（次の回から${esc(c.name)}払いにした状態で固定費の設定が開きます）、それ以外は「移した」を押してください</div>`
-          :`<div class="note in">✅ ${esc(y.old.name)}のままの支払いはもうありません</div>`}
-        ${og.map(o=>yRow(o,c.id,o.x.rec?'設定で変える':'移した')).join('')}
-        ${y.oldIts.map(i=>`<div class="li tap" onclick="setTab('bud')"><div class="ic">📌</div><div class="t"><b>${esc(i.name)}</b><small>予算の項目・月 ${fmt(i.amount)}円・📊予算で払い方を変える ›</small></div></div>`).join('')}
-        ${dg.length?`<details style="margin-top:6px"><summary class="muted">${esc(c.name)}に移した固定費・目標（${dg.length}件）</summary>${dg.map(o=>yRow(o,c.id,'')).join('')}</details>`:''}`;}
     return `<div class="card"><h3 style="border-left:4px solid ${col};padding-left:6px">🏅 ${esc(c.name)} 年間利用 ${fmt(y.goal)}円</h3>
       ${head}
-      <div class="bar" style="display:flex"><i style="width:${pu}%;background:${col};border-radius:0"></i><i style="width:${pss}%;background:${col};opacity:.45;border-radius:0"></i><i style="width:${po}%;background:${col};opacity:.15;border-radius:0"></i></div>
+      <div class="bar" style="display:flex"><i style="width:${pu}%;background:${col};border-radius:0"></i><i style="width:${pss}%;background:${col};opacity:.45;border-radius:0"></i></div>
       <div class="muted">${y.from.replace(/-/g,"/")}〜${y.to.replace(/-/g,"/")}${y.started?'':'（まだ始まっていません）'}・使った <b>${fmt(y.used)}円</b>＋この先の予定 <b>${fmt(y.sched)}円</b> ＝ ${fmt(y.used+y.sched)}円（${Math.floor((y.used+y.sched)/y.goal*100)}%）</div>
-      ${rest}${mv}
+      ${rest}
       <div class="note">予定＝このカード払いの固定費・目標の支払い・先の日付の記録。${y.skipped?`数えないもの（${fmt(y.skipped)}円・${y.skippedN}件）は除いています。`:''}<span style="color:var(--pri);font-weight:700" onclick="editCard('${c.id}')">⚙️ 目標・期間を変える ›</span></div></div>`;}).join('');
 }
 function cardCycles(pk){
@@ -1586,13 +1549,12 @@ function editCard(id){
     <h3 style="margin:14px 0 4px">🏅 年間利用の目標（ゴールドカードの年間特典など）</h3>
     <div class="row"><div class="fld sp"><label>1年間の目標額（0で使わない）</label><input id="cYGoal" type="number" inputmode="numeric" value="${Number(c.yGoal)||''}" placeholder="例：1000000"></div>
       <div class="fld sp"><label>いつから数える（1年間）</label><input id="cYFrom" type="date" value="${esc(c.yFrom||todayStr())}"></div></div>
-    <div class="fld"><label>移す元のカード（このカードに支払いを移していくとき）</label><select id="cYOld"><option value="">なし</option>${S.cards.filter(x=>x.id!==id).map(x=>`<option value="${x.id}" ${c.yOld===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
     <div class="fld"><label>数えないもの（店・サイトか中身に入っている言葉、「,」区切り）</label><input id="cYEx" value="${esc(c.yEx!=null?c.yEx:Y_EX_DEF)}" placeholder="例：年会費,チャージ,住民税"></div>
-    <div class="note">目標を入れると、カレンダーの下に「いつから1年間でこのカードを使った額」と、目標まで残り何円・月あたりあといくら使えば届くかを出します。固定費・目標の支払い・先の予定（記録）もこのカード払いなら数えます。年会費やチャージのように特典の集計に入らないものは「数えないもの」に入れてください。「移す元のカード」を選ぶと、まだそのカードのままの支払いを一覧にして、1件ずつこのカードに切り替えられます。</div>
+    <div class="note">目標を入れると、カレンダーの下に「いつから1年間でこのカードを使った額」と、目標まで残り何円・月あたりあといくら使えば届くかを出します。固定費・目標の支払い・先の予定（記録）もこのカード払いなら数えます。年会費やチャージのように特典の集計に入らないものは「数えないもの」に入れてください。</div>
     <button class="btn" style="margin-top:6px" onclick="saveCard('${id||''}')">保存</button>${id?`<button class="btn del" style="margin-top:8px" onclick="delCard('${id}')">削除</button>`:''}`);
   cardPrev();
 }
-function readCardForm(){const v=x=>document.getElementById(x).value;return {name:v('cName').trim(),close:v('cClose')==='end'?'end':Number(v('cClose')),payMonth:Number(v('cMon')),payDay:v('cDay')==='end'?'end':Number(v('cDay')),holiday:v('cHol'),accountId:v('cAcc'),apr:Number(v('cApr'))||0,freeCount:Number(v('cFree'))||0,yGoal:Number(v('cYGoal'))||0,yFrom:v('cYFrom')||'',yEx:v('cYEx'),yOld:v('cYOld')};}
+function readCardForm(){const v=x=>document.getElementById(x).value;return {name:v('cName').trim(),close:v('cClose')==='end'?'end':Number(v('cClose')),payMonth:Number(v('cMon')),payDay:v('cDay')==='end'?'end':Number(v('cDay')),holiday:v('cHol'),accountId:v('cAcc'),apr:Number(v('cApr'))||0,freeCount:Number(v('cFree'))||0,yGoal:Number(v('cYGoal'))||0,yFrom:v('cYFrom')||'',yEx:v('cYEx')};}
 function cardPrev(){
   const c=readCardForm();const t=new Date();const rows=[];
   for(let i=0;i<3;i++){const d=new Date(t.getFullYear(),t.getMonth()+i,1);const L=lastDay(d.getFullYear(),d.getMonth());
