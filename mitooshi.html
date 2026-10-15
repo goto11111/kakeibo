@@ -156,7 +156,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.25.0';
+const APP_VERSION='v1.26.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -1215,9 +1215,30 @@ function cardYear(c){
   // 予算の📌項目でこのカード払いにしている分（今の期の予算から、毎月の目安として）
   const bi=(budgetOf(periodKeyOf(t)).items||[]).filter(i=>Number(i.amount)>0);
   const its=bi.filter(i=>i.method==='c:'+c.id);
-  return {from,to,used,sched,goal,remain,days,months,perMonth:per(remain),
+  return {from,to,used,sched,goal,remain,days,months,perMonth:per(remain),list,skippedList:skipped,
     skipped:sum(skipped),skippedN:buyCount(skipped),its,itsSum:its.reduce((s,i)=>s+Number(i.amount),0),started:t>=from,ended:t>to};
 }
+// 数えている支払いの明細（見るだけ）：月ごとに、日付順で額と累計を出す。✂️ 分けた会計は1行にまとめる
+function yRows(list){const t=todayStr();const out=[],byG={};
+  list.forEach(x=>{if(x.grp){const g=byG[x.grp];if(g){g.amount+=Number(x.amount)||0;g.parts.push(x);return;}
+    out.push(byG[x.grp]=Object.assign({},x,{amount:Number(x.amount)||0,parts:[x]}));}else out.push(x);});
+  return out.sort((a,b)=>cmp(a.date,b.date)).map(x=>{const c=catById(x.cat);
+    const name=x.goal?((goalById(x.gid)||{}).name||'目標'):(x.memo||c.name);
+    const tags=[md(x.date),x.rec?'🔁 固定費':x.goal?'🎯 目標の支払い':x.parts&&x.parts.length>1?`✂️ ${x.parts.length}つに分けた会計`:c.name,x.date>t?'予定':'',x.est?'見込み':'',x.win?'日付未定':''].filter(Boolean).join('・');
+    return {x,ic:x.parts&&x.parts.length>1?'🧾':x.goal?'🎯':c.icon,name,item:x.parts&&x.parts.length>1?x.parts.map(y=>y.item||catById(y.cat).name).join('・'):x.item,tags,past:x.date<=t};});}
+function yDetail(y){if(!y.list.length&&!y.skippedList.length)return '';
+  const rows=yRows(y.list);let cum=0,cur='',h='';const tm=todayStr().slice(0,7);
+  const mk=d=>d.slice(0,7);const mSum={},mEnd={};rows.forEach(r=>{const k=mk(r.x.date);mSum[k]=(mSum[k]||0)+(Number(r.x.amount)||0);});
+  {let c=0;Object.keys(mSum).sort().forEach(k=>{c+=mSum[k];mEnd[k]=c;});}
+  // 月ごとにたたむ（今月だけ開いておく）
+  rows.forEach(r=>{const k=mk(r.x.date);cum+=Number(r.x.amount)||0;
+    if(k!==cur){h+=(cur?'</details>':'')+`<details ${k===tm?'open':''}><summary class="fl edge" style="cursor:pointer;list-style:none"><div class="t" style="flex:1"><b>${keyLabel(k)}</b></div><div class="bal">${fmt(mSum[k])}円<small>累計 ${fmt(mEnd[k])}</small></div></summary>`;cur=k;}
+    h+=`<div class="fl${r.past?' past':''}"><div class="ic">${r.ic}</div><div class="t"><b>${esc(r.name)}</b>${r.item?`<small>🛍️ ${esc(r.item)}</small>`:''}<small>${r.tags}</small></div>
+      <div class="bal"><span class="amt">${fmt(r.x.amount)}</span>円<small>累計 ${fmt(cum)}${cum>=y.goal&&cum-(Number(r.x.amount)||0)<y.goal?' 🎉':''}</small></div></div>`;});
+  if(cur)h+='</details>';
+  const sk=yRows(y.skippedList);
+  return `<details style="margin-top:8px"><summary class="muted" style="font-weight:700">📋 数えている支払い（${rows.length}件・${fmt(cum)}円）</summary><div class="cf">${h||'<div class="muted">まだありません</div>'}</div>
+    ${sk.length?`<div class="muted" style="margin-top:8px;font-weight:700">🚫 数えないもの（${sk.length}件）</div><div class="cf">${sk.map(r=>`<div class="fl past"><div class="ic">${r.ic}</div><div class="t"><b>${esc(r.name)}</b><small>${r.tags}</small></div><div class="bal"><span class="amt">${fmt(r.x.amount)}</span>円</div></div>`).join('')}</div>`:''}</details>`;}
 function cardGoals(){
   const cs=S.cards.filter(c=>Number(c.yGoal)>0);if(!cs.length)return '';
   return cs.map(c=>{const y=cardYear(c);const col=cardColor(c);
@@ -1233,7 +1254,7 @@ function cardGoals(){
       ${head}
       <div class="bar" style="display:flex"><i style="width:${pu}%;background:${col};border-radius:0"></i><i style="width:${pss}%;background:${col};opacity:.45;border-radius:0"></i></div>
       <div class="muted">${y.from.replace(/-/g,"/")}〜${y.to.replace(/-/g,"/")}${y.started?'':'（まだ始まっていません）'}・使った <b>${fmt(y.used)}円</b>＋この先の予定 <b>${fmt(y.sched)}円</b> ＝ ${fmt(y.used+y.sched)}円（${Math.floor((y.used+y.sched)/y.goal*100)}%）</div>
-      ${rest}
+      ${rest}${yDetail(y)}
       <div class="note">予定＝このカード払いの固定費・目標の支払い・先の日付の記録。${y.skipped?`数えないもの（${fmt(y.skipped)}円・${y.skippedN}件）は除いています。`:''}<span style="color:var(--pri);font-weight:700" onclick="editCard('${c.id}')">⚙️ 目標・期間を変える ›</span></div></div>`;}).join('');
 }
 function cardCycles(pk){
