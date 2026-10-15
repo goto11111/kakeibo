@@ -1239,6 +1239,23 @@ function yDetail(y){if(!y.list.length&&!y.skippedList.length)return '';
   const sk=yRows(y.skippedList);
   return `<details style="margin-top:8px"><summary class="muted" style="font-weight:700">📋 数えている支払い（${rows.length}件・${fmt(cum)}円）</summary><div class="cf">${h||'<div class="muted">まだありません</div>'}</div>
     ${sk.length?`<div class="muted" style="margin-top:8px;font-weight:700">🚫 数えないもの（${sk.length}件）</div><div class="cf">${sk.map(r=>`<div class="fl past"><div class="ic">${r.ic}</div><div class="t"><b>${esc(r.name)}</b><small>${r.tags}</small></div><div class="bal"><span class="amt">${fmt(r.x.amount)}</span>円</div></div>`).join('')}</div>`:''}</details>`;}
+// カレンダーで表示している期の達成ぐあい：期のはじめの時点の残りを、期間の残りの日数で割って、この期の分の目安にする
+// （期の中で使っても目安は動かない）。目安・実績とも、固定費・予定を含めたこのカードで数える全部
+function yPeriod(y,key){const [ps,pe]=periodRange(key);const s=ps>y.from?ps:y.from,e=pe<y.to?pe:y.to;if(s>e)return null;
+  const before=y.list.filter(x=>x.date<s).reduce((a,x)=>a+(Number(x.amount)||0),0);
+  const inP=y.list.filter(x=>x.date>=s&&x.date<=e);const sum=a=>a.reduce((v,x)=>v+(Number(x.amount)||0),0);
+  const daysLeft=Math.round((pd(y.to)-pd(s))/864e5)+1,daysP=Math.round((pd(e)-pd(s))/864e5)+1;
+  const target=Math.max(0,Math.ceil((y.goal-before)*daysP/daysLeft));
+  const fixed=sum(inP.filter(x=>x.rec||x.goal)),other=sum(inP.filter(x=>!x.rec&&!x.goal)),total=fixed+other;
+  const t=todayStr();return {s,e,target,total,fixed,other,future:sum(inP.filter(x=>x.date>t)),past:e<t,now:s<=t&&t<=e};}
+function yPeriodHtml(y,col){const p=yPeriod(y,curKey);if(!p)return '';
+  const pct=p.target>0?Math.floor(p.total/p.target*100):100,w=Math.min(100,pct);
+  const diff=p.total-p.target;
+  return `<div style="margin-top:10px;padding:8px 10px;border-radius:10px;background:var(--card2)">
+    <div class="row"><b style="font-size:13px">📅 ${md(p.s)}〜${md(p.e)}の期${p.now?'（今の期）':p.past?'（終わった期）':''}</b><div class="sp"></div><b class="${pct>=100?'in':'warn'}">${pct}%</b></div>
+    <div class="bar"><i style="width:${w}%;background:${col}"></i></div>
+    <div class="muted">このカードで ${fmt(p.total)}円 ／ この期の目安 ${fmt(p.target)}円・${diff>=0?`<b class="in">目安を ${fmt(diff)}円 こえています</b>`:`<b>あと ${fmt(-diff)}円</b> で目安`}</div>
+    <div class="muted" style="font-size:11px">うち 🔁固定費・🎯目標 ${fmt(p.fixed)}円・買い物と予定 ${fmt(p.other)}円${p.future?`（このあとの予定 ${fmt(p.future)}円を含む）`:''}。目安＝この期のはじめの残り÷期間の残りの日数で、カレンダーの月を送ると変わります</div></div>`;}
 function cardGoals(){
   const cs=S.cards.filter(c=>Number(c.yGoal)>0);if(!cs.length)return '';
   return cs.map(c=>{const y=cardYear(c);const col=cardColor(c);
@@ -1254,7 +1271,7 @@ function cardGoals(){
       ${head}
       <div class="bar" style="display:flex"><i style="width:${pu}%;background:${col};border-radius:0"></i><i style="width:${pss}%;background:${col};opacity:.45;border-radius:0"></i></div>
       <div class="muted">${y.from.replace(/-/g,"/")}〜${y.to.replace(/-/g,"/")}${y.started?'':'（まだ始まっていません）'}・使った <b>${fmt(y.used)}円</b>＋この先の予定 <b>${fmt(y.sched)}円</b> ＝ ${fmt(y.used+y.sched)}円（${Math.floor((y.used+y.sched)/y.goal*100)}%）</div>
-      ${rest}${yDetail(y)}
+      ${y.ended?'':yPeriodHtml(y,col)}${rest}${yDetail(y)}
       <div class="note">予定＝このカード払いの固定費・目標の支払い・先の日付の記録。${y.skipped?`数えないもの（${fmt(y.skipped)}円・${y.skippedN}件）は除いています。`:''}<span style="color:var(--pri);font-weight:700" onclick="editCard('${c.id}')">⚙️ 目標・期間を変える ›</span></div></div>`;}).join('');
 }
 function cardCycles(pk){
