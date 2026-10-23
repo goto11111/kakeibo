@@ -718,7 +718,7 @@ input:focus,select:focus{border-color:var(--accent);}
 
 <script>
 // アプリのバージョン（更新のたびに手動で上げる）。スマホのキャッシュ確認用にヘッダーへ表示。
-const APP_VERSION='v2026.07.23';
+const APP_VERSION='v2026.10.23';
 let currentYear,currentMonth,state;
 let schedules={}; // 予定は月stateと独立したグローバル保存（月跨ぎ対応）
 let selectedDay=null,rangeMode=false,rangeStart=null,rangeEnd=null;
@@ -992,6 +992,22 @@ function goalAchievedMonth(g){
   for(const kym of keys){cum+=map[kym];if(cum>=total)return kym;}
   return null;
 }
+// 完了予定の「積立月」YYYYMM。閲覧月以降は入力済みの積立額、未入力の月は毎月の目標額で払うとして数える。
+// 達成済み・見込めない（毎月の額が0など）ならnull
+function goalFinishBudgetMonth(g){
+  const total=goalTotalAmt(g);if(total<=0)return null;
+  const curYM=ym(currentYear,currentMonth);
+  let r=goalRemainingAt(g,curYM);if(r<=0)return null;
+  const map=goalSavingsByMonth(g.id);
+  let k=(map[curYM]!=null)?nextYM(curYM):curYM;
+  const bStart=goalBudgetStartYM(g);if(bStart&&k<bStart)k=bStart;
+  for(let i=0;i<600;i++,k=nextYM(k)){
+    const a=(map[k]!=null)?map[k]:(Number(g.monthly)||0);
+    if(map[k]==null&&a<=0)return null;
+    r-=a;if(r<=0)return k;
+  }
+  return null;
+}
 // 旧API互換（現在残高）
 function goalRemaining(g){return goalRemainingAt(g,ym(currentYear,currentMonth));}
 
@@ -1133,6 +1149,8 @@ function goalLinkedSpend(g){return goalLinkedItems(g).reduce((s,it)=>s+it.amt,0)
 function ymLabel(kym){return `${Math.floor(kym/100)}年${kym%100}月`;}
 // 翌月/前月のYYYYMM
 function nextYM(kym){let y=Math.floor(kym/100),m=kym%100;m++;if(m>12){m=1;y++;}return y*100+m;}
+// a→bまでの月数（YYYYMM同士）
+function monthsBetween(a,b){return (Math.floor(b/100)-Math.floor(a/100))*12+(b%100)-(a%100);}
 function prevYM(kym){let y=Math.floor(kym/100),m=kym%100;m--;if(m<1){m=12;y--;}return y*100+m;}
 // この月にこの目標から実際に引かれる額（開始前/達成済みなら0、完了月は残額まで）
 function goalDeductThisMonth(g){
@@ -1521,6 +1539,8 @@ function renderGoals(){
     const deduct=goalDeductThisMonth(g);
     const mLeft=g.monthly>0?Math.ceil(remaining/g.monthly):0;
     const tms=thisMonthSaving(g.id);
+    const finishBM=goalFinishBudgetMonth(g);               // 完了予定の積立月
+    const finishDraw=finishBM!=null?nextYM(finishBM):achDrawMonth; // 表示は引き落とし月（達成済みの表示と同じ）
     const pctBadge=achievedAsOf
       ? `<span style="font-size:11px;color:var(--green);font-weight:700">🎉 ${ymLabel(achDrawMonth)} 達成済み</span>`
       : `<span style="font-size:11px;color:var(--green)">${pct}% 達成</span>`;
@@ -1570,6 +1590,7 @@ function renderGoals(){
           <span>${achievedAsOf?'達成 🎉':`目標月${money(g.monthly||0)}円 × 残${mLeft}ヶ月`}</span>
           <span>総額 ${money(goalTotalAmt(g))}円</span>
         </div>
+        ${achievedAsOf?'':`<div style="font-size:11px;margin-top:3px;color:${finishDraw?'var(--green)':'var(--text2)'}">📅 ${finishDraw?`<b>${ymLabel(finishDraw)}</b> ${isSaving?'達成':'完済'}予定（あと${monthsBetween(curYM,finishDraw)}ヶ月）`:'このままでは払い終わりません（毎月の目標積立額を設定してください）'}</div>`}
         ${withInput?potHtml:''}
         ${showInput?`<div style="display:flex;align-items:center;gap:6px;margin-top:6px;background:var(--surface);border:1px solid var(--green);border-radius:6px;padding:6px 8px;">
           <span style="font-size:11px;color:var(--green);flex:1">💰 ${nY}年${nM}月の積立額</span>
