@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.28.0';
+const APP_VERSION='v1.28.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -599,7 +599,16 @@ function cashPeriod(s,e){
     // 振替（口座間の移動・積立口座への積立）は合計が変わらないので数えない
   });
   r.end=r.prev+r.inn-r.card-r.direct-r.goal-r.reserve;
-  r.saved=savedIn(savingPots(),e);
+  const pots=savingPots();r.saved=savedIn(pots,e);
+  // 🐷 貯金の取り分け・使った分・戻した分も1行ずつ出す（口座の中で分けるだけなので、合計には数えない）
+  pots.forEach(p=>{const a=accById(p.acc);let d=from,pv=potBal(p,ds(addDays(pd(from),-1)));
+    while(d<=e){const v=potBal(p,d)-pv;
+      if(v){const mv=v>0&&L.find(x=>x.kind==='move'&&x.delta<0&&x.date===d&&x.e.goal&&x.e.gid===p.g.id&&x.e.to===p.acc);
+        const fa=mv&&accById(mv.acc);
+        const lb=v>0?p.g.name+' 積立 → 🐷貯金へ取り分け':p.release===d?p.g.name+' 🐷貯金を使えるお金に戻す':p.g.name+' 🐷貯金から使った分';
+        r.list.push({date:d,ic:'🐷',lb,acc:(fa?fa.name+' → ':'')+(a?a.name:''),accId:p.acc,v,kind:'pot'});}
+      pv+=v;d=ds(addDays(pd(d),1));}});
+  r.list.sort((x,y)=>cmp(x.date,y.date));
   return r;
 }
 function budgetUse(s,e){
@@ -1382,7 +1391,7 @@ function renderChain(){
     if(openPer[r.k]){
       h+=`<div style="padding:0 4px 8px 10px">
         <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
-        ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span><b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b></div>`).join('')||'<div class="muted">出入りなし</div>'}
+        ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span>${x.kind==='pot'?`<span class="muted">🐷${x.v>0?'':'−'}${fmt(Math.abs(x.v))}</span>`:`<b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b>`}</div>`).join('')||'<div class="muted">出入りなし</div>'}
         <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
         ${c.saved?`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp">うち 使えるお金</span><b class="${r.end-c.saved<0?'out':''}">${fmt(r.end-c.saved)}円</b></div><div class="row" style="padding:2px 0 4px 12px;font-size:12.5px"><span class="sp">うち 🐷貯金</span><b>${fmt(c.saved)}円</b></div>`:''}
         ${S.accounts.filter(a=>r.accEnd[a.id]!=null).map(a=>{const sv=r.accSaved[a.id]||0;return `<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp muted">${a.type==='wallet'?'👛':'🏦'} ${esc(a.name)}${sv?`<br>　使える ${fmt(r.accEnd[a.id]-sv)}円 ＋ 🐷貯金 ${fmt(sv)}円`:''}</span><span class="${r.accEnd[a.id]<0?'out':''}">${fmt(r.accEnd[a.id])}円</span></div>`;}).join('')}
