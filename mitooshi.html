@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.28.1';
+const APP_VERSION='v1.29.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -265,6 +265,7 @@ function unifyLegacyFixed(){
 }
 function migrateData(){
   if(!S.ui.planNoDay1){S.ui.planNoDay1=true;const clr=b=>(b&&b.items||[]).forEach(i=>i.day='');(S.budgets.plans||[]).forEach(clr);Object.values(S.budgets.only||{}).forEach(clr);}
+  S.budgets.skip=S.budgets.skip||{};
   if(!S.ui.unifyFixed1){S.ui.unifyFixed1=true;unifyLegacyFixed();}
   [['repay','💸','返済','out'],['saving','🐷','積立','out']].forEach(([id,icon,name,kind])=>{if(!S.cats.some(c=>c.id===id))S.cats.push({id,icon,name,kind});});
   S.ai=Object.assign({usd:{spent:0,uses:[],deposits:[]},form:{basis:'free',loc:'',mood:'',free:''}},S.ai||{});
@@ -664,11 +665,56 @@ function planDate(it,key){
 }
 // 予算の項目（内訳）：記録で選んだ分を「使った」として積み上げ、残りを出す
 const planUsed=(it,key)=>S.tx.filter(t=>txPlan(t)===it.id+'@'+key).reduce((a,t)=>a+(Number(t.amount)||0),0);
-function planItems(key,cu){return (budgetOf(key).items||[]).map(it=>{const used=cu?cu.byItem[it.id]||0:planUsed(it,key),amt=Number(it.amount)||0,remain=Math.max(0,amt-used);
+// ⏭️ この期だけスキップ：S.budgets.skip[期] に 'i:項目id'（📌項目）か 'c:カテゴリid'（そのカテゴリの予算まるごと）を入れる
+const skipList=key=>(S.budgets.skip||{})[key]||[];
+const isSkip=(key,tag)=>skipList(key).includes(tag);
+function toggleSkip(key,tag){const sk=S.budgets.skip||(S.budgets.skip={});const l=sk[key]||[];
+  sk[key]=l.includes(tag)?l.filter(x=>x!==tag):l.concat(tag);if(!sk[key].length)delete sk[key];save();render();}
+const itemSkipped=(key,it)=>isSkip(key,'i:'+it.id)||isSkip(key,'c:'+it.cat);
+// スキップを除いた、その期の予算（項目・カテゴリの上限・総額）
+function budgetEff(key){
+  const b=budgetOf(key);const sl=skipList(key);if(!sl.length)return b;
+  const items=(b.items||[]).filter(it=>!itemSkipped(key,it));const cats=Object.assign({},b.cats||{});let cut=0;
+  Object.keys(cats).forEach(c=>{const v=Number(cats[c])||0;
+    if(isSkip(key,'c:'+c)){cut+=Math.max(v,(b.items||[]).filter(i=>i.cat===c).reduce((a,i)=>a+(Number(i.amount)||0),0));cats[c]=0;return;}
+    const sk=(b.items||[]).filter(i=>i.cat===c&&isSkip(key,'i:'+i.id)).reduce((a,i)=>a+(Number(i.amount)||0),0);
+    if(sk){const nv=Math.max(0,v-sk);cut+=v-nv;cats[c]=nv;}});
+  // 上限を決めていないカテゴリ（項目だけ）の分
+  (b.items||[]).forEach(i=>{if(!(Number((b.cats||{})[i.cat])>0)&&itemSkipped(key,i))cut+=Number(i.amount)||0;});
+  return Object.assign({},b,{items,cats,total:Number(b.total)>0?Math.max(0,Number(b.total)-cut):b.total});
+}
+// スキップしているもの（表示用）
+function skippedOf(key){
+  const b=budgetOf(key);const out=[];
+  skipList(key).forEach(tag=>{const [t,id]=[tag[0],tag.slice(2)];
+    if(t==='i'){const it=(b.items||[]).find(i=>i.id===id);if(it)out.push({tag,ic:'📌',name:it.name,amount:Number(it.amount)||0});}
+    else{const c=catById(id);out.push({tag,ic:c.icon,name:c.name+'の予算',amount:Math.max(Number((b.cats||{})[id])||0,(b.items||[]).filter(i=>i.cat===id).reduce((a,i)=>a+(Number(i.amount)||0),0))});}});
+  return out;
+}
+// 見通しの期のカードに出す「⏭️ この期の予算をスキップ」（タップで開いて、項目・カテゴリを選ぶ）
+let openSkip={};
+function skipBox(k){
+  const [s,e]=periodRange(k);if(e<todayStr()||reserveSkip(s))return '';
+  const b=budgetOf(k);const cats=b.cats||{};const items=b.items||[];
+  const ck=[...new Set([...Object.keys(cats).filter(c=>Number(cats[c])>0),...items.map(i=>i.cat)])];if(!ck.length)return '';
+  const sk=skippedOf(k);const open=openSkip[k];
+  let h=`<div class="fl tap" style="flex-wrap:wrap" onclick="openSkip['${k}']=!openSkip['${k}'];render()"><div class="ic">⏭️</div><div class="t"><b>${Number(k.split('-')[1])}月分の予算をスキップ <span class="muted">${open?'▲':'▼'}</span></b>
+    <small style="white-space:normal">${sk.length?`スキップ中：${sk.map(x=>`${x.ic}${esc(x.name)} ${fmt(x.amount)}円`).join('・')}`:'今月は使わない予算（髪切りなど）を外せます'}</small></div></div>`;
+  if(open){
+    const chip=(tag,label,on)=>`<button class="chip${on?' on':''}" onclick="event.stopPropagation();toggleSkip('${k}','${tag}')">${on?'⏭️ ':''}${label}</button>`;
+    h+=`<div class="flbd" style="padding:6px 8px">${ck.map(c=>{const cn=catById(c);const cOn=isSkip(k,'c:'+c);const its=items.filter(i=>i.cat===c);
+      const cAmt=Math.max(Number(cats[c])||0,its.reduce((a,i)=>a+(Number(i.amount)||0),0));
+      return `<div style="margin:4px 0"><div class="muted" style="font-size:12px">${cn.icon} ${esc(cn.name)}</div><div class="chips" style="margin:2px 0">
+        ${its.map(it=>chip('i:'+it.id,`📌${esc(it.name)} ${fmt(Number(it.amount)||0)}円`,cOn||isSkip(k,'i:'+it.id))).join('')}
+        ${chip('c:'+c,`${esc(cn.name)}まるごと ${fmt(cAmt)}円`,cOn)}</div></div>`;}).join('')}
+      <div class="note">タップで ${Number(k.split('-')[1])}月分（${rangeLabel(k)}）だけ外します。もう一度タップで戻します。ほかの月の予算はそのままです。</div></div>`;}
+  return h;
+}
+function planItems(key,cu){return (budgetEff(key).items||[]).map(it=>{const used=cu?cu.byItem[it.id]||0:planUsed(it,key),amt=Number(it.amount)||0,remain=Math.max(0,amt-used);
   return Object.assign({},it,{date:planDate(it,key),used,remain,done:remain<=0,key});});}
 // cash：見通し用（その期に出ていく分で数える）。それ以外は使った日で数える
 function budgetReserve(key,cash){
-  const [s,e]=periodRange(key);const b=budgetOf(key);const cats=b.cats||{};const cu=cash?budgetUseCash(key):null;const items=planItems(key,cu);
+  const [s,e]=periodRange(key);const b=budgetEff(key);const cats=b.cats||{};const cu=cash?budgetUseCash(key):null;const items=planItems(key,cu);
   const catKeys=[...new Set([...Object.keys(cats).filter(k=>Number(cats[k])>0),...items.map(i=>i.cat)])];
   if(!(Number(b.total)>0)&&!catKeys.length)return {reserve:0,used:0,planned:0,s,e,has:false,cats:{},pending:[],rest:0};
   const u=cu||budgetUse(s,e);const det={};let pending=[],rest=0,catUsed=0,catPlanned=0;
@@ -825,7 +871,7 @@ function nextWithdraw(){
 // ── 📅 カレンダー ──
 function renderCal(){
   const [s,e]=periodRange(curKey);const t=todayStr();
-  const f=flows(curKey);const b=budgetOf(curKey);
+  const f=flows(curKey);const b=budgetEff(curKey);
   const ents=entries(s,e);const byDay={};
   // 日付か金額がまだ確定していない固定費は、カレンダーには載せず（計算には入れる）、上の一覧にだけ出す。確定したら載る
   const unsure=x=>!!(x.win||x.est);
@@ -1375,6 +1421,7 @@ function renderChain(){
         <div class="bal">${x.mv?`<span class="muted">🔁<span class="amt">${fmt(Math.abs(x.v))}円</span></span>`:`<span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span>`}</div>${chips(x.mv?[x.acc,x.to]:x.acc)}</div>`;
       if(open)body+=`<div class="flbd">${x.g?wdItems(x.g):resBreak(x.r.key,x.r.cat,x.date,x.acc)}</div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
+    if(withB)body+=skipBox(r.k);
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
     h+=`<div class="card cf"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
   });
@@ -1391,6 +1438,7 @@ function renderChain(){
     if(openPer[r.k]){
       h+=`<div style="padding:0 4px 8px 10px">
         <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
+        ${withB?`<div class="cf">${skipBox(r.k)}</div>`:''}
         ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span>${x.kind==='pot'?`<span class="muted">🐷${x.v>0?'':'−'}${fmt(Math.abs(x.v))}</span>`:`<b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b>`}</div>`).join('')||'<div class="muted">出入りなし</div>'}
         <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
         ${c.saved?`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp">うち 使えるお金</span><b class="${r.end-c.saved<0?'out':''}">${fmt(r.end-c.saved)}円</b></div><div class="row" style="padding:2px 0 4px 12px;font-size:12.5px"><span class="sp">うち 🐷貯金</span><b>${fmt(c.saved)}円</b></div>`:''}
@@ -1421,8 +1469,9 @@ function donut(parts,total,center){
     <text x="80" y="94" text-anchor="middle" font-size="16" font-weight="800" fill="var(--text)" class="amt">${fmt(total)}円</text></svg>`;
 }
 function renderBud(){
-  const f=flows(curKey);const b=budgetOf(curKey);const [bs,be]=periodRange(curKey);const bu=budgetUse(bs,be);const br=budgetReserve(curKey);const scope=S.budgets.only[curKey]?'この月だけの予算':'';
+  const f=flows(curKey);const b=budgetEff(curKey);const [bs,be]=periodRange(curKey);const bu=budgetUse(bs,be);const br=budgetReserve(curKey);const scope=S.budgets.only[curKey]?'この月だけの予算':'';
   let h=`<div class="card"><div class="row"><h3 style="margin:0">予算は「あといくら」</h3><div class="sp"></div>${scope?`<span class="pill w">${scope}</span>`:''}<button class="btn sm" onclick="editBudget()">編集</button></div>`;
+  h+=`<div class="cf">${skipBox(curKey)}</div>`;
   if(b.total>0){
     h+=`<div class="row" style="margin-top:6px"><div><div class="muted">予算総額 ${Y(b.total)}</div><div class="big ${b.total-bu.all<0?'out':''}">残り ${Y(b.total-bu.all)}</div></div></div>
       <div class="bar ${bu.all>b.total?'over':''}"><i style="width:${Math.min(100,bu.all/b.total*100)}%"></i></div><div class="muted">使った分 ${Y(bu.all)}（手で記録した支出。固定費・目標は別）</div>`;
@@ -2009,7 +2058,7 @@ function aiBudget(){
   const f=S.ai.form;const pk=periodKeyOf(todayStr());const [,pe]=periodRange(pk);
   const dL=Math.max(1,Math.round((pd(pe)-pd(todayStr()))/864e5)+1);
   let budget,label;
-  if(f.basis==='budget'){const b=budgetOf(pk);budget=b.total>0?b.total-flows(pk).out:0;label='今月の予算の残り';}
+  if(f.basis==='budget'){const b=budgetEff(pk);budget=b.total>0?b.total-flows(pk).out:0;label='今月の予算の残り';}
   else if(f.basis==='custom'){budget=Number(f.custom)||0;label='自分で決めた額';}
   const fc=forecast(horizonEnd('0'));
   if(f.basis!=='budget'&&f.basis!=='custom'){budget=fc.free;label=`${md(pe)}までに使っていい額（口座と財布の合計がマイナスにならない上限）`;}
