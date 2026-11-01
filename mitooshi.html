@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.29.0';
+const APP_VERSION='v1.30.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -861,6 +861,21 @@ function forecast(horizon){
   const accSavedEnd={};S.accounts.forEach(a=>{const v=savedIn(pots,horizon,a.id);if(v)accSavedEnd[a.id]=v;});
   return {total,bal,min,minDate,days,short:Object.values(short),free:Math.min(total-saved,min),accEnd:ra,accMin,saved,use:total-saved,accSaved,accSavedEnd,savedEnd:savedIn(pots,horizon)};
 }
+// 💳 今日そのカードで使っていい額：今日使うと落ちる引き落とし日から先（見ている期の終わりまで。引き落とし日の期の終わりより短ければそこまで）で、
+// 引き落とし口座の使えるお金（🐷貯金を除く）と、全体の使えるお金の、いちばん少ないところ
+function cardFree(H){
+  const t=todayStr();const pots=savingPots();
+  return S.cards.map(c=>{const acc=cardAcc(c);if(!acc)return null;const wd=ds(wdDate(c,pd(t),0));
+    const end=wd>H?periodRange(periodKeyOf(wd))[1]:H;const L=buildLedger(end);
+    const bal={};S.accounts.forEach(a=>bal[a.id]=a.openingDate<=t?balAt(L,a.id,t):0);
+    const fut=L.filter(x=>x.date>t&&x.date<=end);S.accounts.filter(a=>a.openingDate>t&&a.openingDate<=end).forEach(a=>fut.push({date:a.openingDate,acc:a.id,delta:Number(a.opening)||0}));
+    fut.sort((a,b)=>cmp(a.date,b.date)||(b.delta-a.delta));
+    let min=null;const look=d=>{const tot=Object.values(bal).reduce((a,v)=>a+v,0)-savedIn(pots,d);const v=Math.min(bal[acc]-savedIn(pots,d,acc),tot);if(min===null||v<min)min=v;};
+    let i=0;for(;i<fut.length&&fut[i].date<wd;i++)bal[fut[i].acc]=(bal[fut[i].acc]||0)+fut[i].delta;
+    look(ds(addDays(pd(wd),-1)));
+    for(;i<fut.length;i++){bal[fut[i].acc]=(bal[fut[i].acc]||0)+fut[i].delta;if(!fut[i+1]||fut[i+1].date!==fut[i].date)look(fut[i].date);}
+    return {c,wd,v:Math.max(0,min),neg:min<0};}).filter(Boolean);
+}
 function horizonEnd(h){const k=keyAdd(periodKeyOf(todayStr()),Number(h)||0);return periodRange(k)[1];}
 function nextWithdraw(){
   const t=todayStr();const g=groupCharges(charges(t,ds(addDays(new Date(),75))));
@@ -1452,7 +1467,8 @@ function renderFc(){
   const H=horizonEnd(fcH);const f=forecast(H);
   let h=`<div class="seg" style="margin-bottom:6px">${[['0','今期の終わりまで'],['1','来期の終わりまで'],['2','再来期まで']].map(([k,l])=>`<button class="${fcH===k?'on':''}" onclick="fcH=S.ui.fcH='${k}';save();render()">${l}</button>`).join('')}</div>`;
   h+=`<div class="card" style="text-align:center"><div class="muted">${md(H)}までに使っていい額</div><div class="big ${f.free<0?'out':''}">${Y(f.free)}</div>
-    ${f.free<f.use?`<div class="muted">最少 ${md(f.minDate)}：${Y(f.min)}</div>`:''}</div>`;
+    ${f.free<f.use?`<div class="muted">最少 ${md(f.minDate)}：${Y(f.min)}</div>`:''}
+    ${(()=>{const cf=cardFree(H);return cf.length?`<div class="muted" style="font-size:11.5px;margin-top:4px">💳 今日カードで使うなら<br>${cf.map(x=>`<span style="white-space:nowrap;margin:0 5px">${esc(x.c.name)} <b class="${x.neg?'out':''}">${fmt(x.v)}</b><small>（${md(x.wd)}落ち）</small></span>`).join(' ')}</div>`:'';})()}</div>`;
   if(f.short.length)h+=`<div class="card" style="border-color:var(--out)"><h3 class="out">⚠️ 残高不足</h3>${f.short.map(s=>`<div class="li"><div class="t"><b>${md(s.date)} ${esc(s.g.card.name)}</b><small>${esc((accById(s.acc)||{}).name)}</small></div><div class="a out">${fmt(-s.bal)}円不足</div></div>`).join('')}</div>`;
   h+=renderChain();
   h+=renderAiCard();
