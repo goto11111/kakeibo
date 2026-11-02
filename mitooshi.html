@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.35.0';
+const APP_VERSION='v1.35.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -620,7 +620,7 @@ function cashPeriod(s,e){
 //   口座・財布払いの項目は、月の区切り（期）が回。期のはじめ（今の期なら今日）に引く
 // ・締め日を過ぎた回は確定：予算は何も引かない（使った分はふつうの支出・カードの引き落としとして数えるだけ）
 // ・締め日の前なら、その回だけ「あと◯円」で締める・スキップ（0円）にできる：S.budgets.cyc['項目id@回の終わりの日'] = その回の上限
-// どの期の予算（金額）を使うか：カードはその回の引き落とし日の期、口座・財布はその期
+// カードの回は「その回をいちばん長く使う月（期）」の予算にする（例：10/11〜11/10 は 10/23〜11/24 の月、11/1〜11/30 も同じ月）。口座・財布はその期
 // 予算の項目を当てる文字：メモ（払った店・サイト）と中身（買ったもの）。
 // 分けた会計の行は店名が全部の行で共通なので、その行の中身だけで当てる
 const planText=t=>t.grp?(t.item||''):[t.memo,t.item].filter(Boolean).join(' ');
@@ -648,18 +648,24 @@ function reserveMethod(){
 const itemMethod=it=>it.method||reserveMethod();
 // スタート日を含む期（とそれより前）は実績だけで数え、予算は引かない
 const reserveSkip=(s)=>S.start&&s<=S.start;
-// k の期の予算が受け持つ回：カードは引き落とし日が k の期に入る回、口座・財布は k の期そのもの
+// カードの回（a〜b）を、いちばん長く重なる期に当てる（同じなら前の期）
+function cycleKey(a,b){
+  let k=periodKeyOf(a),best=k,bl=-1;const kb=periodKeyOf(b);
+  for(let g=0;g<4;g++){const [s,e]=periodRange(k);const lo=s>a?s:a,hi=e<b?e:b;const n=hi>=lo?Math.round((pd(hi)-pd(lo))/864e5)+1:0;if(n>bl){bl=n;best=k;}if(k>=kb)break;k=keyAdd(k,1);}
+  return best;
+}
+// k の月（期）の予算が受け持つ回：カードはその月にいちばん長く使う回、口座・財布は k の期そのもの
 function itemCycles(it,k){
   const [s,e]=periodRange(k);const c=cardOf(itemMethod(it));
   if(!c){const a=accOf(itemMethod(it));return [{a:s,b:e,wd:null,acc:a?a.id:null,via:a?a.name:'',k}];}
-  const out=[];let d=ds(addDays(pd(s),-100));
-  for(let g=0;g<10;g++){const [a,b]=cardCycle(c,d);const wd=ds(wdDate(c,pd(b),0));if(wd>e)break;if(wd>=s)out.push({a,b,wd,acc:cardAcc(c),via:c.name,card:c,k});d=ds(addDays(pd(b),1));}
+  const out=[];let d=ds(addDays(pd(s),-40));
+  for(let g=0;g<6;g++){const [a,b]=cardCycle(c,d);if(a>e)break;if(cycleKey(a,b)===k)out.push({a,b,wd:ds(wdDate(c,pd(b),0)),acc:cardAcc(c),via:c.name,card:c,k});d=ds(addDays(pd(b),1));}
   return out;
 }
 // 今日（またはその日）を含む回と、その回の予算の項目
 function cycleAt(id,date){
   const it0=allItems().find(i=>i.id===id);if(!it0)return null;const c=cardOf(itemMethod(it0));
-  let y;if(c){const [a,b]=cardCycle(c,date);const wd=ds(wdDate(c,pd(b),0));y={a,b,wd,acc:cardAcc(c),via:c.name,card:c,k:periodKeyOf(wd)};}
+  let y;if(c){const [a,b]=cardCycle(c,date);const wd=ds(wdDate(c,pd(b),0));y={a,b,wd,acc:cardAcc(c),via:c.name,card:c,k:cycleKey(a,b)};}
   else{const k=periodKeyOf(date);const [a,b]=periodRange(k);const ac=accOf(itemMethod(it0));y={a,b,wd:null,acc:ac?ac.id:null,via:ac?ac.name:'',k};}
   const it=(budgetOf(y.k).items||[]).find(i=>i.id===id);return it?cycState(it,y):null;
 }
@@ -681,7 +687,7 @@ function reservePlan(k){
 const reserveLabel=r=>`${r.label}の予算（${md(r.a)}〜${md(r.b)}の回${r.used?`・使った ${fmt(r.used)}円を引いた残り`:''}）`;
 function budgetReserves(from,to){
   const t=todayStr();const res=[];if(to<t)return res;
-  let k=periodKeyOf(t);
+  let k=keyAdd(periodKeyOf(t),-1);
   for(let g=0;g<40;g++){const [s]=periodRange(k);if(s>to)break;
     reservePlan(k).forEach(x=>{if(x.date>=from&&x.date<=to&&x.amount>0)res.push(x);});
     k=keyAdd(k,1);}
@@ -1409,7 +1415,7 @@ function renderBud(){
   const BL=budgetCycles(curKey);
   h+=`<div class="card"><div class="row"><h3 style="margin:0">📌 ${keyLabel(curKey)}の予算</h3><div class="sp"></div>${scope?`<span class="pill w">${scope}</span>`:''}<button class="btn sm" onclick="editBudget()">編集</button></div>`;
   h+=BL.length?BL.map(cycRow).join(''):`<div class="muted" style="margin-top:6px">予算の項目はまだありません。「編集」からガソリン・散髪・飲み物などの項目と金額・払い方を決めると、回ごとに取っておきます。</div>`;
-  h+=`<div class="note">予算は📌項目ごとに、払い方の締め日で区切った「回」で取っておきます（カードはそのカードの締め日まで、口座・財布は期の終わりまで）。この月に出ているのは、カードはこの期（${rangeLabel(curKey)}）に引き落とされる回、口座・財布はこの期です。締め日を過ぎた回は ✅ 確定で、予算は何も引きません。タップで、その回だけ締める・スキップできます。</div>`;
+  h+=`<div class="note">予算は📌項目ごとに、払い方の締め日で区切った「回」で取っておきます（カードはそのカードの締め日まで、口座・財布は期の終わりまで）。この月に出ているのは、カードはこの月（${rangeLabel(curKey)}）にいちばん長く使う回、口座・財布はこの期です。お金は、カードの回は引き落とし日に、口座・財布は期のはじめに見通しから引きます。締め日を過ぎた回は ✅ 確定で、予算は何も引きません。タップで、その回だけ締める・スキップできます。</div>`;
   h+='</div>';
   // 円グラフ
   const [s,e]=periodRange(curKey);
