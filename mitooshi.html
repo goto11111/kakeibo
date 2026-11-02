@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.30.0';
+const APP_VERSION='v1.31.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -671,16 +671,22 @@ const isSkip=(key,tag)=>skipList(key).includes(tag);
 function toggleSkip(key,tag){const sk=S.budgets.skip||(S.budgets.skip={});const l=sk[key]||[];
   sk[key]=l.includes(tag)?l.filter(x=>x!==tag):l.concat(tag);if(!sk[key].length)delete sk[key];save();render();}
 const itemSkipped=(key,it)=>isSkip(key,'i:'+it.id)||isSkip(key,'c:'+it.cat);
-// スキップを除いた、その期の予算（項目・カテゴリの上限・総額）
+// 🔒 締め：S.budgets.cap[期][項目id] = その期のその項目の上限（締めた時点で使った分 ＋ あと使う分）
+const capOf=(key,id)=>{const c=((S.budgets.cap||{})[key]||{})[id];return c==null?null:Number(c)||0;};
+// スキップ・締めを反映した、その期の予算（項目・カテゴリの上限・総額）
 function budgetEff(key){
-  const b=budgetOf(key);const sl=skipList(key);if(!sl.length)return b;
-  const items=(b.items||[]).filter(it=>!itemSkipped(key,it));const cats=Object.assign({},b.cats||{});let cut=0;
+  const b=budgetOf(key);const caps=(S.budgets.cap||{})[key]||{};if(!skipList(key).length&&!Object.keys(caps).length)return b;
+  const diff={};const items=[];
+  (b.items||[]).forEach(it=>{const amt=Number(it.amount)||0;
+    if(itemSkipped(key,it)){diff[it.cat]=(diff[it.cat]||0)+amt;return;}
+    const cp=capOf(key,it.id);if(cp==null){items.push(it);return;}
+    diff[it.cat]=(diff[it.cat]||0)+amt-cp;items.push(Object.assign({},it,{amount:cp,orig:amt,capped:true}));});
+  const cats=Object.assign({},b.cats||{});let cut=0;
   Object.keys(cats).forEach(c=>{const v=Number(cats[c])||0;
-    if(isSkip(key,'c:'+c)){cut+=Math.max(v,(b.items||[]).filter(i=>i.cat===c).reduce((a,i)=>a+(Number(i.amount)||0),0));cats[c]=0;return;}
-    const sk=(b.items||[]).filter(i=>i.cat===c&&isSkip(key,'i:'+i.id)).reduce((a,i)=>a+(Number(i.amount)||0),0);
-    if(sk){const nv=Math.max(0,v-sk);cut+=v-nv;cats[c]=nv;}});
+    if(isSkip(key,'c:'+c)){cut+=Math.max(v,(b.items||[]).filter(i=>i.cat===c).reduce((a,i)=>a+(Number(i.amount)||0),0));cats[c]=0;delete diff[c];return;}
+    if(diff[c]&&v>0){const nv=Math.max(0,v-diff[c]);cut+=v-nv;cats[c]=nv;delete diff[c];}});
   // 上限を決めていないカテゴリ（項目だけ）の分
-  (b.items||[]).forEach(i=>{if(!(Number((b.cats||{})[i.cat])>0)&&itemSkipped(key,i))cut+=Number(i.amount)||0;});
+  Object.values(diff).forEach(d=>cut+=d);
   return Object.assign({},b,{items,cats,total:Number(b.total)>0?Math.max(0,Number(b.total)-cut):b.total});
 }
 // スキップしているもの（表示用）
@@ -691,24 +697,48 @@ function skippedOf(key){
     else{const c=catById(id);out.push({tag,ic:c.icon,name:c.name+'の予算',amount:Math.max(Number((b.cats||{})[id])||0,(b.items||[]).filter(i=>i.cat===id).reduce((a,i)=>a+(Number(i.amount)||0),0))});}});
   return out;
 }
-// 見通しの期のカードに出す「⏭️ この期の予算をスキップ」（タップで開いて、項目・カテゴリを選ぶ）
+// 見通しの期のカードに出す「🔒 ◯月分の予算を締める」（タップで開いて、📌項目を締める・カテゴリをまるごとスキップ）
 let openSkip={};
 function skipBox(k){
   const [s,e]=periodRange(k);if(e<todayStr()||reserveSkip(s))return '';
   const b=budgetOf(k);const cats=b.cats||{};const items=b.items||[];
   const ck=[...new Set([...Object.keys(cats).filter(c=>Number(cats[c])>0),...items.map(i=>i.cat)])];if(!ck.length)return '';
-  const sk=skippedOf(k);const open=openSkip[k];
-  let h=`<div class="fl tap" style="flex-wrap:wrap" onclick="openSkip['${k}']=!openSkip['${k}'];render()"><div class="ic">⏭️</div><div class="t"><b>${Number(k.split('-')[1])}月分の予算をスキップ <span class="muted">${open?'▲':'▼'}</span></b>
-    <small style="white-space:normal">${sk.length?`スキップ中：${sk.map(x=>`${x.ic}${esc(x.name)} ${fmt(x.amount)}円`).join('・')}`:'今月は使わない予算（髪切りなど）を外せます'}</small></div></div>`;
+  const br=budgetReserve(k,true);const live=id=>{for(const c in br.cats){const it=br.cats[c].items.find(i=>i.id===id);if(it)return it;}return null;};
+  const done=[];items.forEach(it=>{if(itemSkipped(k,it)&&!isSkip(k,'c:'+it.cat))done.push(`⏭️${esc(it.name)}`);else if(capOf(k,it.id)!=null){const l=live(it.id);done.push(`🔒${esc(it.name)} ${l&&l.remain>0?`あと${fmt(l.remain)}`:'締め'}`);}});
+  ck.forEach(c=>{if(isSkip(k,'c:'+c))done.push(`⏭️${esc(catById(c).name)}まるごと`);});
+  const open=openSkip[k];const m=Number(k.split('-')[1]);
+  let h=`<div class="fl tap" style="flex-wrap:wrap" onclick="openSkip['${k}']=!openSkip['${k}'];render()"><div class="ic">🔒</div><div class="t"><b>${m}月分の予算を締める <span class="muted">${open?'▲':'▼'}</span></b>
+    <small style="white-space:normal">${done.length?done.join('・'):'もう使わない・あと少しだけの予算を締められます'}</small></div></div>`;
   if(open){
-    const chip=(tag,label,on)=>`<button class="chip${on?' on':''}" onclick="event.stopPropagation();toggleSkip('${k}','${tag}')">${on?'⏭️ ':''}${label}</button>`;
     h+=`<div class="flbd" style="padding:6px 8px">${ck.map(c=>{const cn=catById(c);const cOn=isSkip(k,'c:'+c);const its=items.filter(i=>i.cat===c);
       const cAmt=Math.max(Number(cats[c])||0,its.reduce((a,i)=>a+(Number(i.amount)||0),0));
       return `<div style="margin:4px 0"><div class="muted" style="font-size:12px">${cn.icon} ${esc(cn.name)}</div><div class="chips" style="margin:2px 0">
-        ${its.map(it=>chip('i:'+it.id,`📌${esc(it.name)} ${fmt(Number(it.amount)||0)}円`,cOn||isSkip(k,'i:'+it.id))).join('')}
-        ${chip('c:'+c,`${esc(cn.name)}まるごと ${fmt(cAmt)}円`,cOn)}</div></div>`;}).join('')}
-      <div class="note">タップで ${Number(k.split('-')[1])}月分（${rangeLabel(k)}）だけ外します。もう一度タップで戻します。ほかの月の予算はそのままです。</div></div>`;}
+        ${cOn?'':its.map(it=>{const sk=itemSkipped(k,it),cp=capOf(k,it.id),l=live(it.id);
+          return `<button class="chip${sk||cp!=null?' on':''}" onclick="event.stopPropagation();openCloseItem('${k}','${it.id}')">${sk?`⏭️${esc(it.name)} スキップ`:cp!=null?`🔒${esc(it.name)} ${l&&l.remain>0?`あと${fmt(l.remain)}円`:'締め'}`:`📌${esc(it.name)} ${fmt(Number(it.amount)||0)}円`}</button>`;}).join('')}
+        <button class="chip${cOn?' on':''}" onclick="event.stopPropagation();toggleSkip('${k}','c:${c}')">${cOn?'⏭️ ':''}${esc(cn.name)}まるごとスキップ ${fmt(cAmt)}円</button></div></div>`;}).join('')}
+      <div class="note">📌項目をタップして「あと何円使うか」を入れると、${m}月分（${rangeLabel(k)}）はそこで締めて、それ以上は取っておきません。0円ならもう使わない。ほかの月の予算はそのままです。</div></div>`;}
   return h;
+}
+// 📌項目を締める画面：この期にもう出ていく分（カードは引き落とし日で数える）＋ あと使う分 を、この期の上限にする
+function openCloseItem(k,id){
+  const it=(budgetOf(k).items||[]).find(i=>i.id===id);if(!it)return;
+  const used=budgetUseCash(k).byItem[id]||0;const cp=capOf(k,id);const sk=isSkip(k,'i:'+id);const amt=Number(it.amount)||0;
+  const c=cardOf(it.method||reserveMethod());
+  sheet(`📌 ${esc(it.name)}（${Number(k.split('-')[1])}月分）`,`
+    <div class="muted" style="font-size:12.5px">予算 ${fmt(amt)}円・この期に出ていく分 ${fmt(used)}円${c?`（${esc(c.name)}は引き落とし日で数える）`:''}<br>
+    ${sk?'⏭️ いまはスキップ中':cp!=null?`🔒 いまは あと ${fmt(Math.max(0,cp-used))}円で締め`:`まだ取っておく分 ${fmt(Math.max(0,amt-used))}円`}</div>
+    <div class="fld"><label>あと何円使う？</label><input type="text" inputmode="numeric" id="closeAmt" placeholder="例：4000（空なら0円）" value="${cp!=null&&cp>used?cp-used:''}"></div>
+    <button class="btn" onclick="saveCloseItem('${k}','${id}',document.getElementById('closeAmt').value)">この金額で締める</button>
+    <button class="btn sub" style="margin-top:8px" onclick="saveCloseItem('${k}','${id}','0')">もう使わない（0円で締める）</button>
+    ${sk||cp!=null?`<button class="btn sub" style="margin-top:8px" onclick="saveCloseItem('${k}','${id}',null)">締めをやめて予算 ${fmt(amt)}円に戻す</button>`:''}
+    <div class="note">締めると、${rangeLabel(k)}のこの項目は「出ていく分 ＋ あと使う分」までになり、それ以上は取っておきません（あまった分は期末に残ります）。あとで記録すると、その分だけ「あと」が減ります。</div>`);
+}
+function saveCloseItem(k,id,v){
+  const cap=S.budgets.cap||(S.budgets.cap={});const sk=S.budgets.skip||{};
+  if(sk[k]){sk[k]=sk[k].filter(x=>x!=='i:'+id);if(!sk[k].length)delete sk[k];}
+  if(v==null){if(cap[k]){delete cap[k][id];if(!Object.keys(cap[k]).length)delete cap[k];}}
+  else{const x=Math.max(0,Number(String(v).replace(/[^\d]/g,''))||0);(cap[k]||(cap[k]={}))[id]=(budgetUseCash(k).byItem[id]||0)+x;}
+  save();closeSheet();render();
 }
 function planItems(key,cu){return (budgetEff(key).items||[]).map(it=>{const used=cu?cu.byItem[it.id]||0:planUsed(it,key),amt=Number(it.amount)||0,remain=Math.max(0,amt-used);
   return Object.assign({},it,{date:planDate(it,key),used,remain,done:remain<=0,key});});}
@@ -776,7 +806,7 @@ function resBreak(k,cat,atDate,atAcc){
   const line=(tag,cls,name,sub,v)=>`<div class="row" style="padding:5px 0 5px 10px;font-size:12.5px;border-top:1px dashed var(--line)"><span class="pill ${cls}" style="min-width:42px;text-align:center">${tag}</span><span class="sp" style="white-space:normal"><b>${name}</b>${sub?`<br><span class="muted" style="font-size:11px">${sub}</span>`:''}</span><b>${v}</b></div>`;
   const pots=[];let usedAll=0,keepAll=0;
   if(d.free>0||d.list.some(x=>!x.item))pots.push({ic:'📊',name:'決まっていない分',amt:d.free,list:d.list.filter(x=>!x.item),keep:d.rest,at:rp.find(x=>!x.iid&&x.cat===cat)});
-  d.items.forEach(it=>{const lv=d.live.find(i=>i.id===it.id);pots.push({ic:'📌',name:it.name,amt:Number(it.amount)||0,list:d.list.filter(x=>x.item===it.id),keep:lv?lv.remain:0,at:rp.find(x=>x.iid===it.id)});});
+  d.items.forEach(it=>{const lv=d.live.find(i=>i.id===it.id);pots.push({ic:it.capped?'🔒':'📌',name:it.name+(it.capped?`（締め・予算 ${fmt(it.orig)}円）`:''),amt:Number(it.amount)||0,list:d.list.filter(x=>x.item===it.id),keep:lv?lv.remain:0,at:rp.find(x=>x.iid===it.id)});});
   let body='';
   pots.forEach(p=>{const used=p.list.reduce((a,x)=>a+x.amount,0),over=used-p.amt;usedAll+=used;keepAll+=p.keep;
     body+=`<div style="padding:8px 0 4px"><div class="row"><span>${p.ic}</span><b class="sp">${esc(p.name)}</b><span class="muted" style="font-size:12px">予算</span><b>${fmt(p.amt)}円</b></div>
