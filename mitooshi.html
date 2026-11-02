@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.34.0';
+const APP_VERSION='v1.34.1';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -673,11 +673,19 @@ function toggleSkip(key,tag){const sk=S.budgets.skip||(S.budgets.skip={});const 
 const itemSkipped=(key,it)=>isSkip(key,'i:'+it.id)||isSkip(key,'c:'+it.cat);
 // 🔒 締め：S.budgets.cap[期][項目id] = その期のその項目の上限（締めた時点で使った分 ＋ あと使う分）
 const capOf=(key,id)=>{const c=((S.budgets.cap||{})[key]||{})[id];return c==null?null:Number(c)||0;};
+function closedOut(key,it){
+  if(isSkip(key,'c:'+it.cat))return false;const c=cardOf(it.method||reserveMethod());if(!c)return false;
+  const [s,e]=periodRange(key);const t=todayStr();if(e<t)return false;
+  if(!isSkip(key,'i:'+it.id)&&capOf(key,it.id)==null)return false;
+  return !reserveWd(c,s,e);
+}
 // スキップ・締めを反映した、その期の予算（項目・カテゴリの上限・総額）
 function budgetEff(key){
   const b=budgetOf(key);const caps=(S.budgets.cap||{})[key]||{};if(!skipList(key).length&&!Object.keys(caps).length)return b;
   const diff={};const items=[];
   (b.items||[]).forEach(it=>{const amt=Number(it.amount)||0;
+    // 締め日を過ぎて、この期にもう取っておかないカードの項目は、締め・スキップを見ない（見通しには効かないので、予算どおりに表示する）
+    if(closedOut(key,it)){items.push(it);return;}
     if(itemSkipped(key,it)){diff[it.cat]=(diff[it.cat]||0)+amt;return;}
     const cp=capOf(key,it.id);if(cp==null){items.push(it);return;}
     diff[it.cat]=(diff[it.cat]||0)+amt-cp;items.push(Object.assign({},it,{amount:cp,orig:amt,capped:true}));});
@@ -1551,7 +1559,7 @@ function donut(parts,total,center){
 function renderBud(){
   const f=flows(curKey);const b=budgetEff(curKey);const [bs,be]=periodRange(curKey);const bu=budgetUse(bs,be);const br=budgetReserve(curKey);const scope=S.budgets.only[curKey]?'この月だけの予算':'';
   let h=`<div class="card"><div class="row"><h3 style="margin:0">予算は「あといくら」</h3><div class="sp"></div>${scope?`<span class="pill w">${scope}</span>`:''}<button class="btn sm" onclick="editBudget()">編集</button></div>`;
-  h+=`<div class="cf">${skipBox(curKey)}</div>`;
+  if(curKey===periodKeyOf(todayStr()))h=renderNowBudget()+h;else h+=`<div class="cf">${skipBox(curKey)}</div>`;
   if(b.total>0){
     h+=`<div class="row" style="margin-top:6px"><div><div class="muted">予算総額 ${Y(b.total)}</div><div class="big ${b.total-bu.all<0?'out':''}">残り ${Y(b.total-bu.all)}</div></div></div>
       <div class="bar ${bu.all>b.total?'over':''}"><i style="width:${Math.min(100,bu.all/b.total*100)}%"></i></div><div class="muted">使った分 ${Y(bu.all)}（手で記録した支出。固定費・目標は別）</div>`;
@@ -1567,7 +1575,7 @@ function renderBud(){
       ${d.rest>0?`<div class="row muted" style="font-size:12px"><span class="sp">項目にしていない予算の残り</span><span>${fmt(d.rest)}円</span></div>`:''}</div>`:''}`;}).join('')}</div>`;
   }
   if(br.has){const rp=reservePlan(curKey);const rm=reserveMethod();const bc=budgetReserve(curKey,true);
-    h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 見通しでは、予算は「この期（${rangeLabel(curKey)}）に口座から出ていくお金の枠」として数えます：<b>${fmt(bc.planned)}円</b>（この期に出ていく分 ${fmt(bc.used)}円 ＋ まだ取っておく予算 ${fmt(bc.reserve)}円）<br>
+    h+=`<div class="prev" style="font-weight:400;margin-top:8px">📊 見通しでは、予算は「この期（${rangeLabel(curKey)}）に口座から出ていくお金の枠」として数えます：${(()=>{const keep=rp.reduce((a,x)=>a+x.amount,0);return `<b>${fmt(bc.used+keep)}円</b>（この期に出ていく分 ${fmt(bc.used)}円 ＋ まだ取っておく予算 ${fmt(keep)}円）`;})()}<br>
       ${reserveSkip(br.s)?'スタートの期なので、予算は引かずに実績だけで数えています。':br.e<todayStr()?'終わった期なので、実績だけで数えています。':
         rp.length?`取っておく予算は次の日に引いています：<br>${rp.map(x=>`・${esc(x.label)} ${fmt(x.amount)}円 → ${md(x.date)} ${esc(x.via)}${x.card?'の引き落とし':'から'}`).join('<br>')}`:'この期に引く予算は残っていません。'}</div>
       <div class="fld"><label>項目にしていない予算の払い方</label><select onchange="S.settings.reserveMethod=this.value;save();render()">${[...S.cards.map(c=>'c:'+c.id),...S.accounts.map(a=>'a:'+a.id)].map(m=>`<option value="${m}" ${m===rm?'selected':''}>${esc(mName(m))}</option>`).join('')}</select>
