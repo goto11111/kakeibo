@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.33.0';
+const APP_VERSION='v1.34.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -731,20 +731,42 @@ function skipBox(k){
       <div class="note">📌項目をタップして「あと何円使うか」を入れると、${m}月分（${rangeLabel(k)}）はそこで締めて、それ以上は取っておきません。0円ならもう使わない。ほかの月の予算はそのままです。<br>💳 カード払いの項目は、その期に引き落とされる回の分です（締め日を過ぎたカードは「→ ◯月分で締める」から、今使っている回の月を締めます）。</div></div>`;}
   return h;
 }
+// 🔒 見通しの上の「予算（次の締め日まで）」：📌項目ごとに、今日使うと入る回（カードは次の締め日まで、口座・財布は期の終わりまで）の予算と、あと何円か
+function nowBudgetItems(){
+  const t=todayStr();const out=[];const seen=new Set();
+  const k0=periodKeyOf(t);const pool=[k0,keyAdd(k0,1),keyAdd(k0,2)];
+  pool.forEach(k=>(budgetOf(k).items||[]).forEach(it=>{if(seen.has(it.id))return;
+    const y=itemCycle(k,it);const K=y?y.nowKey:k0;if(K!==k)return;seen.add(it.id);
+    const [s,e]=periodRange(K);if(reserveSkip(s))return;
+    const br=budgetReserve(K,true);let live=null;for(const c in br.cats){const x=br.cats[c].items.find(i=>i.id===it.id);if(x)live=x;}
+    const used=budgetUseCash(K).byItem[it.id]||0;
+    out.push({it,K,y,until:y?cardCycle(y.c,t)[1]:e,wd:y?ds(wdDate(y.c,pd(t),0)):null,used,remain:live?live.remain:0,
+      skip:itemSkipped(K,it),cap:capOf(K,it.id),amt:Number(it.amount)||0});}));
+  const ord=id=>{const i=(budgetOf(k0).items||[]).findIndex(x=>x.id===id);return i<0?999:i;};
+  return out.sort((a,b)=>ord(a.it.id)-ord(b.it.id));
+}
+function renderNowBudget(){
+  const L=nowBudgetItems();if(!L.length)return '';
+  return `<div class="card"><h3>🔒 予算（次の締め日まで）</h3>${L.map(x=>{const st=x.skip?'⏭️ スキップ':x.cap!=null?(x.remain>0?`🔒 あと ${fmt(x.remain)}円で締め`:'🔒 締め'):`あと ${fmt(x.remain)}円`;
+    return `<div class="li tap" onclick="openCloseItem('${x.K}','${x.it.id}')"><div class="ic">${x.skip||x.cap!=null?'🔒':'📌'}</div><div class="t"><b>${esc(x.it.name)} <span class="muted" style="font-weight:400;font-size:11.5px">${esc(x.y?x.y.c.name:mName(x.it.method||reserveMethod()).replace(/^\S+ /,''))}</span></b>
+      <small style="white-space:normal">${md(x.until)}まで${x.wd?`（${md(x.wd)}落ち）`:'（期の終わり）'}・予算 ${fmt(x.amt)}・使った ${fmt(x.used)}</small></div><div class="a ${x.skip||x.cap!=null?'muted':''}" style="font-size:13px">${st}</div></div>`;}).join('')}
+    <div class="note">タップで「次の締め日までに、あと何円使うか」を入れて締められます（0円ならもう使わない）。締め日を過ぎると、余った分は自動で戻り、次の回は予算どおりに戻ります。</div></div>`;
+}
 // 📌項目を締める画面：この期にもう出ていく分（カードは引き落とし日で数える）＋ あと使う分 を、この期の上限にする
 function openCloseItem(k,id){
   const it=(budgetOf(k).items||[]).find(i=>i.id===id);if(!it)return;
   const used=budgetUseCash(k).byItem[id]||0;const cp=capOf(k,id);const sk=isSkip(k,'i:'+id);const amt=Number(it.amount)||0;
   const c=cardOf(it.method||reserveMethod());const y=itemCycle(k,it);
-  sheet(`📌 ${esc(it.name)}（${Number(k.split('-')[1])}月分）`,`
-    ${y&&y.cyc.length?`<div class="prev" style="font-weight:400">💳 ${esc(y.c.name)}：<b>${cycLabel(y)}</b>が、この${Number(k.split('-')[1])}月分の予算です${y.nowKey===k?'（今日使うとこの回）':''}</div>`:''}
+  const now=y?y.nowKey===k:periodRange(k)[0]<=todayStr()&&todayStr()<=periodRange(k)[1];
+  sheet(`📌 ${esc(it.name)}（${now?`${md(y?cardCycle(y.c,todayStr())[1]:periodRange(k)[1])}まで`:`${Number(k.split('-')[1])}月分`}）`,`
+    ${y&&y.cyc.length?`<div class="prev" style="font-weight:400">💳 ${esc(y.c.name)}：<b>${cycLabel(y)}</b>${y.nowKey===k?' ＝ 今の回（今日使うとこの回に入る）':`が、この${Number(k.split('-')[1])}月分の予算です`}</div>`:''}
     <div class="muted" style="font-size:12.5px">予算 ${fmt(amt)}円・この期に出ていく分 ${fmt(used)}円${c?`（${esc(c.name)}は引き落とし日で数える）`:''}<br>
     ${sk?'⏭️ いまはスキップ中':cp!=null?`🔒 いまは あと ${fmt(Math.max(0,cp-used))}円で締め`:`まだ取っておく分 ${fmt(Math.max(0,amt-used))}円`}</div>
-    <div class="fld"><label>あと何円使う？</label><input type="text" inputmode="numeric" id="closeAmt" placeholder="例：4000（空なら0円）" value="${cp!=null&&cp>used?cp-used:''}"></div>
+    <div class="fld"><label>${(()=>{const t=todayStr();if(y&&y.nowKey===k)return `次の締め日（${md(cardCycle(y.c,t)[1])}）までに、あと何円使う？`;if(!y&&periodRange(k)[0]<=t&&t<=periodRange(k)[1])return `期の終わり（${md(periodRange(k)[1])}）までに、あと何円使う？`;return 'あと何円使う？';})()}</label><input type="text" inputmode="numeric" id="closeAmt" placeholder="例：4000（空なら0円）" value="${cp!=null&&cp>used?cp-used:''}"></div>
     <button class="btn" onclick="saveCloseItem('${k}','${id}',document.getElementById('closeAmt').value)">この金額で締める</button>
     <button class="btn sub" style="margin-top:8px" onclick="saveCloseItem('${k}','${id}','0')">もう使わない（0円で締める）</button>
     ${sk||cp!=null?`<button class="btn sub" style="margin-top:8px" onclick="saveCloseItem('${k}','${id}',null)">締めをやめて予算 ${fmt(amt)}円に戻す</button>`:''}
-    <div class="note">締めると、${rangeLabel(k)}のこの項目は「出ていく分 ＋ あと使う分」までになり、それ以上は取っておきません（あまった分は期末に残ります）。あとで記録すると、その分だけ「あと」が減ります。</div>`);
+    <div class="note">締めると、${y&&y.cyc.length?cycLabel(y):rangeLabel(k)}のこの項目は「出ていく分 ＋ あと使う分」までになり、それ以上は取っておきません（あまった分は期末に残ります）。あとで記録すると、その分だけ「あと」が減ります。</div>`);
 }
 function saveCloseItem(k,id,v){
   const cap=S.budgets.cap||(S.budgets.cap={});const sk=S.budgets.skip||{};
@@ -1479,7 +1501,6 @@ function renderChain(){
         <div class="bal">${x.mv?`<span class="muted">🔁<span class="amt">${fmt(Math.abs(x.v))}円</span></span>`:`<span class="${x.v>0?'in':'out'}">${x.v>0?'＋':'−'}<span class="amt">${fmt(Math.abs(x.v))}円</span></span>`}</div>${chips(x.mv?[x.acc,x.to]:x.acc)}</div>`;
       if(open)body+=`<div class="flbd">${x.g?wdItems(x.g):resBreak(x.r.key,x.r.cat,x.date,x.acc)}</div>`;});
     if(!nowShown)body+=edge('📍',`<b>今日（${md(t)}）</b>`,'now');
-    if(withB)body+=skipBox(r.k);
     body+=edge('🏁',`<b>期末に残る</b>${c.saved?`<small>🐷貯金 ${fmt(c.saved)}円は別</small>`:''}`,'edge');
     h+=`<div class="card cf"><h3>📅 ${keyLabel(r.k)} <span class="muted" style="font-weight:400">${rangeLabel(r.k)}</span>${r.now?' <span class="pill">今期</span>':''}${minD?` <span class="out">⚠️ ${md(minD)}に足りない</span>`:''}</h3>${body}</div>`;
   });
@@ -1496,7 +1517,6 @@ function renderChain(){
     if(openPer[r.k]){
       h+=`<div style="padding:0 4px 8px 10px">
         <div class="row" style="padding:4px 0"><span class="sp muted">${c.from===S.start?`スタート時（${md(S.start)}）`:'前期から'}</span><b>${fmt(r.prev)}円</b></div>
-        ${withB?`<div class="cf">${skipBox(r.k)}</div>`:''}
         ${c.list.filter(x=>withB||x.kind!=='reserve').map(x=>`<div class="row" style="padding:3px 0;font-size:12.5px"><span style="width:62px" class="muted">${md(x.date)}</span><span>${x.ic}</span><span class="sp" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.lb)} <span class="muted">${esc(x.acc)}</span></span>${x.kind==='pot'?`<span class="muted">🐷${x.v>0?'':'−'}${fmt(Math.abs(x.v))}</span>`:`<b class="${x.v>0?'in':''}">${x.v>0?'+':'−'}${fmt(Math.abs(x.v))}</b>`}</div>`).join('')||'<div class="muted">出入りなし</div>'}
         <div class="row" style="padding:5px 0;border-top:1px solid var(--line)"><span class="sp"><b>期末に残る</b>（次の期へ）</span><b class="${r.end<0?'out':''}">${fmt(r.end)}円</b></div>
         ${c.saved?`<div class="row" style="padding:2px 0 2px 12px;font-size:12.5px"><span class="sp">うち 使えるお金</span><b class="${r.end-c.saved<0?'out':''}">${fmt(r.end-c.saved)}円</b></div><div class="row" style="padding:2px 0 4px 12px;font-size:12.5px"><span class="sp">うち 🐷貯金</span><b>${fmt(c.saved)}円</b></div>`:''}
@@ -1513,6 +1533,7 @@ function renderFc(){
     ${f.free<f.use?`<div class="muted">最少 ${md(f.minDate)}：${Y(f.min)}</div>`:''}
     ${(()=>{const cf=cardFree(H);return cf.length?`<div class="muted" style="font-size:11.5px;margin-top:4px">💳 今日カードで使うなら<br>${cf.map(x=>`<span style="white-space:nowrap;margin:0 5px">${esc(x.c.name)} <b class="${x.neg?'out':''}">${fmt(x.v)}</b><small>（${md(x.wd)}落ち）</small></span>`).join(' ')}</div>`:'';})()}</div>`;
   if(f.short.length)h+=`<div class="card" style="border-color:var(--out)"><h3 class="out">⚠️ 残高不足</h3>${f.short.map(s=>`<div class="li"><div class="t"><b>${md(s.date)} ${esc(s.g.card.name)}</b><small>${esc((accById(s.acc)||{}).name)}</small></div><div class="a out">${fmt(-s.bal)}円不足</div></div>`).join('')}</div>`;
+  h+=renderNowBudget();
   h+=renderChain();
   h+=renderAiCard();
   return h;
