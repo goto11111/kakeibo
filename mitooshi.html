@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.32.0';
+const APP_VERSION='v1.33.0';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -698,13 +698,24 @@ function skippedOf(key){
   return out;
 }
 // 見通しの期のカードに出す「🔒 ◯月分の予算を締める」（タップで開いて、📌項目を締める・カテゴリをまるごとスキップ）
+// カード払いの📌項目：k の期の予算は「k の期に引き落とされる回」の分。どの期間に使った分か（例：10/11〜11/10に使った分 → 12/10落ち）
+function itemCycle(k,it){
+  const c=cardOf(it.method||reserveMethod());if(!c)return null;const [s,e]=periodRange(k);const cyc=[];
+  let d=ds(addDays(pd(s),-100));
+  for(let g=0;g<10;g++){const [a,b]=cardCycle(c,d);const wd=ds(wdDate(c,pd(b),0));if(wd>e)break;if(wd>=s)cyc.push({a,b,wd});d=ds(addDays(pd(b),1));}
+    // 今日このカードで使うと、どの期の予算になるか
+  const nowKey=periodKeyOf(ds(wdDate(c,pd(todayStr()),0)));
+  return {c,cyc,open:!!reserveWd(c,s,e),nowKey};
+}
+const cycLabel=y=>y.cyc.map(x=>`${md(x.a)}〜${md(x.b)}に使った分（${md(x.wd)}落ち）`).join('・');
 let openSkip={};
 function skipBox(k){
   const [s,e]=periodRange(k);if(e<todayStr()||reserveSkip(s))return '';
   const b=budgetOf(k);const cats=b.cats||{};const items=b.items||[];
   const ck=[...new Set([...Object.keys(cats).filter(c=>Number(cats[c])>0),...items.map(i=>i.cat)])];if(!ck.length)return '';
   const br=budgetReserve(k,true);const live=id=>{for(const c in br.cats){const it=br.cats[c].items.find(i=>i.id===id);if(it)return it;}return null;};
-  const done=[];items.forEach(it=>{if(itemSkipped(k,it)&&!isSkip(k,'c:'+it.cat))done.push(`⏭️${esc(it.name)}`);else if(capOf(k,it.id)!=null){const l=live(it.id);done.push(`🔒${esc(it.name)} ${l&&l.remain>0?`あと${fmt(l.remain)}`:'締め'}`);}});
+  const gone=it=>{const y=itemCycle(k,it);return y&&!y.open&&y.nowKey>k?y:null;};
+  const done=[];items.forEach(it=>{if(gone(it))return;if(itemSkipped(k,it)&&!isSkip(k,'c:'+it.cat))done.push(`⏭️${esc(it.name)}`);else if(capOf(k,it.id)!=null){const l=live(it.id);done.push(`🔒${esc(it.name)} ${l&&l.remain>0?`あと${fmt(l.remain)}`:'締め'}`);}});
   ck.forEach(c=>{if(isSkip(k,'c:'+c))done.push(`⏭️${esc(catById(c).name)}まるごと`);});
   const open=openSkip[k];const m=Number(k.split('-')[1]);
   let h=`<div class="fl tap" style="flex-wrap:wrap" onclick="openSkip['${k}']=!openSkip['${k}'];render()"><div class="ic">🔒</div><div class="t"><b>${m}月分の予算を締める <span class="muted">${open?'▲':'▼'}</span></b>
@@ -714,17 +725,19 @@ function skipBox(k){
       const cAmt=Math.max(Number(cats[c])||0,its.reduce((a,i)=>a+(Number(i.amount)||0),0));
       return `<div style="margin:4px 0"><div class="muted" style="font-size:12px">${cn.icon} ${esc(cn.name)}</div><div class="chips" style="margin:2px 0">
         ${cOn?'':its.map(it=>{const sk=itemSkipped(k,it),cp=capOf(k,it.id),l=live(it.id);
+          const g=gone(it);if(g)return `<button class="chip" onclick="event.stopPropagation();openCloseItem('${g.nowKey}','${it.id}')">📌${esc(it.name)} → ${Number(g.nowKey.split('-')[1])}月分で締める</button>`;
           return `<button class="chip${sk||cp!=null?' on':''}" onclick="event.stopPropagation();openCloseItem('${k}','${it.id}')">${sk?`⏭️${esc(it.name)} スキップ`:cp!=null?`🔒${esc(it.name)} ${l&&l.remain>0?`あと${fmt(l.remain)}円`:'締め'}`:`📌${esc(it.name)} ${fmt(Number(it.amount)||0)}円`}</button>`;}).join('')}
         <button class="chip${cOn?' on':''}" onclick="event.stopPropagation();toggleSkip('${k}','c:${c}')">${cOn?'⏭️ ':''}${esc(cn.name)}まるごとスキップ ${fmt(cAmt)}円</button></div></div>`;}).join('')}
-      <div class="note">📌項目をタップして「あと何円使うか」を入れると、${m}月分（${rangeLabel(k)}）はそこで締めて、それ以上は取っておきません。0円ならもう使わない。ほかの月の予算はそのままです。</div></div>`;}
+      <div class="note">📌項目をタップして「あと何円使うか」を入れると、${m}月分（${rangeLabel(k)}）はそこで締めて、それ以上は取っておきません。0円ならもう使わない。ほかの月の予算はそのままです。<br>💳 カード払いの項目は、その期に引き落とされる回の分です（締め日を過ぎたカードは「→ ◯月分で締める」から、今使っている回の月を締めます）。</div></div>`;}
   return h;
 }
 // 📌項目を締める画面：この期にもう出ていく分（カードは引き落とし日で数える）＋ あと使う分 を、この期の上限にする
 function openCloseItem(k,id){
   const it=(budgetOf(k).items||[]).find(i=>i.id===id);if(!it)return;
   const used=budgetUseCash(k).byItem[id]||0;const cp=capOf(k,id);const sk=isSkip(k,'i:'+id);const amt=Number(it.amount)||0;
-  const c=cardOf(it.method||reserveMethod());
+  const c=cardOf(it.method||reserveMethod());const y=itemCycle(k,it);
   sheet(`📌 ${esc(it.name)}（${Number(k.split('-')[1])}月分）`,`
+    ${y&&y.cyc.length?`<div class="prev" style="font-weight:400">💳 ${esc(y.c.name)}：<b>${cycLabel(y)}</b>が、この${Number(k.split('-')[1])}月分の予算です${y.nowKey===k?'（今日使うとこの回）':''}</div>`:''}
     <div class="muted" style="font-size:12.5px">予算 ${fmt(amt)}円・この期に出ていく分 ${fmt(used)}円${c?`（${esc(c.name)}は引き落とし日で数える）`:''}<br>
     ${sk?'⏭️ いまはスキップ中':cp!=null?`🔒 いまは あと ${fmt(Math.max(0,cp-used))}円で締め`:`まだ取っておく分 ${fmt(Math.max(0,amt-used))}円`}</div>
     <div class="fld"><label>あと何円使う？</label><input type="text" inputmode="numeric" id="closeAmt" placeholder="例：4000（空なら0円）" value="${cp!=null&&cp>used?cp-used:''}"></div>
