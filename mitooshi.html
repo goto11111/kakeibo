@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.35.1';
+const APP_VERSION='v1.35.2';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -629,9 +629,14 @@ const planText=t=>t.grp?(t.item||''):[t.memo,t.item].filter(Boolean).join(' ');
 function txPlan(t){
   if(!t||t.type!=='out'||t.goal||t.rec||t.pot)return null;
   if(t.plan)return t.plan;
-  const m=planText(t);if(!m)return null;
+  const m=planText(t);
   const k=periodKeyOf(t.date);let best=null,bl=0;
-  (budgetOf(k).items||[]).forEach(it=>{const n=(it.name||'').trim();if(n.length>=2&&n.length>bl&&m.includes(n)){best=it;bl=n.length;}});
+  const its=budgetOf(k).items||[];
+  its.forEach(it=>{const n=(it.name||'').trim();if(n&&n.length>=2&&n.length>bl&&m&&m.includes(n)){best=it;bl=n.length;}});
+  if(!best){ // メモ・中身に項目名がなくても、カテゴリ名を名前に含む項目が1つだけならその項目（例：🚬たばこ → 📌たばこ）
+    const cn=(catById(t.cat).name||'').trim();
+    const hit=cn.length>=2?its.filter(it=>(it.name||'').trim().includes(cn)):[];
+    if(hit.length===1)best=hit[0];}
   return best?best.id+'@'+k:null;
 }
 function planById(pk){if(!pk)return null;const [id,key]=pk.split('@');return (budgetOf(key).items||[]).find(i=>i.id===id)||allItems().find(i=>i.id===id)||null;}
