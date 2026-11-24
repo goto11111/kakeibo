@@ -157,7 +157,7 @@ body.hide .amt{filter:blur(7px)}
 
 <script>
 'use strict';
-const APP_VERSION='v1.35.2';
+const APP_VERSION='v1.35.3';
 const KEY='mitooshi_v1';
 
 // ── 基本ヘルパー ──
@@ -2452,43 +2452,61 @@ function syncErr(e){return e&&e.message==='Failed to fetch'?'GitHub に接続で
 // 自動保存：変更のたびに少し待ってからアップロード（この端末を正とする）
 function scheduleSync(){const c=syncCfg();c.localAt=new Date().toISOString();saveSyncCfg(c);if(!c.auto||!syncReady()||!c.gistId)return;clearTimeout(syncTimer);syncTimer=setTimeout(()=>{syncTimer=null;syncUpload(true);},4000);}
 // この端末のデータ（表示の設定 ui は除く）の指紋。最後にクラウドと合わせたときと比べて、本当に変更があるかを見る
-function syncSig(){const o=Object.assign({},S);delete o.ui;const str=JSON.stringify(o);let h=5381;for(let i=0;i<str.length;i++)h=((h<<5)+h+str.charCodeAt(i))|0;return String(h>>>0)+':'+str.length;}
+function dataSig(d){const o=Object.assign({},d);delete o.ui;delete o.savedAt;delete o.rev;const str=JSON.stringify(o);let h=5381;for(let i=0;i<str.length;i++)h=((h<<5)+h+str.charCodeAt(i))|0;return String(h>>>0)+':'+str.length;}
+function syncSig(){return dataSig(S);}
 function syncDirty(){const c=syncCfg();return c.sig?syncSig()!==c.sig:!!(c.localAt&&c.lastSync&&c.localAt>c.lastSync);}
 function gistData(j){const f=j.files&&j.files[GIST_FILE];if(!f)throw new Error('この Gist に見通し家計簿のデータがありません');return f;}
+// GitHub の返事はブラウザや GitHub 側に古い版が残っていることがあるので、キャッシュを使わずに読む
+const syncGet=()=>fetch(`${syncBase()}/gists/${syncCfg().gistId}`,{cache:'no-store',headers:syncToken()?{'Authorization':`Bearer ${syncToken()}`}:{}});
+async function syncRead(j){const f=gistData(j);let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url,{cache:'no-store'})).text();
+  const data=JSON.parse(content);return {data,updatedAt:j.updated_at,rev:+data.rev||0,sig:dataSig(data)};}
+// クラウドの版を、保存のたびに1つ増える番号（rev）で見分ける。GitHub の更新時刻（updated_at）は自分の保存のあとでもずれて新しく見えたり、
+// 保存直後に1つ前の版が返ってきたりするので、それだけで「ほかの端末の新しいデータ」とは決めない。
+// 'same'＝この端末と中身が同じ／'old'＝この端末が知っている版か、それより前（自分の保存の反映待ちなど）／'new'＝ほかの端末が新しく保存した
+function syncJudge(r,c){
+  if(r.sig===syncSig())return 'same';
+  if(typeof c.knownRev==='number'){if(r.rev<c.knownRev)return 'old';if(r.rev===c.knownRev)return r.sig===c.knownSig?'old':'new';return 'new';}
+  if(c.sig&&r.sig===c.sig)return 'old';
+  return (!c.remoteAt||(r.updatedAt&&r.updatedAt>c.remoteAt))?'new':'old';
+}
+// クラウドとこの端末が同じ中身だったとき：同期した印だけ付ける
+function syncMark(r){const c=syncCfg();c.knownRev=r.rev;c.knownSig=r.sig;c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.sig=syncSig();saveSyncCfg(c);}
 async function syncUpload(silent){
   if(syncBusy)return;const token=syncToken();if(!token){if(!silent)toast('GitHub Token を入れてください');return;}
   const c=syncCfg();syncBusy=true;syncMsg='☁️ 保存中…';if(!silent)render();
   try{
     // 上書きする前に、ほかの端末がクラウドに新しいデータを保存していないか確かめる（古い端末のデータで最新を消さないため）
-    if(c.gistId){const g=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:{'Authorization':`Bearer ${token}`}});
-      if(g.ok){const j=await g.json();
-        if(j.updated_at&&(!c.remoteAt||j.updated_at>c.remoteAt)){
-          const f=gistData(j);let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url)).text();const r={data:JSON.parse(content),updatedAt:j.updated_at};
+    let base=typeof c.knownRev==='number'?c.knownRev:0;
+    if(c.gistId){const g=await syncGet();
+      if(g.ok){let r=null;try{r=await syncRead(await g.json());}catch(e){}
+        const st=r?syncJudge(r,c):'old';
+        if(st==='same'){syncMark(r);syncMsg='✅ クラウドと同じです';return;}
+        if(st==='new'){
           if(!syncDirty()||confirm('ほかの端末でクラウドに新しいデータが保存されています。\n\nOK：クラウドの最新を読み込む（この端末のまだ保存していない変更は消えます）\nキャンセル：この端末のデータでクラウドを上書きする')){
             syncApply(r);syncMsg='✅ ほかの端末の新しいデータを読み込みました';syncBusy=false;applyHide();render();toast('ほかの端末の最新データを読み込みました');return;}
-        }}}
+        }
+        if(r)base=Math.max(base,r.rev);}}
+    const rev=base+1,payload=Object.assign({savedAt:new Date().toISOString(),rev},S),upSig=dataSig(payload);
     const url=c.gistId?`${syncBase()}/gists/${c.gistId}`:`${syncBase()}/gists`;
     const res=await fetch(url,{method:c.gistId?'PATCH':'POST',headers:{'Authorization':`Bearer ${token}`,'Content-Type':'application/json'},
-      body:JSON.stringify({description:'見通し家計簿データ',public:false,files:{[GIST_FILE]:{content:JSON.stringify(Object.assign({savedAt:new Date().toISOString()},S))}}})});
+      body:JSON.stringify({description:'見通し家計簿データ',public:false,files:{[GIST_FILE]:{content:JSON.stringify(payload)}}})});
     if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
-    const j=await res.json();const n=syncCfg();n.gistId=j.id;n.remoteAt=j.updated_at;n.lastSync=new Date().toISOString();n.sig=syncSig();saveSyncCfg(n);
+    const j=await res.json();const n=syncCfg();n.gistId=j.id;n.remoteAt=j.updated_at;n.lastSync=new Date().toISOString();n.knownRev=rev;n.knownSig=upSig;n.sig=upSig;saveSyncCfg(n);
     syncMsg=`✅ クラウドに保存しました（${new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}）`;
   }catch(e){syncMsg='❌ 保存できませんでした：'+syncErr(e);if(!silent)toast('クラウドに保存できませんでした');}
   finally{syncBusy=false;if(tab==='set')render();}
 }
 async function syncFetch(){
-  const c=syncCfg();const token=syncToken();if(!c.gistId)throw new Error('Gist ID がありません');
-  const res=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:token?{'Authorization':`Bearer ${token}`}:{}});
+  if(!syncCfg().gistId)throw new Error('Gist ID がありません');
+  const res=await syncGet();
   if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.message||res.status);}
-  const j=await res.json();const f=j.files&&j.files[GIST_FILE];if(!f)throw new Error('この Gist に見通し家計簿のデータがありません');
-  let content=f.content;if(f.truncated&&f.raw_url)content=await (await fetch(f.raw_url)).text();
-  return {data:JSON.parse(content),updatedAt:j.updated_at};
+  return syncRead(await res.json());
 }
 function syncApply(r){
   if(!r.data||r.data.v!==1)throw new Error('データの形式が違います');
-  delete r.data.savedAt;S=Object.assign(freshData(),r.data);S.ui=Object.assign({},freshData().ui,r.data.ui||{});migrateData();
+  const data=Object.assign({},r.data);delete data.savedAt;delete data.rev;r={...r,data};S=Object.assign(freshData(),r.data);S.ui=Object.assign({},freshData().ui,r.data.ui||{});migrateData();
   try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}
-  const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;c.sig=syncSig();saveSyncCfg(c);
+  const c=syncCfg();c.remoteAt=r.updatedAt;c.lastSync=new Date().toISOString();c.localAt=c.lastSync;c.sig=syncSig();c.knownRev=r.rev||0;c.knownSig=r.sig;saveSyncCfg(c);
 }
 async function syncDownload(){
   if(!confirm('クラウドのデータでこの端末のデータを置き換えます。よろしいですか？'))return;
@@ -2500,15 +2518,22 @@ async function syncDownload(){
 // この端末にもまだクラウドに上げていない変更があるときは、どちらを残すか聞く
 async function syncCheckOnLoad(){
   const c=syncCfg();if(!c.gistId||!syncReady()||syncBusy||syncTimer)return;
-  try{const token=syncToken();const res=await fetch(`${syncBase()}/gists/${c.gistId}`,{headers:{'Authorization':`Bearer ${token}`}});if(!res.ok)return;
+  try{const res=await syncGet();if(!res.ok)return;
     // まだ一度もクラウドと合わせていない端末（remoteAt なし）も、クラウドにデータがあれば確認する
-    const j=await res.json();const n=syncCfg();if(!j.updated_at||(n.remoteAt&&!(j.updated_at>n.remoteAt))||syncBusy||syncTimer)return;
+    const j=await res.json();let n=syncCfg();if(!j.updated_at||(n.remoteAt&&j.updated_at===n.remoteAt)||syncBusy||syncTimer)return;
+    const r=await syncRead(j);if(syncBusy||syncTimer)return;n=syncCfg();
+    const st=syncJudge(r,n);if(st==='same')syncMark(r);
+    if(st==='old'&&r.rev===n.knownRev&&r.sig===n.knownSig){n.remoteAt=r.updatedAt;saveSyncCfg(n);} // 自分の保存の時刻ずれ：覚え直して次から聞かない
+    if(st!=='new')return;
     // 入力中（シートが開いている）なら書きかけを消さないよう、読み込まずに知らせるだけ
     if(document.getElementById('sheet').style.display==='flex'){syncMsg='🔔 クラウドに新しいデータがあります。「クラウドから読込」で最新にできます';toast('クラウドに新しいデータがあります（閉じてから戻ると読み込みます）');return;}
     const dirty=syncDirty()||!n.remoteAt;
     if(dirty&&!confirm('ほかの端末でクラウドに新しいデータが保存されています。\nこの端末にもまだクラウドに保存していない変更があります。\n\nOK：クラウドの最新を読み込む（この端末の変更は消えます）\nキャンセル：この端末のデータを残す'))
-      {syncMsg='🔔 クラウドに新しいデータがあります。「クラウドから読込」で最新にできます';if(tab==='set')render();return;}
-    syncApply(await syncFetch());syncMsg='✅ クラウドの最新を自動で読み込みました';
+      {// この端末を残す：このクラウドの版はもう聞かず、この端末のデータで上書きする（1分ごとに同じことを聞き直さない）
+       n=syncCfg();n.knownRev=r.rev;n.knownSig=r.sig;n.remoteAt=r.updatedAt;saveSyncCfg(n);
+       syncMsg='📤 この端末のデータを残しました（クラウドに保存します）';if(tab==='set')render();
+       if(n.auto){clearTimeout(syncTimer);syncTimer=null;syncUpload(true);}return;}
+    syncApply(r);syncMsg='✅ クラウドの最新を自動で読み込みました';
     applyHide();goToday();toast('最新のデータを読み込みました');
   }catch(e){}
 }
